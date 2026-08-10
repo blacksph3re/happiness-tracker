@@ -1,0 +1,33 @@
+/** Return today's date in the browser's own timezone as YYYY-MM-DD. */
+export function today() {
+  return toKey(new Date())
+}
+
+/** Format a Date as the YYYY-MM-DD key the API stores answers under. */
+export function toKey(date) {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+/** Shift a YYYY-MM-DD key by a number of days. */
+export function shiftDay(key, delta) {
+  const [year, month, day] = key.split('-').map(Number)
+  const date = new Date(year, month - 1, day + delta)
+  return toKey(date)
+}
+
+/** The browser's current local hour, sent alongside each answer. */
+export function localHour() {
+  return new Date().getHours()
+}
+
+/** Render a day key as a short human label, e.g. "Tue 4 Mar". */
+export function dayLabel(key) {
+  const [year, month, day] = key.split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  })
+}
