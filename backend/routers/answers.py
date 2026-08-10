@@ -12,7 +12,7 @@ from models import Answer, Question, QuestionOption
 from schemas import AnswerDelete, AnswerIn, AnswerOut
 from services import prune_system_answers, sync_system_answers
 
-router = APIRouter(prefix="/answers", tags=["answers"])
+router = APIRouter(prefix="/answers", tags=["Answers"])
 
 
 def _load_answerable_question(db: DbSession, question_id: int) -> Question:
@@ -111,7 +111,17 @@ def _validate_response(db: DbSession, question: Question, payload: AnswerIn) -> 
         )
 
 
-@router.put("", status_code=status.HTTP_204_NO_CONTENT)
+@router.put(
+    "",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="upsertAnswer",
+    summary="Record an answer",
+    description=(
+        "Record or replace one answer for one day. Idempotent on "
+        "(user, question, day); the day's auto-tracked answers are written in "
+        "the same transaction."
+    ),
+)
 def upsert_answer(payload: AnswerIn, user: CurrentUser, db: DbSession) -> None:
     """Record or replace one answer for one day.
 
@@ -150,7 +160,16 @@ def upsert_answer(payload: AnswerIn, user: CurrentUser, db: DbSession) -> None:
     db.commit()
 
 
-@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="deleteAnswer",
+    summary="Clear an answer",
+    description=(
+        "Clear one answer. When it was the day's last, that day's auto-tracked "
+        "rows are removed with it."
+    ),
+)
 def delete_answer(payload: AnswerDelete, user: CurrentUser, db: DbSession) -> None:
     """Clear one answer, and the day's auto-tracked rows if it was the last.
 
@@ -214,7 +233,16 @@ def _answers_in_range(
     return list(db.execute(stmt).scalars().all())
 
 
-@router.get("", response_model=list[AnswerOut])
+@router.get(
+    "",
+    response_model=list[AnswerOut],
+    operation_id="listAnswers",
+    summary="List my answers",
+    description=(
+        "Return the signed-in account's answers in an optional date range, "
+        "auto-tracked values included."
+    ),
+)
 def list_answers(
     user: CurrentUser,
     db: DbSession,
@@ -242,7 +270,23 @@ def list_answers(
     return _answers_in_range(db, user.id, start, end)
 
 
-@router.get("/export.xlsx")
+@router.get(
+    "/export.xlsx",
+    operation_id="exportAnswers",
+    summary="Download my answers as a spreadsheet",
+    description=(
+        "Render the answers as an .xlsx workbook: one row per day, one column "
+        "per question ever answered."
+    ),
+    response_description="An .xlsx attachment.",
+    responses={
+        200: {
+            "content": {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            }
+        }
+    },
+)
 def export_answers(
     user: CurrentUser,
     db: DbSession,

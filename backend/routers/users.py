@@ -7,7 +7,7 @@ from models import Catalogue, User
 from schemas import PasswordReset, UserCreate, UserOut, UserUpdate
 from security import hash_password
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter(prefix="/users", tags=["Users"])
 
 
 def _get_user(db: DbSession, user_id: int) -> User:
@@ -59,7 +59,13 @@ def _check_catalogue(db: DbSession, catalogue_id: int | None) -> None:
         )
 
 
-@router.get("", response_model=list[UserOut])
+@router.get(
+    "",
+    response_model=list[UserOut],
+    operation_id="listUsers",
+    summary="List accounts",
+    description="List every account. Requires the user-management permission.",
+)
 def list_users(admin: AdminUser, db: DbSession) -> list[User]:
     """List every account.
 
@@ -78,7 +84,14 @@ def list_users(admin: AdminUser, db: DbSession) -> list[User]:
     return list(db.execute(select(User).order_by(User.username)).scalars().all())
 
 
-@router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=UserOut,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="createUser",
+    summary="Create an account",
+    description="Create a new account with its permission flags.",
+)
 def create_user(payload: UserCreate, admin: AdminUser, db: DbSession) -> User:
     """Create a new account.
 
@@ -122,7 +135,16 @@ def create_user(payload: UserCreate, admin: AdminUser, db: DbSession) -> User:
     return user
 
 
-@router.put("/{user_id}", response_model=UserOut)
+@router.put(
+    "/{user_id}",
+    response_model=UserOut,
+    operation_id="updateUser",
+    summary="Change an account",
+    description=(
+        "Change another account's permission flags or default catalogue. An "
+        "administrator cannot remove their own user-management permission."
+    ),
+)
 def update_user(
     user_id: int, payload: UserUpdate, admin: AdminUser, db: DbSession
 ) -> User:
@@ -167,7 +189,13 @@ def update_user(
     return user
 
 
-@router.put("/{user_id}/password", status_code=status.HTTP_204_NO_CONTENT)
+@router.put(
+    "/{user_id}/password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="resetUserPassword",
+    summary="Reset an account password",
+    description="Set another account's password without knowing the old one.",
+)
 def reset_password(
     user_id: int, payload: PasswordReset, admin: AdminUser, db: DbSession
 ) -> None:
@@ -194,7 +222,13 @@ def reset_password(
     db.commit()
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="deleteUser",
+    summary="Delete an account",
+    description="Delete an account and every answer it recorded.",
+)
 def delete_user(user_id: int, admin: AdminUser, db: DbSession) -> None:
     """Delete an account and every answer it recorded.
 

@@ -1,14 +1,15 @@
 <script>
   import Ladder from '../lib/Ladder.svelte'
+  import { link } from '../lib/router.js'
   import { api, tryApi } from '../lib/api.js'
   import { dayLabel, localHour, shiftDay, today } from '../lib/day.js'
   import { pushToast } from '../lib/toasts.js'
-  import { navigate } from '../lib/router.js'
+  import { navigate, query } from '../lib/router.js'
 
   let catalogue = $state(null)
   let answers = $state({})
   let index = $state(0)
-  let day = $state(today())
+  let day = $state($query.get('day') ?? today())
   let loading = $state(true)
   let leaving = $state(false)
 
@@ -17,11 +18,20 @@
   )
   const current = $derived(questions[index] ?? null)
   const answeredCount = $derived(questions.filter((q) => answers[q.id]).length)
+  const complete = $derived(questions.length > 0 && answeredCount === questions.length)
 
   // The whole catalogue is fetched once. Everything after this is a write, so
   // moving between questions never touches the network.
   $effect(() => {
     load()
+  })
+
+  $effect(() => {
+    const requested = $query.get('day')
+    if (requested && requested !== day) {
+      day = requested
+      if (catalogue) loadDay()
+    }
   })
 
   /** Fetch the user's catalogue once, then the answers already given for the day. */
@@ -57,13 +67,9 @@
   async function loadDay() {
     const rows = await tryApi(`/answers?from=${day}&to=${day}`)
     answers = Object.fromEntries((rows ?? []).map((row) => [row.question_id, row]))
-    const firstUnanswered = questions.findIndex((q) => !answers[q.id])
-    if (firstUnanswered === -1 && questions.length > 0) {
-      // The day is already complete, so there is nothing to ask.
-      navigate('/stats')
-      return
-    }
-    index = Math.max(firstUnanswered, 0)
+    // Opening a finished day shows it for review rather than redirecting: only
+    // answering the last question forwards to the stats page.
+    index = Math.max(questions.findIndex((q) => !answers[q.id]), 0)
   }
 
   /**
@@ -127,6 +133,8 @@
    */
   async function changeDay(delta) {
     day = shiftDay(day, delta)
+    // Keep the URL in step so the day survives a reload or a shared link.
+    window.history.replaceState({}, '', `/?day=${day}`)
     await loadDay()
   }
 </script>
@@ -157,6 +165,19 @@
           onclick={() => changeDay(1)}>Day →</button>
       </div>
     </header>
+
+    {#if complete}
+      <div
+        class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border
+               border-dusk-lift/40 bg-dusk/20 px-5 py-4"
+      >
+        <p class="text-sm">Every question is answered for this day. Tap any value to change it.</p>
+        <a href="/stats" use:link class="meta rounded-md border border-white/20 px-3 py-2
+                                          hover:border-white/50">
+          See patterns →
+        </a>
+      </div>
+    {/if}
 
     <!-- Progress reads as the accumulating record, not a percentage bar. -->
     <div class="mb-6 flex items-center gap-1.5" aria-label="Progress through today's questions">

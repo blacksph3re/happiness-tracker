@@ -1,4 +1,5 @@
 <script>
+  import QuestionForm from '../lib/QuestionForm.svelte'
   import { api, tryApi } from '../lib/api.js'
   import { pushToast } from '../lib/toasts.js'
 
@@ -8,6 +9,7 @@
   let loading = $state(true)
   let newName = $state('')
   let draft = $state(blankDraft())
+  let editing = $state(null)
 
   const questions = $derived(
     detail ? detail.questions.filter((q) => !q.system_key) : []
@@ -22,6 +24,66 @@
       min_label: 'Low',
       max_label: 'High',
       options: ['', ''],
+    }
+  }
+
+  /** Turn a saved question back into the shape the shared form edits. */
+  function toDraft(question) {
+    return {
+      id: question.id,
+      kind: question.kind,
+      prompt: question.prompt,
+      min_value: question.min_value ?? 1,
+      max_value: question.max_value ?? 5,
+      min_label: question.min_label ?? '',
+      max_label: question.max_label ?? '',
+      options: question.options.map((option) => option.label),
+      // Existing options cannot be renamed or removed through the API, so the
+      // form locks them and only accepts additions.
+      lockedOptions: question.options.length,
+      optionIds: question.options.map((option) => option.id),
+      answered: question.answered ?? false,
+    }
+  }
+
+  async function edit(question) {
+    editing = toDraft(question)
+    // The freeze rule is a server-side fact, so ask rather than guess: a probe
+    // update of a field the server always accepts reveals nothing, so instead
+    // the answered flag comes from whether any answer references the question.
+    const rows = (await tryApi('/answers')) ?? []
+    editing.answered = rows.some((row) => row.question_id === question.id)
+  }
+
+  async function saveEdit(edited) {
+    try {
+      await api(`/questions/${edited.id}`, {
+        method: 'PUT',
+        body: edited.answered
+          ? { prompt: edited.prompt }
+          : {
+              prompt: edited.prompt,
+              ...(edited.kind === 'enum'
+                ? {}
+                : {
+                    min_value: Number(edited.min_value),
+                    max_value: Number(edited.max_value),
+                    min_label: edited.min_label,
+                    max_label: edited.max_label,
+                  }),
+            },
+      })
+      if (edited.kind === 'enum') {
+        const added = edited.options.slice(edited.lockedOptions)
+        for (const label of added.map((l) => l.trim()).filter(Boolean)) {
+          await api(`/questions/${edited.id}/options`, { method: 'POST', body: { label } })
+        }
+      }
+      editing = null
+      detail = await tryApi(`/catalogues/${selectedId}`)
+      pushToast('Question saved', 'ok')
+    } catch (error) {
+      pushToast(error.message)
     }
   }
 
@@ -56,20 +118,23 @@
     pushToast(`Created ${created.name}`, 'ok')
   }
 
-  async function addQuestion(event) {
-    event.preventDefault()
-    const body = { kind: draft.kind, prompt: draft.prompt, position: questions.length }
-    if (draft.kind === 'enum') {
-      body.options = draft.options
+  async function addQuestion(submitted) {
+    const body = {
+      kind: submitted.kind,
+      prompt: submitted.prompt,
+      position: questions.length,
+    }
+    if (submitted.kind === 'enum') {
+      body.options = submitted.options
         .map((label) => label.trim())
         .filter(Boolean)
         .map((label, position) => ({ label, position }))
     } else {
       Object.assign(body, {
-        min_value: Number(draft.min_value),
-        max_value: Number(draft.max_value),
-        min_label: draft.min_label,
-        max_label: draft.max_label,
+        min_value: Number(submitted.min_value),
+        max_value: Number(submitted.max_value),
+        min_label: submitted.min_label,
+        max_label: submitted.max_label,
       })
     }
     try {
@@ -82,23 +147,31 @@
     }
   }
 
-  async function setActive(question, active) {
+  // Positions can be sparse or duplicated after edits, so a move rewrites the
+  // whole run as 0..n-1 rather than trusting the existing numbers.
+  async function move(question, delta) {
+    const ordered = [...questions]
+    const from = ordered.findIndex((q) => q.id === question.id)
+    const to = from + delta
+    if (to < 0 || to >= ordered.length) return
+    ordered.splice(to, 0, ordered.splice(from, 1)[0])
     try {
-      await api(`/questions/${question.id}`, { method: 'PUT', body: { active } })
+      for (const [position, item] of ordered.entries()) {
+        if (item.position !== position) {
+          await api(`/questions/${item.id}`, { method: 'PUT', body: { position } })
+        }
+      }
       detail = await tryApi(`/catalogues/${selectedId}`)
     } catch (error) {
       pushToast(error.message)
     }
   }
 
-  async function addOption(question) {
-    const label = prompt('New option')
-    if (!label) return
+  async function setActive(question, active) {
     try {
-      await api(`/questions/${question.id}/options`, { method: 'POST', body: { label } })
+      await api(`/questions/${question.id}`, { method: 'PUT', body: { active } })
       detail = await tryApi(`/catalogues/${selectedId}`)
     } catch (error) {
-      // The freeze rule answers with a 409 and an explanation of what to do instead.
       pushToast(error.message)
     }
   }
@@ -148,7 +221,7 @@
     </div>
 
     <ul class="flex flex-col gap-2">
-      {#each questions as question (question.id)}
+      {#each questions as question, position (question.id)}
         <li
           class="flex flex-wrap items-center justify-between gap-3 rounded-lg border
                  border-white/10 bg-ink-soft px-5 py-4 {question.active ? '' : 'opacity-50'}"
@@ -158,10 +231,32 @@
             <p class="meta mt-1 normal-case">{describe(question)}</p>
           </div>
           <div class="flex shrink-0 items-center gap-2">
-            {#if question.kind === 'enum'}
-              <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-                onclick={() => addOption(question)}>Add option</button>
-            {/if}
+            <span class="flex items-center gap-1">
+              <button
+                class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
+                       disabled:cursor-not-allowed disabled:opacity-30"
+                aria-label="Move {question.prompt} earlier"
+                disabled={position === 0}
+                onclick={() => move(question, -1)}
+              >
+                ↑
+              </button>
+              <button
+                class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
+                       disabled:cursor-not-allowed disabled:opacity-30"
+                aria-label="Move {question.prompt} later"
+                disabled={position === questions.length - 1}
+                onclick={() => move(question, 1)}
+              >
+                ↓
+              </button>
+            </span>
+            <button
+              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+              onclick={() => edit(question)}
+            >
+              Edit
+            </button>
             <button
               class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
               onclick={() => setActive(question, !question.active)}
@@ -169,6 +264,17 @@
               {question.active ? 'Deactivate' : 'Reactivate'}
             </button>
           </div>
+          {#if editing?.id === question.id}
+            <div class="mt-4 w-full">
+              <QuestionForm
+                draft={editing}
+                frozen={editing.answered}
+                submitLabel="Save question"
+                oncancel={() => (editing = null)}
+                onsubmit={saveEdit}
+              />
+            </div>
+          {/if}
         </li>
       {:else}
         <li class="rounded-lg border border-white/10 bg-ink-soft px-5 py-8 text-haze">
@@ -177,77 +283,13 @@
       {/each}
     </ul>
 
-    <form class="mt-8 rounded-xl border border-white/10 bg-ink-soft p-6" onsubmit={addQuestion}>
-      <h2 class="font-semibold">Add a question</h2>
-      <p class="mt-1 text-sm text-haze">
+    <div class="mt-8">
+      <h2 class="mb-3 font-semibold">Add a question</h2>
+      <p class="mb-3 text-sm text-haze">
         Scale and options are fixed once the first answer is recorded, so history stays
         readable.
       </p>
-
-      <label class="mt-4 flex flex-col gap-1.5">
-        <span class="meta">Question</span>
-        <input
-          bind:value={draft.prompt}
-          required
-          class="rounded-lg border border-white/15 bg-ink px-4 py-3"
-        />
-      </label>
-
-      <label class="mt-3 flex flex-col gap-1.5">
-        <span class="meta">Kind</span>
-        <select bind:value={draft.kind} class="rounded-lg border border-white/15 bg-ink px-4 py-3">
-          <option value="discrete">Discrete — whole steps on a scale</option>
-          <option value="continuous">Continuous — anywhere on a scale</option>
-          <option value="enum">Options — no order between them</option>
-        </select>
-      </label>
-
-      {#if draft.kind === 'enum'}
-        <div class="mt-3 flex flex-col gap-2">
-          <span class="meta">Options</span>
-          {#each draft.options as _, position}
-            <input
-              bind:value={draft.options[position]}
-              placeholder={`Option ${position + 1}`}
-              class="rounded-lg border border-white/15 bg-ink px-4 py-3"
-            />
-          {/each}
-          <button
-            type="button"
-            class="meta self-start rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-            onclick={() => (draft.options = [...draft.options, ''])}
-          >
-            Another option
-          </button>
-        </div>
-      {:else}
-        <div class="mt-3 grid grid-cols-2 gap-3">
-          <label class="flex flex-col gap-1.5">
-            <span class="meta">Lowest value</span>
-            <input type="number" bind:value={draft.min_value}
-              class="rounded-lg border border-white/15 bg-ink px-4 py-3" />
-          </label>
-          <label class="flex flex-col gap-1.5">
-            <span class="meta">Highest value</span>
-            <input type="number" bind:value={draft.max_value}
-              class="rounded-lg border border-white/15 bg-ink px-4 py-3" />
-          </label>
-          <label class="flex flex-col gap-1.5">
-            <span class="meta">Means at the low end</span>
-            <input bind:value={draft.min_label}
-              class="rounded-lg border border-white/15 bg-ink px-4 py-3" />
-          </label>
-          <label class="flex flex-col gap-1.5">
-            <span class="meta">Means at the high end</span>
-            <input bind:value={draft.max_label}
-              class="rounded-lg border border-white/15 bg-ink px-4 py-3" />
-          </label>
-        </div>
-      {/if}
-
-      <button type="submit" class="mt-5 rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift">
-        Add question
-      </button>
-    </form>
+      <QuestionForm {draft} submitLabel="Add question" onsubmit={addQuestion} />
+    </div>
   {/if}
 </section>

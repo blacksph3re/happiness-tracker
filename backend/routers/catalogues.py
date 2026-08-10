@@ -15,7 +15,7 @@ from schemas import (
 )
 from services import create_catalogue, question_is_answered
 
-router = APIRouter(tags=["catalogues"])
+router = APIRouter(tags=["Catalogue"])
 
 FROZEN_MESSAGE = (
     "This question has already been answered. Its scale and options are frozen; "
@@ -86,7 +86,13 @@ def _get_question(db: DbSession, question_id: int) -> Question:
     return question
 
 
-@router.get("/catalogues", response_model=list[CatalogueOut])
+@router.get(
+    "/catalogues",
+    response_model=list[CatalogueOut],
+    operation_id="listCatalogues",
+    summary="List catalogues",
+    description="List every catalogue by name. Open to any signed-in user.",
+)
 def list_catalogues(user: CurrentUser, db: DbSession) -> list[Catalogue]:
     """List every catalogue by name.
 
@@ -105,7 +111,16 @@ def list_catalogues(user: CurrentUser, db: DbSession) -> list[Catalogue]:
     return list(db.execute(select(Catalogue).order_by(Catalogue.name)).scalars().all())
 
 
-@router.get("/catalogues/{catalogue_id}", response_model=CatalogueDetail)
+@router.get(
+    "/catalogues/{catalogue_id}",
+    response_model=CatalogueDetail,
+    operation_id="getCatalogue",
+    summary="Get a catalogue with its questions",
+    description=(
+        "Return a catalogue with every question, option, bound and label. This "
+        "is the single request the questionnaire makes at page load."
+    ),
+)
 def read_catalogue(catalogue_id: int, user: CurrentUser, db: DbSession) -> Catalogue:
     """Return a catalogue with every question it contains.
 
@@ -130,7 +145,15 @@ def read_catalogue(catalogue_id: int, user: CurrentUser, db: DbSession) -> Catal
 
 
 @router.post(
-    "/catalogues", response_model=CatalogueOut, status_code=status.HTTP_201_CREATED
+    "/catalogues",
+    response_model=CatalogueOut,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="createCatalogue",
+    summary="Create a catalogue",
+    description=(
+        "Create a catalogue, seeded with the five auto-tracked questions. "
+        "Requires the catalogue-editing permission."
+    ),
 )
 def add_catalogue(
     payload: CatalogueCreate, editor: EditorUser, db: DbSession
@@ -170,7 +193,13 @@ def add_catalogue(
     return catalogue
 
 
-@router.put("/catalogues/{catalogue_id}", response_model=CatalogueOut)
+@router.put(
+    "/catalogues/{catalogue_id}",
+    response_model=CatalogueOut,
+    operation_id="renameCatalogue",
+    summary="Rename a catalogue",
+    description="Change a catalogue's display name.",
+)
 def rename_catalogue(
     catalogue_id: int, payload: CatalogueCreate, editor: EditorUser, db: DbSession
 ) -> Catalogue:
@@ -210,7 +239,16 @@ def rename_catalogue(
     return catalogue
 
 
-@router.delete("/catalogues/{catalogue_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/catalogues/{catalogue_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="deleteCatalogue",
+    summary="Delete a catalogue",
+    description=(
+        "Delete a catalogue and its questions. Refused once any of its "
+        "questions has been answered."
+    ),
+)
 def delete_catalogue(catalogue_id: int, editor: EditorUser, db: DbSession) -> None:
     """Delete a catalogue and its questions.
 
@@ -249,6 +287,12 @@ def delete_catalogue(catalogue_id: int, editor: EditorUser, db: DbSession) -> No
     "/catalogues/{catalogue_id}/questions",
     response_model=QuestionOut,
     status_code=status.HTTP_201_CREATED,
+    operation_id="createQuestion",
+    summary="Add a question",
+    description=(
+        "Add a question to a catalogue. Enum questions need at least two "
+        "options and no bounds; scaled questions need an ordered pair of bounds."
+    ),
 )
 def add_question(
     catalogue_id: int, payload: QuestionCreate, editor: EditorUser, db: DbSession
@@ -333,7 +377,16 @@ def add_question(
     return question
 
 
-@router.put("/questions/{question_id}", response_model=QuestionOut)
+@router.put(
+    "/questions/{question_id}",
+    response_model=QuestionOut,
+    operation_id="updateQuestion",
+    summary="Edit a question",
+    description=(
+        "Edit a question. Wording, ordering and activation may always change; "
+        "bounds and labels are frozen once the question has been answered."
+    ),
+)
 def update_question(
     question_id: int, payload: QuestionUpdate, editor: EditorUser, db: DbSession
 ) -> Question:
@@ -415,6 +468,9 @@ def update_question(
     "/questions/{question_id}/options",
     response_model=QuestionOut,
     status_code=status.HTTP_201_CREATED,
+    operation_id="addQuestionOption",
+    summary="Add an enum option",
+    description="Add a choice to an enum question that has no answers yet.",
 )
 def add_option(
     question_id: int, payload: OptionCreate, editor: EditorUser, db: DbSession
@@ -463,7 +519,13 @@ def add_option(
     return question
 
 
-@router.delete("/questions/{question_id}/options/{option_id}", response_model=QuestionOut)
+@router.delete(
+    "/questions/{question_id}/options/{option_id}",
+    response_model=QuestionOut,
+    operation_id="deleteQuestionOption",
+    summary="Remove an enum option",
+    description="Remove a choice from an enum question that has no answers yet.",
+)
 def delete_option(
     question_id: int, option_id: int, editor: EditorUser, db: DbSession
 ) -> Question:

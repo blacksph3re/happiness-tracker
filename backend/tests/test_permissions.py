@@ -169,3 +169,24 @@ def test_admin_cannot_remove_their_own_admin_flag(client, admin_headers):
     )
     assert response.status_code == 409
     assert client.get("/api/users", headers=admin_headers).status_code == 200
+
+
+def test_preferences_round_trip_and_are_not_gated(client, admin_headers):
+    """Stats view state persists per user and needs no permission flag."""
+    user, headers = make_user(client, admin_headers, "prefs")
+
+    assert client.get("/api/me/preferences", headers=headers).json() == {}
+
+    saved = client.put(
+        "/api/me/preferences",
+        headers=headers,
+        json={"view": "radar", "chosen": ["q6", "weekday"], "windowDays": 30},
+    )
+    assert saved.status_code == 200
+    assert client.get("/api/me/preferences", headers=headers).json() == {
+        "view": "radar",
+        "chosen": ["q6", "weekday"],
+        "windowDays": 30,
+    }
+    # One user's view state must never leak into another's.
+    assert client.get("/api/me/preferences", headers=admin_headers).json() == {}

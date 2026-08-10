@@ -146,6 +146,16 @@ class DefaultCatalogueChange(BaseModel):
     """Identifier of the catalogue to answer by default."""
 
 
+class Preferences(BaseModel):
+    """Opaque UI state belonging to one user.
+
+    The backend stores and returns the document unchanged; only the frontend
+    interprets it.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+
 class OptionOut(BaseModel):
     """One selectable choice of an enum question."""
 

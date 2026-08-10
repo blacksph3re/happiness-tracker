@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -51,6 +52,13 @@ class User(Base):
     )
     """Timestamp set by the database when the row is inserted."""
 
+    preferences: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """UI state as a JSON document, written and read only by the frontend.
+
+    Deliberately opaque to the backend: the stats page owns its own shape, so
+    adding a control there does not require a migration here.
+    """
+
     default_catalogue: Mapped["Catalogue | None"] = relationship()
     """The catalogue referenced by `default_catalogue_id`."""
 
@@ -80,9 +88,13 @@ class Catalogue(Base):
         back_populates="catalogue",
         cascade="all, delete-orphan",
         passive_deletes=True,
-        order_by="Question.position",
+        order_by="Question.position, Question.id",
     )
-    """Questions belonging to this catalogue, in display order."""
+    """Questions belonging to this catalogue, in display order.
+
+    Ties on `position` fall back to insertion order, so a catalogue whose
+    positions collide still renders the same way on every request.
+    """
 
 
 class Question(Base):

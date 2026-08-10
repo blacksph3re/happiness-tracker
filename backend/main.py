@@ -36,7 +36,48 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Happiness Tracker API", lifespan=lifespan)
+API_TAGS = [
+    {"name": "Auth", "description": "Signing in and renewing tokens. Public."},
+    {
+        "name": "Account",
+        "description": (
+            "The signed-in account acting on itself. Never gated on a "
+            "permission flag."
+        ),
+    },
+    {
+        "name": "Users",
+        "description": (
+            "Acting on other people's accounts. Requires the user-management "
+            "permission."
+        ),
+    },
+    {
+        "name": "Catalogue",
+        "description": (
+            "Catalogues and their questions. Reading is open to everyone; "
+            "changing anything requires the catalogue-editing permission."
+        ),
+    },
+    {"name": "Answers", "description": "Recording, reading and exporting answers."},
+    {"name": "Stats", "description": "Metadata describing what can be plotted."},
+]
+"""Tag descriptions, in the order the documentation should present them."""
+
+app = FastAPI(
+    title="Happiness Tracker API",
+    version=auth.APP_VERSION,
+    summary="Track satisfaction with work, life or whatever in regular questionnaires.",
+    description=(
+        "Every endpoint lives under `/api`. `GET /api/version`, `POST /api/login` "
+        "and `POST /api/refresh` are public; everything else needs a bearer token "
+        "and answers `401` without one.\n\n"
+        "Two independent permission flags govern the rest: `is_admin` for managing "
+        "other people's accounts, `is_editor` for catalogues and questions."
+    ),
+    openapi_tags=API_TAGS,
+    lifespan=lifespan,
+)
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")

@@ -6,7 +6,7 @@ from deps import CurrentUser, DbSession
 from models import Answer, Question
 from schemas import OptionOut, Variable
 
-router = APIRouter(prefix="/stats", tags=["stats"])
+router = APIRouter(prefix="/stats", tags=["Stats"])
 
 NUMERIC_ROLES = ["axis", "radar"]
 """Plot roles a scaled variable can fill."""
@@ -15,7 +15,17 @@ ENUM_ROLES = ["group", "radar"]
 """Plot roles an enum variable can fill: never an axis, since it has no scale."""
 
 
-@router.get("/variables", response_model=list[Variable])
+@router.get(
+    "/variables",
+    response_model=list[Variable],
+    operation_id="listStatsVariables",
+    summary="List plottable variables",
+    description=(
+        "Describe every variable the signed-in account has data for, with the "
+        "plot roles each supports. Auto-tracked variables are merged across "
+        "catalogues by their system key."
+    ),
+)
 def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
     """Describe every variable the authenticated user has data for.
 

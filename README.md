@@ -2,6 +2,20 @@
 
 Track your satisfaction with work/life/whatever in regular questionaries, then get automated statistics.
 
+## Screenshots
+
+Answering: one tap per question, and the next one opens without waiting for the server.
+
+![The questionnaire, showing one question with its scale as a row of tappable bands](docs/screenshots/answering.png)
+
+The record: every answer you have given, days running left to right, with a button to fill in any past or future day.
+
+![The answer table, with one row per question and one column per day](docs/screenshots/record.png)
+
+Patterns: line, radar, scatter and box views over a window you choose, with a smoothing control that trades daily detail for trend.
+
+![The stats page, plotting several questions over time](docs/screenshots/patterns.png)
+
 ## Installation
 
 To install everything, just build the Dockerfile and run through docker. You may want to set some environment variables:

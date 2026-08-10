@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
@@ -8,6 +10,7 @@ from schemas import (
     DefaultCatalogueChange,
     LoginRequest,
     PasswordChange,
+    Preferences,
     RefreshRequest,
     TokenPair,
     UserOut,
@@ -25,13 +28,20 @@ from security import (
 )
 from config import get_settings
 
-router = APIRouter(tags=["auth"])
+router = APIRouter()
 
 APP_VERSION = "0.1.0"
 """Version reported by the public version endpoint."""
 
 
-@router.get("/version", response_model=Version)
+@router.get(
+    "/version",
+    response_model=Version,
+    operation_id="getVersion",
+    summary="Get the application version",
+    description="Report the running application version. Public.",
+    tags=["Auth"],
+)
 def version() -> Version:
     """Report the running application version.
 
@@ -43,7 +53,17 @@ def version() -> Version:
     return Version(version=APP_VERSION)
 
 
-@router.post("/login", response_model=TokenPair)
+@router.post(
+    "/login",
+    response_model=TokenPair,
+    operation_id="login",
+    summary="Sign in",
+    description=(
+        "Exchange a username and password for an access and a refresh token. "
+        "Unknown usernames and wrong passwords are answered identically."
+    ),
+    tags=["Auth"],
+)
 def login(payload: LoginRequest, db: DbSession) -> TokenPair:
     """Exchange a username and password for an access and refresh token.
 
@@ -76,7 +96,17 @@ def login(payload: LoginRequest, db: DbSession) -> TokenPair:
     return TokenPair(**issue_tokens(user.id))
 
 
-@router.post("/refresh", response_model=AccessToken)
+@router.post(
+    "/refresh",
+    response_model=AccessToken,
+    operation_id="refreshAccessToken",
+    summary="Renew an access token",
+    description=(
+        "Exchange a refresh token for a new access token. Access tokens are "
+        "rejected here, and refresh tokens are rejected as bearer credentials."
+    ),
+    tags=["Auth"],
+)
 def refresh(payload: RefreshRequest, db: DbSession) -> AccessToken:
     """Exchange a refresh token for a new access token.
 
@@ -117,7 +147,14 @@ def refresh(payload: RefreshRequest, db: DbSession) -> AccessToken:
     )
 
 
-@router.get("/me", response_model=UserOut)
+@router.get(
+    "/me",
+    response_model=UserOut,
+    operation_id="getCurrentUser",
+    summary="Get my account",
+    description="Return the signed-in account, without any password material.",
+    tags=["Account"],
+)
 def read_me(user: CurrentUser) -> User:
     """Return the authenticated user's own account.
 
@@ -134,7 +171,17 @@ def read_me(user: CurrentUser) -> User:
     return user
 
 
-@router.put("/me/password", status_code=status.HTTP_204_NO_CONTENT)
+@router.put(
+    "/me/password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="changeMyPassword",
+    summary="Change my password",
+    description=(
+        "Change the signed-in account's own password. Requires the current "
+        "password, and is open to every user regardless of permission flags."
+    ),
+    tags=["Account"],
+)
 def change_own_password(payload: PasswordChange, user: CurrentUser, db: DbSession) -> None:
     """Change the authenticated user's own password.
 
@@ -164,7 +211,83 @@ def change_own_password(payload: PasswordChange, user: CurrentUser, db: DbSessio
     db.commit()
 
 
-@router.put("/me/default-catalogue", response_model=UserOut)
+@router.get(
+    "/me/preferences",
+    response_model=Preferences,
+    operation_id="getMyPreferences",
+    summary="Get my saved view state",
+    description=(
+        "Return the stored UI preferences document, or an empty object when "
+        "nothing has been saved. The backend does not interpret its contents."
+    ),
+    tags=["Account"],
+)
+def read_preferences(user: CurrentUser) -> Preferences:
+    """Return the authenticated user's stored UI state.
+
+    Parameters
+    ----------
+    user : User
+        The authenticated user.
+
+    Returns
+    -------
+    Preferences
+        The stored document, or an empty one when nothing has been saved. A
+        document that fails to parse is treated as absent rather than raising,
+        so a bad write can never lock the user out of their own settings.
+    """
+    if not user.preferences:
+        return Preferences()
+    try:
+        return Preferences(**json.loads(user.preferences))
+    except (ValueError, TypeError):
+        return Preferences()
+
+
+@router.put(
+    "/me/preferences",
+    response_model=Preferences,
+    operation_id="setMyPreferences",
+    summary="Save my view state",
+    description="Replace the stored UI preferences document.",
+    tags=["Account"],
+)
+def write_preferences(
+    payload: Preferences, user: CurrentUser, db: DbSession
+) -> Preferences:
+    """Replace the authenticated user's stored UI state.
+
+    Open to every user regardless of their permission flags. The document is
+    stored verbatim; the backend attaches no meaning to its contents.
+
+    Parameters
+    ----------
+    payload : Preferences
+        The document to store, replacing any previous one.
+    user : User
+        The authenticated user.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Returns
+    -------
+    Preferences
+        The document as stored.
+    """
+    user.preferences = payload.model_dump_json()
+    db.commit()
+    return payload
+
+
+@router.put(
+    "/me/default-catalogue",
+    response_model=UserOut,
+    operation_id="setMyDefaultCatalogue",
+    summary="Choose my catalogue",
+    description="Pick which catalogue the signed-in account answers each day.",
+    tags=["Account"],
+)
 def change_own_default_catalogue(
     payload: DefaultCatalogueChange, user: CurrentUser, db: DbSession
 ) -> User:
