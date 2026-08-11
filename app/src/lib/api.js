@@ -13,20 +13,10 @@ const REFRESH_KEY = 'ht.refresh'
  */
 export const signedIn = writable(Boolean(localStorage.getItem(ACCESS_KEY)))
 
-/**
- * Read the stored access token.
- *
- * @returns {string|null} The token, or null when signed out.
- */
 export function accessToken() {
   return localStorage.getItem(ACCESS_KEY)
 }
 
-/**
- * Persist a freshly issued token pair and mark the session as active.
- *
- * @param {{access_token: string, refresh_token?: string}} tokens Login or refresh response.
- */
 export function storeTokens({ access_token, refresh_token }) {
   localStorage.setItem(ACCESS_KEY, access_token)
   if (refresh_token) localStorage.setItem(REFRESH_KEY, refresh_token)
@@ -40,11 +30,6 @@ export function clearTokens() {
   signedIn.set(false)
 }
 
-/**
- * Trade the stored refresh token for a new access token.
- *
- * @returns {Promise<boolean>} True when a new access token was obtained.
- */
 async function refreshAccessToken() {
   const refresh_token = localStorage.getItem(REFRESH_KEY)
   if (!refresh_token) return false

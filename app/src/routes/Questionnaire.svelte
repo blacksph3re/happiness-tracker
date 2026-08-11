@@ -3,6 +3,7 @@
   import { link } from '../lib/router.js'
   import { api, tryApi } from '../lib/api.js'
   import { dayLabel, localHour, shiftDay, today } from '../lib/day.js'
+  import { answerRatio, tint } from '../lib/scale.js'
   import { pushToast } from '../lib/toasts.js'
   import { navigate, query } from '../lib/router.js'
 
@@ -72,11 +73,6 @@
     index = Math.max(questions.findIndex((q) => !answers[q.id]), 0)
   }
 
-  /**
-   * Store one answer locally, send it, and open the next question.
-   *
-   * @param {{value?: number, option_id?: number}} payload The chosen response.
-   */
   function record(payload) {
     // A second tap during the exit animation would answer the question that is
     // already leaving and skip the next one entirely.
@@ -116,21 +112,11 @@
     }, 140)
   }
 
-  /**
-   * Move one question backwards or forwards without answering.
-   *
-   * @param {number} delta -1 to go back, 1 to skip ahead.
-   */
   function step(delta) {
     const next = index + delta
     if (next >= 0 && next < questions.length) index = next
   }
 
-  /**
-   * Move the questionnaire to another day and load its answers.
-   *
-   * @param {number} delta Days to move, negative for the past.
-   */
   async function changeDay(delta) {
     day = shiftDay(day, delta)
     // Keep the URL in step so the day survives a reload or a shared link.
@@ -179,23 +165,24 @@
       </div>
     {/if}
 
-    <!-- Progress reads as the accumulating record, not a percentage bar. -->
+    <!-- Progress reads as the accumulating record, not a percentage bar. Each
+         answered segment carries the tint of the band that was tapped. -->
     <div class="mb-6 flex items-center gap-1.5" aria-label="Progress through today's questions">
       {#each questions as question, position (question.id)}
+        {@const ratio = answerRatio(question, answers[question.id])}
         <span
-          class="h-1 flex-1 rounded-full transition-colors
-                 {answers[question.id]
-            ? 'bg-dusk-lift'
-            : position === index
-              ? 'bg-ember'
-              : 'bg-white/12'}"
+          class="h-1.5 flex-1 rounded-full transition-colors
+                 {ratio === null && position === index ? 'bg-ember' : ''}
+                 {ratio === null && position !== index ? 'bg-white/12' : ''}
+                 {position === index ? 'ring-1 ring-ember' : ''}"
+          style:background={ratio === null ? undefined : tint(ratio)}
         ></span>
       {/each}
-      <span class="meta ml-3 shrink-0">{answeredCount}/{questions.length}</span>
+      <span class="meta ml-3 shrink-0">{index + 1}/{questions.length}</span>
     </div>
 
     <div
-      class="transition-all duration-150 ease-out
+      class="rounded-xl p-3 ring-1 ring-ember/45 transition-all duration-150 ease-out
              {leaving ? 'translate-y-1 opacity-0' : 'translate-y-0 opacity-100'}"
     >
       <Ladder question={current} value={answers[current.id]} onanswer={record} />

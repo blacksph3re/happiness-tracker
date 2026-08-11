@@ -1,7 +1,7 @@
 <script>
   import * as echarts from 'echarts'
   import { api, tryApi } from '../lib/api.js'
-  import { dayLabel } from '../lib/day.js'
+  import { dayLabel, shiftDay } from '../lib/day.js'
 
   let variables = $state([])
   let rows = $state([])
@@ -26,9 +26,10 @@
   // 1 plots the answers themselves; higher spans replace each point with a
   // centred moving average, trading detail for trend.
   let smoothing = $state(1)
-  let groupBy = $state('')
-  let filterBy = $state('')
-  let filterOptions = $state(new Set())
+  // One selection set per filterable variable, keyed by variable key. Empty or
+  // absent means that dimension is not narrowing anything. Dimensions combine
+  // with AND, choices inside a dimension with OR: weekends AND winter.
+  let filters = $state({})
   // The panel lists every variable plus the enum filter, so it is tall. It
   // stays shut until the reader wants to change what is plotted.
   let showOpen = $state(false)
@@ -48,6 +49,18 @@
   // Enum answers carry no scale, so they never become an axis. They colour the
   // correlation plot and filter the timeline instead.
   const groupings = $derived(variables.filter((v) => v.roles.includes('group')))
+  // Auto-tracked variables exist only to narrow the data. Scaled ones (year,
+  // hour) are offered as chips over the values actually recorded, which keeps
+  // day-of-year - 366 distinct values - out of a control nobody could use.
+  const CHIP_LIMIT = 31
+  const filterable = $derived(
+    [...groupings, ...variables.filter((v) => v.roles.includes('filter'))].filter(
+      (variable) => facetChoices(variable).length > 1
+    )
+  )
+  // A scatter axis can be categorical, so enum variables belong here even
+  // though they can never carry a line, a radar spoke or a box.
+  const axisChoices = $derived([...numeric, ...groupings])
   const plotted = $derived(numeric.filter((v) => chosen.has(v.key)))
 
   $effect(() => {
@@ -68,9 +81,13 @@
     if (Array.isArray(stored.chosen)) chosen = new Set(stored.chosen)
     if (Number.isFinite(stored.windowDays)) windowDays = stored.windowDays
     if (Number.isFinite(stored.smoothing)) smoothing = stored.smoothing
-    if (stored.groupBy) groupBy = stored.groupBy
-    if (stored.filterBy) filterBy = stored.filterBy
-    if (Array.isArray(stored.filterOptions)) filterOptions = new Set(stored.filterOptions)
+    if (stored.filters && typeof stored.filters === 'object') {
+      filters = Object.fromEntries(
+        Object.entries(stored.filters)
+          .filter(([, values]) => Array.isArray(values) && values.length)
+          .map(([key, values]) => [key, new Set(values)])
+      )
+    }
     if (stored.scatterX) scatterX = stored.scatterX
     if (stored.scatterY) scatterY = stored.scatterY
 
@@ -92,9 +109,9 @@
           chosen: [...chosen],
           windowDays,
           smoothing,
-          groupBy,
-          filterBy,
-          filterOptions: [...filterOptions],
+          filters: Object.fromEntries(
+            Object.entries(filters).map(([key, values]) => [key, [...values]])
+          ),
           scatterX,
           scatterY,
         },
@@ -113,19 +130,15 @@
       smoothing,
       scatterX,
       scatterY,
-      groupBy,
-      filterBy,
-      [...filterOptions].join(),
+      Object.entries(filters)
+        .map(([key, values]) => `${key}:${[...values].sort().join('|')}`)
+        .sort()
+        .join(),
     ]
     if (ready) save(snapshot)
   })
 
-  /**
-   * Map a variable to {day: value}, merging every question id behind it.
-   *
-   * @param {object} variable A variable from /api/stats/variables.
-   * @returns {Record<string, number>} One value per day.
-   */
+  /** Map a variable to {day: value}, merging every question id behind it. */
   function seriesFor(variable) {
     const ids = new Set(variable.question_ids)
     const inWindow = new Set(days)
@@ -149,20 +162,102 @@
   // line, which tells the reader nothing.
   const maxSmoothing = $derived(Math.max(Math.floor(windowDays / 3), 1))
 
-  /** Map each day to the option chosen for `variable`, if any. */
-  function optionByDay(variable) {
-    if (!variable) return {}
+  /** Values for plotting `variable`, mapping enum options onto their position. */
+  function axisValues(variable) {
+    if (variable.kind !== 'enum') return seriesFor(variable)
+    const positions = new Map(variable.options.map((option, index) => [option.id, index]))
+    const inWindow = new Set(days)
     const ids = new Set(variable.question_ids)
     const out = {}
     for (const row of rows) {
-      if (ids.has(row.question_id) && row.option_id != null) out[row.day] = row.option_id
+      if (!ids.has(row.question_id) || row.option_id == null) continue
+      if (!inWindow.has(row.day)) continue
+      if (positions.has(row.option_id)) out[row.day] = positions.get(row.option_id)
     }
     return out
   }
 
-  const filterVariable = $derived(groupings.find((v) => v.key === filterBy) ?? null)
-  const groupVariable = $derived(groupings.find((v) => v.key === groupBy) ?? null)
-  const filterTags = $derived(optionByDay(filterVariable))
+  /** Axis configuration, categorical for enum variables and linear otherwise. */
+  function axisFor(variable, extra) {
+    const shared = {
+      nameLocation: 'middle',
+      splitLine: { lineStyle: { color: '#2a2440' } },
+      ...extra,
+    }
+    if (variable.kind === 'enum') {
+      return {
+        ...shared,
+        type: 'category',
+        data: variable.options.map((option) => option.label),
+        boundaryGap: true,
+        // interval 0 forces every option to be labelled: dropping half of them
+        // on a narrow screen hides which categories exist at all.
+        axisLabel: {
+          interval: 0,
+          rotate: 30,
+          formatter: (v) => (v.length > 14 ? `${v.slice(0, 13)}…` : v),
+        },
+      }
+    }
+    return {
+      ...shared,
+      type: 'value',
+      min: (variable.min_value ?? 0) - 0.5,
+      max: (variable.max_value ?? 5) + 0.5,
+      // The half-step padding keeps marks off the edge; it is not a real value.
+      axisLabel: { formatter: (v) => (Number.isInteger(v) ? v : '') },
+    }
+  }
+
+  /** The selectable values of a filter dimension, as {id, label} pairs. */
+  function facetChoices(variable) {
+    if (variable.kind === 'enum') {
+      return variable.options.map((option) => ({ id: option.id, label: option.label }))
+    }
+    const ids = new Set(variable.question_ids)
+    const seen = new Set()
+    for (const row of rows) {
+      if (ids.has(row.question_id) && row.value != null) seen.add(row.value)
+    }
+    if (seen.size > CHIP_LIMIT) return []
+    return [...seen]
+      .sort((a, b) => a - b)
+      .map((value) => ({ id: value, label: String(value) }))
+  }
+
+  /** Map each day to the value this variable recorded for it. */
+  function facetByDay(variable) {
+    const ids = new Set(variable.question_ids)
+    const out = {}
+    for (const row of rows) {
+      if (!ids.has(row.question_id)) continue
+      const tag = row.option_id ?? row.value
+      if (tag != null) out[row.day] = tag
+    }
+    return out
+  }
+
+  // Precomputed once per filter dimension rather than per day.
+  const facetTags = $derived(
+    Object.fromEntries(
+      filterable.map((variable) => [variable.key, facetByDay(variable)])
+    )
+  )
+
+  /** Add or remove one choice from one filter dimension. */
+  function toggleFilter(key, choiceId) {
+    const next = new Set(filters[key] ?? [])
+    if (next.has(choiceId)) next.delete(choiceId)
+    else next.add(choiceId)
+    const updated = { ...filters }
+    if (next.size === 0) delete updated[key]
+    else updated[key] = next
+    filters = updated
+  }
+
+  const activeFilters = $derived(
+    Object.entries(filters).filter(([, values]) => values.size > 0)
+  )
 
   function movingAverage(values, span) {
     if (span <= 1) return values
@@ -185,10 +280,25 @@
     if (allDays.length === 0) return []
     const end = allDays.length - Math.min(offset, maxOffset)
     const window = allDays.slice(Math.max(end - windowDays, 0), end)
-    // The filter belongs to the timeline, where its control lives. Applying it
-    // everywhere would quietly reshape views that give no sign it is on.
-    if (view !== 'line' || !filterVariable || filterOptions.size === 0) return window
-    return window.filter((day) => filterOptions.has(filterTags[day]))
+    if (activeFilters.length === 0) return window
+    // Every active dimension has to admit the day, so narrowing one never
+    // widens the result.
+    return window.filter((day) =>
+      activeFilters.every(([key, values]) => values.has(facetTags[key]?.[day]))
+    )
+  })
+
+  // `days` holds only the days that carry answers, which is what the other
+  // views and the counters want. The timeline needs every calendar day in
+  // between as well: without them a fortnight of not tracking collapses into a
+  // single tick and the axis reads as though no time passed.
+  const timelineDays = $derived.by(() => {
+    if (days.length === 0) return []
+    const all = []
+    for (let cursor = days[0]; cursor <= days.at(-1); cursor = shiftDay(cursor, 1)) {
+      all.push(cursor)
+    }
+    return all
   })
 
   $effect(() => {
@@ -229,13 +339,16 @@
       ...baseOptions(),
       xAxis: {
         type: 'category',
-        data: days,
+        data: timelineDays,
         axisLine: { lineStyle: { color: '#3a3350' } },
+        axisLabel: { formatter: (day) => dayLabel(day) },
       },
       yAxis: { type: 'value', splitLine: { lineStyle: { color: '#2a2440' } } },
       series: plotted.map((variable) => {
         const points = seriesFor(variable)
-        const raw = days.map((day) => points[day] ?? null)
+        // Untracked days sit in the array as nulls, so they take up their real
+        // width on the axis while the line still spans them.
+        const raw = timelineDays.map((day) => points[day] ?? null)
         return {
           name: variable.label,
           type: 'line',
@@ -244,7 +357,7 @@
           smooth: 0.2,
           // An averaged line no longer passes through the answers, so the
           // markers that would imply it does are dropped.
-          showSymbol: smoothing === 1 && days.length < 60,
+          showSymbol: smoothing === 1 && timelineDays.length < 60,
           sampling: 'lttb',
           lineStyle: { width: smoothing > 1 ? 2.5 : 2 },
           connectNulls: true,
@@ -287,85 +400,48 @@
 
   /** Plot the two chosen variables against each other. */
   function scatterOptions() {
-    const x = variables.find((v) => v.key === scatterX)
-    const y = variables.find((v) => v.key === scatterY)
+    const x = axisChoices.find((v) => v.key === scatterX)
+    const y = axisChoices.find((v) => v.key === scatterY)
     if (!x || !y) return baseOptions()
-    const xs = seriesFor(x)
-    const ys = seriesFor(y)
-    // Answers on a 0-5 scale collide constantly, so an unweighted scatter shows
-    // "this pair happened" and hides "it happened forty times".
-    // One tally per option when grouping, so each group keeps its own counts
-    // and a shared size scale that stays comparable between them.
-    const tags = optionByDay(groupVariable)
-    const buckets = new Map()
+    const xs = axisValues(x)
+    const ys = axisValues(y)
+    // Answers collide constantly on a short scale, so an unweighted scatter
+    // shows "this pair happened" and hides "it happened forty times".
+    const tally = new Map()
     for (const day of days) {
       if (xs[day] === undefined || ys[day] === undefined) continue
-      const group = groupVariable ? (tags[day] ?? null) : null
-      if (groupVariable && group === null) continue
-      const tally = buckets.get(group) ?? new Map()
       const key = `${xs[day]}:${ys[day]}`
       const seen = tally.get(key)
       if (seen) seen[2] += 1
       else tally.set(key, [xs[day], ys[day], 1])
-      buckets.set(group, tally)
     }
-    const busiest = [...buckets.values()].reduce(
-      (most, tally) =>
-        [...tally.values()].reduce((inner, [, , count]) => Math.max(inner, count), most),
-      1
-    )
-    const sizeFor = ([, , count]) => 9 + 26 * Math.sqrt(count / busiest)
+    const points = [...tally.values()]
+    const busiest = points.reduce((most, [, , count]) => Math.max(most, count), 1)
+    const readable = (variable, value) =>
+      variable.kind === 'enum' ? (variable.options[value]?.label ?? value) : value
+
     return {
       ...baseOptions(),
       legend: undefined,
+      grid: { left: 64, right: 28, top: 24, bottom: x.kind === 'enum' ? 96 : 64 },
       tooltip: {
         trigger: 'item',
-        formatter: (item) => {
-          const [a, b, count] = item.value
-          const head = groupVariable ? `<b>${item.seriesName}</b><br>` : ''
-          return (
-            `${head}${x.label}: ${a}<br>${y.label}: ${b}<br>` +
-            `${count} ${count === 1 ? 'day' : 'days'}`
-          )
+        formatter: ({ value: [a, b, count] }) =>
+          `${x.label}: ${readable(x, a)}<br>${y.label}: ${readable(y, b)}<br>` +
+          `${count} ${count === 1 ? 'day' : 'days'}`,
+      },
+      xAxis: axisFor(x, { name: x.label, nameGap: x.kind === 'enum' ? 62 : 34 }),
+      yAxis: axisFor(y, { name: y.label, nameGap: 42 }),
+      series: [
+        {
+          type: 'scatter',
+          // Area scales with the count, so a mark twice the area means twice
+          // the days. Radius alone would exaggerate the busy coordinates.
+          symbolSize: ([, , count]) => 9 + 26 * Math.sqrt(count / busiest),
+          itemStyle: { opacity: 0.75 },
+          data: points,
         },
-      },
-      // Pad the axes past the scale so the largest marks are not clipped in
-      // half at the extremes, where the busiest coordinates tend to sit.
-      grid: { left: 64, right: 28, top: groupVariable ? 48 : 24, bottom: 64 },
-      xAxis: {
-        name: x.label,
-        nameLocation: 'middle',
-        nameGap: 34,
-        min: (x.min_value ?? 0) - 0.5,
-        max: (x.max_value ?? 5) + 0.5,
-        // The half-step padding exists to keep marks off the edge; it is not a
-        // value anyone answered, so it is not labelled.
-        axisLabel: { formatter: (v) => (Number.isInteger(v) ? v : '') },
-        splitLine: { lineStyle: { color: '#2a2440' } },
-      },
-      yAxis: {
-        name: y.label,
-        nameLocation: 'middle',
-        nameGap: 42,
-        min: (y.min_value ?? 0) - 0.5,
-        max: (y.max_value ?? 5) + 0.5,
-        axisLabel: { formatter: (v) => (Number.isInteger(v) ? v : '') },
-        splitLine: { lineStyle: { color: '#2a2440' } },
-      },
-      legend: groupVariable
-        ? { type: 'scroll', top: 0, textStyle: { color: '#b9b3cc' } }
-        : undefined,
-      series: [...buckets.entries()].map(([group, tally]) => ({
-        name: groupVariable
-          ? (groupVariable.options.find((o) => o.id === group)?.label ?? 'Unrecorded')
-          : 'Days',
-        type: 'scatter',
-        // Area scales with the count, so a mark twice the area means twice the
-        // days. Radius alone would exaggerate the busy coordinates.
-        symbolSize: sizeFor,
-        itemStyle: { opacity: 0.7 },
-        data: [...tally.values()],
-      })),
+      ],
     }
   }
 
@@ -379,15 +455,31 @@
     })
     return {
       ...baseOptions(),
-      tooltip: { trigger: 'item' },
+      tooltip: {
+        trigger: 'item',
+        formatter: ({ dataIndex, value }) =>
+          `<b>${plotted[dataIndex]?.label ?? ''}</b><br>` +
+          `min ${value[1]} · q1 ${value[2]} · median ${value[3]} · ` +
+          `q3 ${value[4]} · max ${value[5]}`,
+      },
       legend: undefined,
+      // Numbering the categories keeps the plot readable at any width; the
+      // key below the chart carries the full prompts.
       xAxis: {
         type: 'category',
-        data: plotted.map((v) => v.label),
-        axisLabel: { interval: 0, rotate: 20 },
+        data: plotted.map((_, index) => String(index + 1)),
+        axisLabel: { interval: 0 },
       },
       yAxis: { type: 'value', splitLine: { lineStyle: { color: '#2a2440' } } },
-      series: [{ type: 'boxplot', data }],
+      series: [
+        {
+          type: 'boxplot',
+          data,
+          itemStyle: { color: '#2a2440', borderWidth: 2 },
+          // One colour per box, matching the key rendered under the chart.
+          colorBy: 'data',
+        },
+      ],
     }
   }
 
@@ -465,8 +557,8 @@
       >
         <span class="meta">
           Show · {plotted.length} of {numeric.length}
-          {#if filterVariable && filterOptions.size > 0}
-            · filtered
+          {#if activeFilters.length > 0}
+            · {days.length} of {allDays.length} days
           {/if}
         </span>
         <span class="meta">{showOpen ? 'Hide' : 'Change'}</span>
@@ -507,72 +599,47 @@
             {/each}
           </div>
 
-          {#if groupings.length > 0 && view === 'line'}
+          {#if filterable.length > 0}
             <hr class="my-4 border-white/10" />
-            <label class="meta flex flex-wrap items-center gap-3">
-              Only days where
-              <select
-                bind:value={filterBy}
-                onchange={() => (filterOptions = new Set())}
-                class="rounded-md border border-white/15 bg-ink px-3 py-2 normal-case"
-              >
-                <option value="">Every day counts</option>
-                {#each groupings as variable (variable.key)}
-                  <option value={variable.key}>{variable.label}</option>
-                {/each}
-              </select>
-            </label>
-            {#if filterVariable}
-              <div class="mt-3 flex flex-wrap gap-2">
-                {#each filterVariable.options as option (option.id)}
-                  <button
-                    class="meta rounded-md border px-3 py-2 transition
-                           {filterOptions.has(option.id)
-                      ? 'border-dusk-lift bg-dusk/30 text-paper'
-                      : 'border-white/15 hover:border-white/40'}"
-                    aria-pressed={filterOptions.has(option.id)}
-                    onclick={() => {
-                      const next = new Set(filterOptions)
-                      if (next.has(option.id)) next.delete(option.id)
-                      else next.add(option.id)
-                      filterOptions = next
-                    }}
-                  >
-                    {option.label}
-                  </button>
-                {/each}
-                {#if filterOptions.size > 0}
-                  <button
-                    class="meta underline underline-offset-4 hover:text-paper"
-                    onclick={() => (filterOptions = new Set())}
-                  >
-                    Clear
-                  </button>
-                {/if}
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <p class="meta">Only days where</p>
+              {#if activeFilters.length > 0}
+                <button
+                  class="meta underline underline-offset-4 hover:text-paper"
+                  onclick={() => (filters = {})}
+                >
+                  Clear all
+                </button>
+              {/if}
+            </div>
+
+            {#each filterable as variable (variable.key)}
+              <div class="mb-3">
+                <p class="meta mb-2 normal-case text-paper">{variable.label}</p>
+                <div class="flex flex-wrap gap-2">
+                  {#each facetChoices(variable) as choice (choice.id)}
+                    <button
+                      class="meta rounded-md border px-3 py-2 transition
+                             {filters[variable.key]?.has(choice.id)
+                        ? 'border-dusk-lift bg-dusk/30 text-paper'
+                        : 'border-white/15 hover:border-white/40'}"
+                      aria-pressed={filters[variable.key]?.has(choice.id) ?? false}
+                      onclick={() => toggleFilter(variable.key, choice.id)}
+                    >
+                      {choice.label}
+                    </button>
+                  {/each}
+                </div>
               </div>
-              <p class="meta mt-2 normal-case">
-                {filterOptions.size === 0
-                  ? 'Nothing selected, so every day is plotted.'
-                  : `${days.length} of ${allDays.length} days match.`}
-              </p>
-            {/if}
+            {/each}
+
+            <p class="meta mt-2 normal-case">
+              {activeFilters.length === 0
+                ? 'Nothing selected, so every day counts.'
+                : `${days.length} of ${allDays.length} days match.`}
+            </p>
           {/if}
 
-          {#if groupings.length > 0 && view === 'scatter'}
-            <hr class="my-4 border-white/10" />
-            <label class="meta flex flex-wrap items-center gap-3">
-              Colour by
-              <select
-                bind:value={groupBy}
-                class="rounded-md border border-white/15 bg-ink px-3 py-2 normal-case"
-              >
-                <option value="">Nothing — one colour for every day</option>
-                {#each groupings as variable (variable.key)}
-                  <option value={variable.key}>{variable.label}</option>
-                {/each}
-              </select>
-            </label>
-          {/if}
         </div>
       {/if}
     </div>
@@ -626,19 +693,29 @@
     </div>
 
     {#if view === 'scatter'}
-      <div class="mb-4 flex flex-wrap gap-3">
-        <label class="meta flex items-center gap-2">
+      <!-- Stacked and width-constrained: a long prompt in a select must not
+           push the control off a narrow screen. -->
+      <div class="mb-4 grid gap-3 sm:grid-cols-2">
+        <label class="meta flex min-w-0 items-center gap-2">
           X
-          <select bind:value={scatterX} class="rounded-md border border-white/15 bg-ink-soft px-2 py-1">
-            {#each numeric as variable (variable.key)}
+          <select
+            bind:value={scatterX}
+            class="min-w-0 flex-1 truncate rounded-md border border-white/15 bg-ink-soft
+                   px-2 py-2 normal-case"
+          >
+            {#each axisChoices as variable (variable.key)}
               <option value={variable.key}>{variable.label}</option>
             {/each}
           </select>
         </label>
-        <label class="meta flex items-center gap-2">
+        <label class="meta flex min-w-0 items-center gap-2">
           Y
-          <select bind:value={scatterY} class="rounded-md border border-white/15 bg-ink-soft px-2 py-1">
-            {#each numeric as variable (variable.key)}
+          <select
+            bind:value={scatterY}
+            class="min-w-0 flex-1 truncate rounded-md border border-white/15 bg-ink-soft
+                   px-2 py-2 normal-case"
+          >
+            {#each axisChoices as variable (variable.key)}
               <option value={variable.key}>{variable.label}</option>
             {/each}
           </select>
@@ -656,6 +733,24 @@
         bind:this={chartEl}
         class="h-[26rem] w-full rounded-xl border border-white/10 bg-ink-soft p-2"
       ></div>
+
+      {#if view === 'box'}
+        <ol class="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+          {#each plotted as variable, index (variable.key)}
+            <li class="flex min-w-0 items-baseline gap-2 text-sm">
+              <span
+                class="numeral inline-block w-5 shrink-0 text-right"
+                style:color={PALETTE[index % PALETTE.length]}
+              >
+                {index + 1}
+              </span>
+              <span class="min-w-0 truncate text-haze" title={variable.label}>
+                {variable.label}
+              </span>
+            </li>
+          {/each}
+        </ol>
+      {/if}
     {/if}
   {/if}
 </section>

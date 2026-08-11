@@ -9,7 +9,7 @@ from starlette.types import Scope
 
 from bootstrap import bootstrap
 from config import get_settings
-from database import Base, SessionLocal, engine
+from database import SessionLocal
 from routers import answers, auth, catalogues, stats, users
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -18,7 +18,11 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Prepare the database and seed the initial account on startup.
+    """Seed the initial account and catalogue on startup.
+
+    The schema itself is not created here. A database that has not been
+    migrated makes startup fail rather than quietly growing tables that no
+    migration accounts for; run ``alembic upgrade head`` first.
 
     Parameters
     ----------
@@ -30,7 +34,6 @@ async def lifespan(app: FastAPI):
     None
         Control returns to the server for the lifetime of the application.
     """
-    Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         bootstrap(db, get_settings())
     yield

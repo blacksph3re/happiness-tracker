@@ -1,18 +1,55 @@
 from datetime import date
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from models import Answer, Catalogue, Question, SYSTEM_KEYS
+from models import Answer, Catalogue, Question, QuestionOption, SYSTEM_KEYS
+
+WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+"""Weekday option labels, ordered so that index 0 is Monday."""
+
+MONTH_LABELS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+"""Month option labels, ordered so that index 0 is January."""
 
 SYSTEM_QUESTION_SPECS = {
-    "weekday": ("Weekday", 1.0, 7.0, "Monday", "Sunday"),
-    "day_of_year": ("Day of the year", 1.0, 366.0, "Jan 1", "Dec 31"),
-    "month": ("Month", 1.0, 12.0, "January", "December"),
-    "year": ("Year", 2000.0, 2100.0, "2000", "2100"),
-    "first_answer_hour": ("Hour of first answer", 0.0, 23.0, "Midnight", "23:00"),
+    "weekday": {"prompt": "Weekday", "kind": "enum", "options": WEEKDAY_LABELS},
+    "day_of_year": {
+        "prompt": "Day of the year",
+        "kind": "discrete",
+        "bounds": (1.0, 366.0, "Jan 1", "Dec 31"),
+    },
+    "month": {"prompt": "Month", "kind": "enum", "options": MONTH_LABELS},
+    "year": {
+        "prompt": "Year",
+        "kind": "discrete",
+        "bounds": (2000.0, 2100.0, "2000", "2100"),
+    },
+    "first_answer_hour": {
+        "prompt": "Hour of first answer",
+        "kind": "discrete",
+        "bounds": (0.0, 23.0, "Midnight", "23:00"),
+    },
 }
-"""Definition of each auto-tracked question: prompt, bounds and bound labels."""
+"""Definition of each auto-tracked question.
+
+Weekday and month are enums because they are categories, not quantities: the
+step from Sunday to Monday is not a change of six, and treating them as scales
+invited plotting them over time, which says nothing. They exist to subset the
+data, and the remaining three are scales that happen to be recorded for you.
+"""
 
 
 def create_catalogue(db: Session, name: str) -> Catalogue:
@@ -38,21 +75,28 @@ def create_catalogue(db: Session, name: str) -> Catalogue:
     db.add(catalogue)
     db.flush()
     for offset, key in enumerate(SYSTEM_KEYS):
-        prompt, low, high, low_label, high_label = SYSTEM_QUESTION_SPECS[key]
-        db.add(
-            Question(
-                catalogue_id=catalogue.id,
-                kind="discrete",
-                prompt=prompt,
-                position=1000 + offset,
-                active=True,
-                system_key=key,
-                min_value=low,
-                max_value=high,
-                min_label=low_label,
-                max_label=high_label,
-            )
+        spec = SYSTEM_QUESTION_SPECS[key]
+        low, high, low_label, high_label = spec.get("bounds", (None, None, None, None))
+        question = Question(
+            catalogue_id=catalogue.id,
+            kind=spec["kind"],
+            prompt=spec["prompt"],
+            position=1000 + offset,
+            active=True,
+            system_key=key,
+            min_value=low,
+            max_value=high,
+            min_label=low_label,
+            max_label=high_label,
         )
+        db.add(question)
+        db.flush()
+        for position, label in enumerate(spec.get("options", ())):
+            db.add(
+                QuestionOption(
+                    question_id=question.id, label=label, position=position
+                )
+            )
     db.flush()
     return catalogue
 
@@ -80,6 +124,9 @@ def question_is_answered(db: Session, question_id: int) -> bool:
 def _system_values(day: date, local_hour: int) -> dict[str, float]:
     """Compute the auto-tracked values for a day.
 
+    Enum keys yield the zero-based position of the option to select; scaled keys
+    yield the value itself.
+
     Parameters
     ----------
     day : datetime.date
@@ -93,9 +140,9 @@ def _system_values(day: date, local_hour: int) -> dict[str, float]:
         One value per system key.
     """
     return {
-        "weekday": float(day.isoweekday()),
+        "weekday": float(day.isoweekday() - 1),
         "day_of_year": float(day.timetuple().tm_yday),
-        "month": float(day.month),
+        "month": float(day.month - 1),
         "year": float(day.year),
         "first_answer_hour": float(local_hour),
     }
@@ -142,7 +189,9 @@ def sync_system_answers(
 
     system_questions = (
         db.execute(
-            select(Question).where(
+            select(Question)
+            .options(selectinload(Question.options))
+            .where(
                 Question.catalogue_id == catalogue_id,
                 Question.system_key.is_not(None),
             )
@@ -152,12 +201,29 @@ def sync_system_answers(
     )
     values = _system_values(day, local_hour)
     for question in system_questions:
+        computed = values[question.system_key]
+        if question.kind == "enum":
+            # The computed number is the option's position, not the answer.
+            option = next(
+                (o for o in question.options if o.position == int(computed)), None
+            )
+            if option is None:
+                continue
+            db.add(
+                Answer(
+                    user_id=user_id,
+                    question_id=question.id,
+                    day=day,
+                    option_id=option.id,
+                )
+            )
+            continue
         db.add(
             Answer(
                 user_id=user_id,
                 question_id=question.id,
                 day=day,
-                value=values[question.system_key],
+                value=computed,
             )
         )
 

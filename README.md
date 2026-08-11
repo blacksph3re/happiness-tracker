@@ -22,8 +22,8 @@ To install everything, just build the Dockerfile and run through docker. You may
 
 - `PORT` - the port exposed, by default 8000
 - `DB_STORAGE` - Where the sqlite .db file is stored, by default database.db
-- `ADMIN_USER` - The username of the initial admin acccount
-- `ADMIN_PASSWORD` - The password of the initial admin account
+- `ADMIN_USER` - The username of the initial admin acccount (default: `admin`)
+- `ADMIN_PASSWORD` - The password of the initial admin account (default: `admin`)
 - `BOOTSTRAP_QUESTION_CATALOGUE` - If you want to bootstrap an initial catalogue of questions as a default (0/1)
 - `JWT_SECRET` - The key used to sign session tokens. If unset, a random one is generated at startup, which logs every user out on every restart - set it for any real deployment.
 - `ACCESS_TOKEN_TTL` - How long a session token stays valid before it has to be refreshed, by default 1h
@@ -31,6 +31,69 @@ To install everything, just build the Dockerfile and run through docker. You may
 - `PASSWORD_MIN_LENGTH` - Minimum length of a user password, by default 8
 
 After installation, you want to define the questions that will be answering regularly. Questions are grouped in catalogues and every user has a default catalogue that will be automatically opened when he/she logs in.
+
+## Development
+
+In production one FastAPI process serves both the API and the compiled frontend. For development you run two processes instead, so that each half reloads on its own: the backend on `:8000` and the Vite dev server on `:5173`. **Use `http://localhost:5173` in the browser** — it proxies `/api` to the backend, so there is no CORS setup and no rebuild step between edits.
+
+Prerequisites: [uv](https://docs.astral.sh/uv/) for the backend and [pnpm](https://pnpm.io/) for the frontend.
+
+**Terminal 1 — backend, reloads on every `.py` save:**
+
+```bash
+cd backend
+uv sync                      # first time only
+uv run alembic upgrade head  # first time, and after pulling new migrations
+JWT_SECRET=dev-secret uv run fastapi dev
+```
+
+The server does not create tables on its own — starting against an unmigrated database fails with `no such table`, rather than quietly building a schema no migration accounts for. The admin account and the default catalogue *are* created on first start, once the tables exist.
+
+Setting `JWT_SECRET` is optional but keeps you logged in across restarts — without it a new key is generated each time the server boots.
+
+**Terminal 2 — frontend, hot module reloading:**
+
+```bash
+cd app
+pnpm install                 # first time only
+pnpm dev
+```
+
+Then open http://localhost:5173 and sign in with `ADMIN_USER` / `ADMIN_PASSWORD` (`admin` / `admin` unless you set them). Svelte components swap in place without losing page state; the backend restarts on save and the browser picks it up on the next request.
+
+Useful extras:
+
+```bash
+cd backend && uv run pytest    # the test suite
+cd app && pnpm build           # emit the production bundle into backend/static
+```
+
+Once `pnpm build` has run, `uv run fastapi dev` alone serves the built frontend on `:8000` too, which is the quickest way to check the single-process setup behaves the same as in Docker. Delete `backend/static` to go back to backend-only mode.
+
+## Migrations
+
+The schema is versioned with [Alembic](https://alembic.sqlalchemy.org/), from `backend/`.
+
+**In Docker, migrations apply themselves.** The container runs `alembic upgrade head` before the server starts, so pulling a new image and restarting is all an upgrade takes. Point `DB_STORAGE` at a mounted volume and take a copy of that file before upgrading — SQLite schema changes are applied in place.
+
+**Applying migrations by hand:**
+
+```bash
+cd backend
+uv run alembic upgrade head     # apply everything outstanding
+uv run alembic current          # which revision the database is on
+uv run alembic history          # every revision, newest last
+uv run alembic downgrade -1     # step one revision back
+```
+
+**Writing one after changing a model:**
+
+```bash
+cd backend
+uv run alembic revision --autogenerate -m "what changed"
+```
+
+Read the generated file before committing it. Autogenerate detects tables, columns and indexes, but it does not see data: converting a column's meaning, backfilling a new `NOT NULL`, or splitting a table needs those statements written by hand. It also cannot infer a `downgrade()` for a data change. SQLite cannot `ALTER` most things, so `env.py` sets `render_as_batch=True` and Alembic rewrites the table instead — the generated code will show `batch_alter_table` blocks. Apply, then `downgrade` and `upgrade` again to confirm the migration works in both directions before you commit.
 
 ## Catalogue
 
@@ -40,11 +103,13 @@ There are three types of questions
 - Continuous: Continuous values that have a scale. They have a lower and upper bound with a description but no increments.
 
 Furthermore, there are some answers that are always tracked automatically per day, if the user answered any questions:
-- Weekday
-- Day of the year
-- Month
-- Year
-- Hour of the day when the first question was answered
+- Weekday (enum: Mon … Sun)
+- Day of the year (discrete)
+- Month (enum: Jan … Dec)
+- Year (discrete)
+- Hour of the day when the first question was answered (discrete)
+
+These are not plotted as variables of their own — weekday over time is a sawtooth, and weekday as a radar spoke means nothing. They appear in the stats page under "Only days where" instead, so they subset the data behind the other plots: weekends only, winter months only, and so on. Several can be combined, and they are still shown in the answer table and the .xlsx export.
 
 The default catalogue is the [WHO-5 Well-Being Index](https://www.corc.uk.net/outcome-measures-guidance/directory-of-outcome-measures/the-world-health-organisation-five-well-being-index-who-5/), reproduced verbatim so answers stay comparable with the published instrument. All five are discrete questions on the WHO-5's own six-point scale, from 0 "At no time" to 5 "All of the time":
 

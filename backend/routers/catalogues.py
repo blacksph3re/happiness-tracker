@@ -9,6 +9,7 @@ from schemas import (
     CatalogueDetail,
     CatalogueOut,
     OptionCreate,
+    OptionUpdate,
     QuestionCreate,
     QuestionOut,
     QuestionUpdate,
@@ -18,10 +19,11 @@ from services import create_catalogue, question_is_answered
 router = APIRouter(tags=["Catalogue"])
 
 FROZEN_MESSAGE = (
-    "This question has already been answered. Its scale and options are frozen; "
-    "deactivate it and create a new question instead."
+    "This question has already been answered, so its scale and its set of "
+    "options are fixed. Wording can still be changed; to rescale it, deactivate "
+    "this question and create a new one."
 )
-"""Explanation returned when an edit would change an answered question's meaning."""
+"""Explanation returned when an edit would change an answered question's shape."""
 
 
 def _get_catalogue(db: DbSession, catalogue_id: int) -> Catalogue:
@@ -384,7 +386,7 @@ def add_question(
     summary="Edit a question",
     description=(
         "Edit a question. Wording, ordering and activation may always change; "
-        "bounds and labels are frozen once the question has been answered."
+        "the numeric bounds are frozen once the question has been answered."
     ),
 )
 def update_question(
@@ -392,9 +394,10 @@ def update_question(
 ) -> Question:
     """Edit a question, honouring the freeze rule.
 
-    `prompt`, `position` and `active` may always change. Bounds and labels may
-    only change while the question has no answers, because altering them would
-    silently reinterpret history.
+    Wording — `prompt`, `min_label` and `max_label` — along with `position` and
+    `active` may always change. The numeric bounds may only change while the
+    question has no answers, because altering them would silently reinterpret
+    every value already recorded.
 
     Parameters
     ----------
@@ -415,13 +418,17 @@ def update_question(
     Raises
     ------
     fastapi.HTTPException
-        With status 409 when a frozen field would change on an answered
-        question, or 422 when the resulting bounds would be inverted.
+        With status 409 when a bound would change on an answered question, or
+        422 when the resulting bounds would be inverted.
     """
     question = _get_question(db, question_id)
+    # Renaming is not rescaling: a changed label describes the same recorded
+    # answers, while a changed bound would silently reinterpret them.
     frozen_fields = {
         "min_value": payload.min_value,
         "max_value": payload.max_value,
+    }
+    wording_fields = {
         "min_label": payload.min_label,
         "max_label": payload.max_label,
     }
@@ -445,7 +452,7 @@ def update_question(
         question.position = payload.position
     if payload.active is not None:
         question.active = payload.active
-    for name, value in frozen_fields.items():
+    for name, value in {**frozen_fields, **wording_fields}.items():
         if value is not None:
             setattr(question, name, value)
     if (

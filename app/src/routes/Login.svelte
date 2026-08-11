@@ -7,11 +7,6 @@
   let error = $state('')
   let busy = $state(false)
 
-  /**
-   * Exchange the entered credentials for a token pair.
-   *
-   * @param {SubmitEvent} event The form submission.
-   */
   async function submit(event) {
     event.preventDefault()
     busy = true

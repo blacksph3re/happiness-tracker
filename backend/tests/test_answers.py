@@ -24,12 +24,23 @@ def answer(client, headers, question_id, value, day=DAY, hour=9):
 
 
 def system_answers(client, headers, catalogue_id, day=DAY):
-    """Return the auto-tracked answers recorded for a day, keyed by system key."""
+    """Return the auto-tracked answers for a day, keyed by system key.
+
+    Enum system questions resolve to their option label, scaled ones to their
+    number, which is how each reads everywhere else in the app.
+    """
     detail = client.get(f"/api/catalogues/{catalogue_id}", headers=headers).json()
-    by_id = {q["id"]: q["system_key"] for q in detail["questions"] if q["system_key"]}
+    by_id = {q["id"]: q for q in detail["questions"] if q["system_key"]}
+    labels = {
+        option["id"]: option["label"]
+        for question in by_id.values()
+        for option in question["options"]
+    }
     rows = client.get("/api/answers", headers=headers).json()
     return {
-        by_id[row["question_id"]]: row["value"]
+        by_id[row["question_id"]]["system_key"]: (
+            labels[row["option_id"]] if row["option_id"] is not None else row["value"]
+        )
         for row in rows
         if row["question_id"] in by_id and row["day"] == day
     }
@@ -41,9 +52,9 @@ def test_answering_a_day_materialises_system_answers(
     assert answer(client, admin_headers, starter_questions[0]["id"], 4).status_code == 204
     recorded = system_answers(client, admin_headers, catalogue_id)
     assert set(recorded) == SYSTEM_KEYS
-    assert recorded["weekday"] == float(date.fromisoformat(DAY).isoweekday())
+    assert recorded["weekday"] == "Wed"  # 2026-03-04 was a Wednesday
     assert recorded["day_of_year"] == float(date.fromisoformat(DAY).timetuple().tm_yday)
-    assert recorded["month"] == 3.0
+    assert recorded["month"] == "Mar"
     assert recorded["year"] == 2026.0
     assert recorded["first_answer_hour"] == 9.0
 
@@ -257,7 +268,13 @@ def test_stats_variables_report_roles(
     variables = client.get("/api/stats/variables", headers=admin_headers).json()
     by_key = {variable["key"]: variable for variable in variables}
     assert SYSTEM_KEYS <= set(by_key)
-    assert by_key["weekday"]["roles"] == ["axis", "radar"]
+    # Auto-tracked variables subset the data; they are never plotted themselves.
+    for key in SYSTEM_KEYS:
+        assert by_key[key]["roles"] == ["filter"], key
+    assert by_key["weekday"]["kind"] == "enum"
+    assert [o["label"] for o in by_key["weekday"]["options"]][:3] == ["Mon", "Tue", "Wed"]
+    assert by_key["month"]["kind"] == "enum"
+    assert by_key["year"]["kind"] == "discrete"
     assert by_key[f"q{created['id']}"]["roles"] == ["group", "radar"]
     assert "axis" not in by_key[f"q{created['id']}"]["roles"]
 

@@ -14,6 +14,25 @@ os.environ.setdefault("ADMIN_PASSWORD", "admin-password")
 os.environ.setdefault("BOOTSTRAP_QUESTION_CATALOGUE", "1")
 
 
+def apply_migrations():
+    """Build this test's schema by running the real migrations.
+
+    The application no longer creates tables at startup, so the suite goes
+    through Alembic like a deployment does. That also means a migration that
+    drifts from the models breaks the tests rather than passing unnoticed.
+
+    The Config is built without a file so that Alembic's own logging setup does
+    not run: `fileConfig` disables existing loggers, which would empty the
+    `caplog` assertions elsewhere in the suite.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config()
+    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    command.upgrade(config, "head")
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     """Yield a TestClient backed by a fresh, bootstrapped database."""
@@ -36,6 +55,8 @@ def client(tmp_path, monkeypatch):
         if not path.is_relative_to(BACKEND_DIR) or path.is_relative_to(VENV_DIR):
             continue
         sys.modules.pop(name, None)
+
+    apply_migrations()
 
     from fastapi.testclient import TestClient
 

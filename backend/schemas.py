@@ -181,6 +181,13 @@ class OptionCreate(BaseModel):
     """Sort order within the question."""
 
 
+class OptionUpdate(BaseModel):
+    """Payload for renaming an existing enum choice."""
+
+    label: str = Field(min_length=1, max_length=255)
+    """Replacement text for the choice."""
+
+
 class QuestionOut(BaseModel):
     """A question as exposed by the API, including its bounds and choices."""
 
@@ -254,8 +261,9 @@ class QuestionCreate(BaseModel):
 class QuestionUpdate(BaseModel):
     """Payload for editing a question.
 
-    Fields other than `prompt`, `position` and `active` are frozen once the
-    question has been answered.
+    Only the numeric bounds are frozen once the question has been answered.
+    Wording — the prompt and the bound descriptions — stays editable, since it
+    renames what was recorded rather than rescaling it.
     """
 
     prompt: str | None = Field(default=None, min_length=1, max_length=500)
@@ -268,16 +276,16 @@ class QuestionUpdate(BaseModel):
     """Whether the question appears in the questionnaire."""
 
     min_value: float | None = None
-    """New lower bound. Frozen once answered."""
+    """New lower bound. Frozen once the question has been answered."""
 
     max_value: float | None = None
-    """New upper bound. Frozen once answered."""
+    """New upper bound. Frozen once the question has been answered."""
 
     min_label: str | None = Field(default=None, max_length=255)
-    """New lower bound description. Frozen once answered."""
+    """New lower bound description. Wording, so editable at any time."""
 
     max_label: str | None = Field(default=None, max_length=255)
-    """New upper bound description. Frozen once answered."""
+    """New upper bound description. Wording, so editable at any time."""
 
 
 class CatalogueOut(BaseModel):

@@ -89,7 +89,7 @@ def test_answered_questions_freeze_their_scale(
         json={"min_value": 1, "max_value": 10},
     )
     assert frozen.status_code == 409
-    assert "frozen" in frozen.json()["detail"].lower()
+    assert "already been answered" in frozen.json()["detail"].lower()
 
     # Prompt, position and active stay editable forever.
     allowed = client.put(

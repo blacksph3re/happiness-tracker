@@ -9,10 +9,18 @@ from schemas import OptionOut, Variable
 router = APIRouter(prefix="/stats", tags=["Stats"])
 
 NUMERIC_ROLES = ["axis", "radar"]
-"""Plot roles a scaled variable can fill."""
+"""Plot roles a scaled question can fill."""
 
 ENUM_ROLES = ["group", "radar"]
-"""Plot roles an enum variable can fill: never an axis, since it has no scale."""
+"""Plot roles an enum question can fill: never an axis, since it has no scale."""
+
+SYSTEM_ROLES = ["filter"]
+"""The only role an auto-tracked variable fills.
+
+Weekday over time is a sawtooth and weekday on a radar is meaningless. What
+these variables are actually good for is narrowing the data behind the other
+plots - weekends only, winter only - so that is all they are offered for.
+"""
 
 
 @router.get(
@@ -77,7 +85,13 @@ def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
             max_label=question.max_label,
             options=[OptionOut.model_validate(option) for option in question.options],
             question_ids=[question.id],
-            roles=ENUM_ROLES if question.kind == "enum" else NUMERIC_ROLES,
+            roles=(
+                SYSTEM_ROLES
+                if question.system_key is not None
+                else ENUM_ROLES
+                if question.kind == "enum"
+                else NUMERIC_ROLES
+            ),
         )
         if question.system_key is not None:
             by_system_key[question.system_key] = variable

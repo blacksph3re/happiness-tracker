@@ -6,6 +6,8 @@
    * which is the responsive rule the brief asks for falling out of the layout
    * rather than being bolted onto it.
    */
+  import { tint } from './scale.js'
+
   let { question, value, onanswer } = $props()
 
   const steps = $derived(buildSteps(question))
@@ -19,12 +21,6 @@
 
   let sliderValue = $state(null)
 
-  /**
-   * Build one band per selectable step.
-   *
-   * @param {object} q The question being answered.
-   * @returns {Array<object>} Bands with their labels and answer payloads.
-   */
   function buildSteps(q) {
     if (q.kind === 'enum') {
       return q.options.map((option) => ({
@@ -47,26 +43,14 @@
     })
   }
 
-  /**
-   * Report whether a band is the currently recorded answer.
-   *
-   * @param {object} step One band.
-   * @returns {boolean} True when it matches the stored answer.
-   */
   function isChosen(step) {
     if (question.kind === 'enum') return value?.option_id === step.key
     return value?.value === step.key
   }
 
-  /**
-   * Deepen the band tint as the scale climbs, so the ladder reads as a gradient.
-   *
-   * @param {number} index Position of the band.
-   * @returns {string} A CSS colour.
-   */
-  function tint(index) {
-    const ratio = steps.length === 1 ? 1 : index / (steps.length - 1)
-    return `color-mix(in oklab, var(--color-dusk-lift) ${12 + ratio * 58}%, transparent)`
+  /** Deepen the band tint as the scale climbs, so the ladder reads as a gradient. */
+  function bandTint(index) {
+    return tint(steps.length === 1 ? 1 : index / (steps.length - 1))
   }
 </script>
 
@@ -99,17 +83,20 @@
       type="button"
       onclick={() => onanswer(step.payload)}
       aria-pressed={isChosen(step)}
-      style:background={tint(index)}
-      class="group relative flex min-h-16 flex-1 items-center justify-between gap-3 rounded-lg border px-5
-             py-4 text-left transition duration-150 ease-out
+      style:background={bandTint(index)}
+      class="group relative flex min-h-16 min-w-0 flex-1 items-center justify-between gap-3
+             rounded-lg border px-5 py-4 text-left transition duration-150 ease-out
              md:min-h-56 md:flex-col md:items-start md:justify-end md:px-4 md:py-5
              {isChosen(step)
         ? 'border-ember ring-2 ring-ember/60'
         : 'border-white/10 hover:border-white/30 hover:brightness-125'}"
     >
+      <!-- An option label is prose, not a numeral: it has to be allowed to wrap
+           and to shrink, or four of them overrun a mid-width screen. -->
       <span
-        class="numeral text-3xl text-paper md:text-5xl
-               {question.kind === 'enum' ? 'text-lg font-semibold md:text-2xl' : ''}"
+        class="{question.kind === 'enum'
+          ? 'min-w-0 text-lg leading-tight font-semibold break-words hyphens-auto md:text-xl'
+          : 'numeral text-3xl text-paper md:text-5xl'}"
       >
         {step.label}
       </span>
