@@ -28,8 +28,9 @@ def get_current_user(
 ) -> User:
     """Resolve the user behind the request's bearer token.
 
-    The user is re-loaded on every request, so deleting an account takes effect
-    immediately even though the tokens themselves are stateless.
+    The user is re-loaded on every request, so deleting an account, or changing
+    its password, takes effect immediately even though the tokens themselves are
+    stateless.
 
     Parameters
     ----------
@@ -47,7 +48,8 @@ def get_current_user(
     ------
     fastapi.HTTPException
         With status 401 if the token is absent, malformed, expired, of the
-        wrong type, or names a user that no longer exists.
+        wrong type, names a user that no longer exists, or was minted before
+        the account's password last changed.
     """
     if credentials is None or not credentials.credentials:
         raise CREDENTIALS_ERROR
@@ -57,6 +59,9 @@ def get_current_user(
         raise CREDENTIALS_ERROR from None
     user = db.get(User, int(claims["sub"]))
     if user is None:
+        raise CREDENTIALS_ERROR
+    # A token minted before the last password change is no longer this account's.
+    if claims.get("ver", 0) != user.token_version:
         raise CREDENTIALS_ERROR
     return user
 

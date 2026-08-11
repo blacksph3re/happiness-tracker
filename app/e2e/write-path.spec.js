@@ -23,8 +23,12 @@ test('moving between questions makes no server call', async ({ page, account }) 
 
 test('a stalled write never blocks the next question', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  // Hold every write open: the questionnaire must not wait for any of them.
-  await page.route('**/api/answers', () => {})
+  // Hold every *write* open. Reads must continue: the questionnaire now loads
+  // its answers from the shared store, so stalling those would stall the page
+  // rather than testing what happens to a pending submission.
+  await page.route('**/api/answers', (route) =>
+    route.request().method() === 'PUT' ? undefined : route.continue()
+  )
   await page.goto('/')
 
   await page.getByRole('group').getByRole('button').nth(3).click()

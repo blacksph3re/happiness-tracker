@@ -18,6 +18,15 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 
+PROMPT_MAX_LENGTH = 80
+"""Longest a question may be.
+
+Chosen from the layout rather than from a round number: at the narrowest
+desktop width the questionnaire gives a prompt three lines, and 80 characters
+fills them. Above 1024px the same text takes two. The heading reserves that
+space, so no question makes the answer scale jump down the page.
+"""
+
 SYSTEM_KEYS = ("weekday", "day_of_year", "month", "year", "first_answer_hour")
 """Stable identifiers of the five auto-tracked questions, in display order."""
 
@@ -35,6 +44,14 @@ class User(Base):
 
     password_hash: Mapped[str] = mapped_column(String(255))
     """Argon2 hash of the password. The plaintext is never stored or logged."""
+
+    token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """Bumped whenever every outstanding token for this account must stop working.
+
+    Tokens carry the value they were minted under, so changing a password
+    immediately invalidates sessions elsewhere without a server-side session
+    table to maintain.
+    """
 
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     """Whether the user may manage other users. Grants nothing else."""
@@ -126,7 +143,7 @@ class Question(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     """One of ``enum``, ``discrete`` or ``continuous``."""
 
-    prompt: Mapped[str] = mapped_column(String(500), nullable=False)
+    prompt: Mapped[str] = mapped_column(String(PROMPT_MAX_LENGTH), nullable=False)
     """Question text shown to the user."""
 
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

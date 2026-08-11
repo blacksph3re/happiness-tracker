@@ -103,6 +103,42 @@ export async function answerBand(page, index) {
     page.getByRole('group').getByRole('button').nth(index).click(),
   ])
   expect(response.status(), 'the answer was rejected').toBe(204)
+
+  // The write resolves long before the card finishes turning, and a tap during
+  // that turn is deliberately ignored so a double tap cannot skip a question.
+  // Returning early would make any caller answering twice in a row race it.
+  await expect(page.locator('[data-card]')).toHaveCSS('opacity', '1')
+}
+
+/**
+ * Give `account` a catalogue of its own and answer that instead.
+ *
+ * Adding a question to the shared catalogue would change what every later test
+ * answers - a spec that needs its own questions must not reshape everyone
+ * else's questionnaire.
+ *
+ * @param {import('@playwright/test').APIRequestContext} admin Admin API context.
+ * @param {object} account The account fixture.
+ * @param {Array<object>} questions Question payloads to create, in order.
+ * @returns {Promise<object>} The catalogue, with its questions attached.
+ */
+export async function privateCatalogue(admin, account, questions) {
+  const created = await admin.post('/api/catalogues', {
+    data: { name: `spec-${account.username}` },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { id } = await created.json()
+
+  for (const question of questions) {
+    const added = await admin.post(`/api/catalogues/${id}/questions`, { data: question })
+    expect(added.ok(), await added.text()).toBeTruthy()
+  }
+  const moved = await admin.put(`/api/users/${account.id}`, {
+    data: { default_catalogue_id: id },
+  })
+  expect(moved.ok(), await moved.text()).toBeTruthy()
+
+  return (await admin.get(`/api/catalogues/${id}`)).json()
 }
 
 /** Give `account` the named permission flags. */

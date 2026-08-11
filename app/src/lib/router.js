@@ -13,10 +13,18 @@ function sync() {
 
 window.addEventListener('popstate', sync)
 
-/** Navigate without a page load, so /stats stays a real, shareable URL. */
-export function navigate(to) {
+/**
+ * Navigate without a page load, so /stats stays a real, shareable URL.
+ *
+ * @param {string} to Path, optionally with a query string.
+ * @param {{replace?: boolean}} [options] `replace` swaps the current history
+ *   entry instead of adding one, for a change that should not need its own
+ *   press of the Back button.
+ */
+export function navigate(to, { replace = false } = {}) {
   if (to === window.location.pathname + window.location.search) return
-  window.history.pushState({}, '', to)
+  if (replace) window.history.replaceState({}, '', to)
+  else window.history.pushState({}, '', to)
   sync()
 }
 

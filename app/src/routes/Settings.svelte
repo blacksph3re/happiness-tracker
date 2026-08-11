@@ -1,5 +1,7 @@
 <script>
-  import { api, tryApi } from '../lib/api.js'
+  import { attempt, unwrap } from '../lib/api.js'
+  import { changeMyPassword, setMyDefaultCatalogue } from '../lib/generated/sdk.gen'
+  import { catalogues as catalogueStore, ensureCatalogues, ensureMe, me as meStore } from '../lib/store.js'
   import { pushToast } from '../lib/toasts.js'
 
   let me = $state(null)
@@ -12,17 +14,17 @@
   })
 
   async function load() {
-    me = await tryApi('/me')
-    catalogues = (await tryApi('/catalogues')) ?? []
+    me = await ensureMe()
+    catalogues = (await ensureCatalogues()) ?? []
   }
 
   async function chooseCatalogue(event) {
-    const updated = await tryApi('/me/default-catalogue', {
-      method: 'PUT',
-      body: { catalogue_id: Number(event.target.value) },
-    })
+    const updated = await attempt(() =>
+      setMyDefaultCatalogue({ body: { catalogue_id: Number(event.target.value) } })
+    )
     if (updated) {
       me = updated
+      meStore.set(updated)
       pushToast('Default catalogue changed', 'ok')
     }
   }
@@ -30,10 +32,11 @@
   async function changePassword(event) {
     event.preventDefault()
     try {
-      await api('/me/password', {
-        method: 'PUT',
-        body: { current_password: currentPassword, new_password: newPassword },
-      })
+      await unwrap(() =>
+        changeMyPassword({
+          body: { current_password: currentPassword, new_password: newPassword },
+        })
+      )
       currentPassword = ''
       newPassword = ''
       pushToast('Password changed', 'ok')

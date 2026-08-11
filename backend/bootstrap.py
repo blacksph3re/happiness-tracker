@@ -70,6 +70,17 @@ def bootstrap(db: Session, settings: Settings) -> None:
         select(User).where(User.username == settings.admin_user)
     ).scalar_one_or_none()
     if admin is None:
+        if not settings.admin_password:
+            raise RuntimeError(
+                f"ADMIN_PASSWORD is not set, so the {settings.admin_user!r} account "
+                "cannot be created. Set it to the password you want that account to "
+                "have; it is only used when the account does not yet exist."
+            )
+        if len(settings.admin_password) < settings.password_min_length:
+            raise RuntimeError(
+                "ADMIN_PASSWORD is shorter than PASSWORD_MIN_LENGTH "
+                f"({settings.password_min_length})."
+            )
         db.add(
             User(
                 username=settings.admin_user,

@@ -24,6 +24,14 @@ ENV PORT=8000 \
 VOLUME /data
 EXPOSE 8000
 
-# JWT_SECRET is deliberately not defaulted: without one the server generates a
-# random key at boot, so every restart signs everybody out.
+# Nothing here needs root at runtime. /data is chowned because the volume
+# inherits the image's ownership when Docker creates it.
+RUN useradd --system --uid 10001 --home-dir /srv happiness \
+    && mkdir -p /data \
+    && chown -R happiness:happiness /srv /data
+USER happiness
+
+# JWT_SECRET and ADMIN_PASSWORD are deliberately not defaulted: the server
+# refuses to start without a signing key, and without an admin password it will
+# not invent one for the account it bootstraps.
 CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port ${PORT}"]

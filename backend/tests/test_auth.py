@@ -187,3 +187,97 @@ def test_configured_ttls_are_honoured(client):
     assert refresh["exp"] - refresh["iat"] == pytest.approx(
         settings.refresh_ttl.total_seconds(), abs=2
     )
+
+
+def test_changing_a_password_invalidates_outstanding_tokens(client, admin_headers):
+    """A leaked token must not outlive the password it was issued under."""
+    assert client.get("/api/me", headers=admin_headers).status_code == 200
+    tokens = client.post(
+        "/api/login", json={"username": "admin", "password": "admin-password"}
+    ).json()
+
+    changed = client.put(
+        "/api/me/password",
+        headers=admin_headers,
+        json={"current_password": "admin-password", "new_password": "a-new-password"},
+    )
+    assert changed.status_code == 204
+
+    # Both halves of the old session are dead, on this device and any other.
+    assert client.get("/api/me", headers=admin_headers).status_code == 401
+    assert (
+        client.post(
+            "/api/refresh", json={"refresh_token": tokens["refresh_token"]}
+        ).status_code
+        == 401
+    )
+
+    # A fresh login works and its token is accepted.
+    fresh = client.post(
+        "/api/login", json={"username": "admin", "password": "a-new-password"}
+    ).json()
+    assert (
+        client.get(
+            "/api/me", headers={"Authorization": f"Bearer {fresh['access_token']}"}
+        ).status_code
+        == 200
+    )
+
+
+def test_an_admin_reset_ends_the_other_account_s_sessions(client, admin_headers):
+    """A reset exists to lock someone out, so their tokens must stop working."""
+    from tests.conftest import make_user
+
+    user, headers = make_user(client, admin_headers, "resettable")
+    assert client.get("/api/me", headers=headers).status_code == 200
+
+    client.put(
+        f"/api/users/{user['id']}",
+        headers=admin_headers,
+        json={},
+    )
+    reset = client.put(
+        f"/api/users/{user['id']}/password",
+        headers=admin_headers,
+        json={"new_password": "chosen-by-the-admin"},
+    )
+    assert reset.status_code == 204
+    assert client.get("/api/me", headers=headers).status_code == 401
+
+
+def test_a_forged_token_version_is_rejected(client):
+    """The version is signed, so it cannot simply be edited by the holder."""
+    import jwt as pyjwt
+
+    from config import get_settings
+
+    settings = get_settings()
+    forged = pyjwt.encode(
+        {"sub": "1", "typ": "access", "ver": 99, "exp": 9999999999},
+        settings.signing_key,
+        algorithm="HS256",
+    )
+    assert (
+        client.get("/api/me", headers={"Authorization": f"Bearer {forged}"}).status_code
+        == 401
+    )
+
+
+def test_oversized_preferences_are_refused(client, admin_headers):
+    """The document is opaque to the server, but it is not unbounded."""
+    from schemas import PREFERENCES_MAX_BYTES
+
+    too_big = client.put(
+        "/api/me/preferences",
+        headers=admin_headers,
+        json={"junk": "A" * (PREFERENCES_MAX_BYTES + 1)},
+    )
+    assert too_big.status_code == 422
+
+    fits = client.put(
+        "/api/me/preferences", headers=admin_headers, json={"view": "line"}
+    )
+    assert fits.status_code == 200
+    assert client.get("/api/me/preferences", headers=admin_headers).json() == {
+        "view": "line"
+    }

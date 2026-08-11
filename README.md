@@ -23,9 +23,9 @@ To install everything, just build the Dockerfile and run through docker. You may
 - `PORT` - the port exposed, by default 8000
 - `DB_STORAGE` - Where the sqlite .db file is stored, by default database.db
 - `ADMIN_USER` - The username of the initial admin acccount (default: `admin`)
-- `ADMIN_PASSWORD` - The password of the initial admin account (default: `admin`)
+- `ADMIN_PASSWORD` - **Required on a fresh install.** The password of the initial admin account. There is no default: an installation that forgets it fails to start rather than coming up with a guessable administrator. Only consulted while that account does not yet exist.
 - `BOOTSTRAP_QUESTION_CATALOGUE` - If you want to bootstrap an initial catalogue of questions as a default (0/1)
-- `JWT_SECRET` - The key used to sign session tokens. If unset, a random one is generated at startup, which logs every user out on every restart - set it for any real deployment.
+- `JWT_SECRET` - **Required.** The key used to sign session tokens. The server refuses to start without one, because a generated key would sign every user out on each restart and give each worker of a multi-worker deployment a different key. Generate one with `python -c 'import secrets; print(secrets.token_urlsafe(48))'`.
 - `ACCESS_TOKEN_TTL` - How long a session token stays valid before it has to be refreshed, by default 1h
 - `REFRESH_TOKEN_TTL` - How long a user stays logged in without re-entering their password, by default 30d
 - `PASSWORD_MIN_LENGTH` - Minimum length of a user password, by default 8
@@ -44,12 +44,12 @@ Prerequisites: [uv](https://docs.astral.sh/uv/) for the backend and [pnpm](https
 cd backend
 uv sync                      # first time only
 uv run alembic upgrade head  # first time, and after pulling new migrations
-JWT_SECRET=dev-secret uv run fastapi dev
+JWT_SECRET=dev-secret ADMIN_PASSWORD=dev-admin-password uv run fastapi dev
 ```
 
-The server does not create tables on its own — starting against an unmigrated database fails with `no such table`, rather than quietly building a schema no migration accounts for. The admin account and the default catalogue *are* created on first start, once the tables exist.
+Both variables are required. `JWT_SECRET` has no default because a generated one would sign every user out on each restart and give each worker of a multi-worker deployment a different key. `ADMIN_PASSWORD` has none because an installation that forgets it should fail loudly rather than come up with a guessable administrator; it is only consulted when the account does not yet exist.
 
-Setting `JWT_SECRET` is optional but keeps you logged in across restarts — without it a new key is generated each time the server boots.
+The server does not create tables on its own either — starting against an unmigrated database fails with `no such table`, rather than quietly building a schema no migration accounts for. The admin account and the default catalogue *are* created on first start, once the tables exist.
 
 **Terminal 2 — frontend, hot module reloading:**
 
@@ -59,14 +59,32 @@ pnpm install                 # first time only
 pnpm dev
 ```
 
-Then open http://localhost:5173 and sign in with `ADMIN_USER` / `ADMIN_PASSWORD` (`admin` / `admin` unless you set them). Svelte components swap in place without losing page state; the backend restarts on save and the browser picks it up on the next request.
+Then open http://localhost:5173 and sign in with `ADMIN_USER` / `ADMIN_PASSWORD` (`admin` / `dev-admin-password` with the command above). Svelte components swap in place without losing page state; the backend restarts on save and the browser picks it up on the next request.
 
 Useful extras:
 
 ```bash
 cd backend && uv run pytest    # the API test suite
 cd app && pnpm build           # emit the production bundle into backend/static
+cd app && pnpm api:generate    # regenerate the typed API client after an endpoint changes
 ```
+
+### The generated API client
+
+The frontend does not hand-write URLs or field names. `pnpm api:generate` dumps the
+backend's own OpenAPI document and generates a typed client into
+`app/src/lib/generated/`, which every page calls through. Run it after adding or changing
+an endpoint; the generated files are committed, so a clean checkout builds without a
+backend running.
+
+Around it sit two small modules worth knowing:
+
+- `src/lib/api.js` holds the session — token storage, one shared refresh when several
+  calls hit a 401 together, and turning a FastAPI error body into a sentence naming the
+  field that was wrong.
+- `src/lib/store.js` holds the data every page needs — the account, catalogues and the
+  answer history — loaded once and shared, so moving between pages does not refetch and
+  no two views disagree.
 
 ### End-to-end tests
 

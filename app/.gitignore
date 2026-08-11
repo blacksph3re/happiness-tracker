@@ -28,3 +28,6 @@ dist-ssr
 /e2e-report/
 /playwright-report/
 /blob-report/
+
+# Generated from the backend's OpenAPI document by `pnpm api:generate`
+/openapi.json

@@ -1,5 +1,7 @@
 import { writable } from 'svelte/store'
 
+import { client } from './generated/client.gen'
+import { refreshAccessToken as refreshCall } from './generated/sdk.gen'
 import { pushToast } from './toasts.js'
 
 const ACCESS_KEY = 'ht.access'
@@ -13,10 +15,12 @@ const REFRESH_KEY = 'ht.refresh'
  */
 export const signedIn = writable(Boolean(localStorage.getItem(ACCESS_KEY)))
 
+/** Read the stored access token, or null when signed out. */
 export function accessToken() {
   return localStorage.getItem(ACCESS_KEY)
 }
 
+/** Persist a freshly issued token pair and mark the session as active. */
 export function storeTokens({ access_token, refresh_token }) {
   localStorage.setItem(ACCESS_KEY, access_token)
   if (refresh_token) localStorage.setItem(REFRESH_KEY, refresh_token)
@@ -30,16 +34,21 @@ export function clearTokens() {
   signedIn.set(false)
 }
 
-async function refreshAccessToken() {
+/**
+ * Trade the stored refresh token for a new access token.
+ *
+ * Exported so a caller that leaves the generated client - the spreadsheet
+ * download, which needs the raw response - can still get a usable token first,
+ * rather than reaching for an unrelated endpoint to provoke a refresh.
+ *
+ * @returns {Promise<boolean>} True when a usable access token is now stored.
+ */
+export async function ensureFreshToken() {
   const refresh_token = localStorage.getItem(REFRESH_KEY)
   if (!refresh_token) return false
-  const response = await fetch('/api/refresh', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token }),
-  })
-  if (!response.ok) return false
-  storeTokens(await response.json())
+  const { data } = await refreshCall({ body: { refresh_token }, auth: false })
+  if (!data) return false
+  storeTokens(data)
   return true
 }
 
@@ -62,8 +71,7 @@ export function describeFailure(payload, status) {
         const field = Array.isArray(problem.loc)
           ? problem.loc.filter((part) => part !== 'body').join('.')
           : ''
-        const message = problem.msg ?? 'is not valid'
-        return field ? `${field}: ${message}` : message
+        return field ? `${field}: ${problem.msg ?? 'is not valid'}` : problem.msg
       })
       .join('; ')
   }
@@ -71,53 +79,54 @@ export function describeFailure(payload, status) {
   return `Request failed (${status})`
 }
 
-/**
- * Call the API, refreshing the access token once if it has expired.
- *
- * Throws on failure so callers can decide whether to surface a toast; the
- * questionnaire deliberately does not await its writes.
- */
-export async function api(path, { method = 'GET', body, retry = true } = {}) {
-  const headers = {}
-  const token = accessToken()
-  if (token) headers.Authorization = `Bearer ${token}`
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
+// Every generated call carries the bearer token, so no call site handles auth.
+client.setConfig({ auth: () => accessToken() ?? undefined })
 
-  const response = await fetch(`/api${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+let refreshing = null
+
+/** Refresh at most once at a time, however many calls hit 401 together. */
+function refreshOnce() {
+  refreshing ??= ensureFreshToken().finally(() => {
+    refreshing = null
   })
-
-  if (response.status === 401 && retry && (await refreshAccessToken())) {
-    return api(path, { method, body, retry: false })
-  }
-  if (response.status === 401) {
-    // Replace rather than push: the expired page must not stay in history, or
-    // Back lands on it, 401s again and bounces forward to login for ever.
-    clearTokens()
-    window.location.replace('/login')
-    throw new Error('Session expired')
-  }
-  if (!response.ok) {
-    let detail = `Request failed (${response.status})`
-    try {
-      detail = describeFailure(await response.json(), response.status)
-    } catch {
-      /* keep the status-code message */
-    }
-    throw new Error(detail)
-  }
-  if (response.status === 204) return null
-  return response.json()
+  return refreshing
 }
 
-/** Call the API and surface any failure as a toast, returning null instead. */
-export async function tryApi(path, options) {
+/**
+ * Run a generated SDK call, refreshing the session once if it has expired.
+ *
+ * Takes a function rather than a promise so the call can simply be made again
+ * after a refresh, with no need to reconstruct its arguments.
+ *
+ * @param {() => Promise<{data?: unknown, error?: unknown, response: Response}>} call
+ * @returns {Promise<unknown>} The response body, or null for a 204.
+ */
+export async function unwrap(call) {
+  let { data, error, response } = await call()
+
+  if (response.status === 401) {
+    if (await refreshOnce()) {
+      ;({ data, error, response } = await call())
+    }
+    if (response.status === 401) {
+      // Replace rather than push: the expired page must not stay in history, or
+      // Back lands on it, 401s again and bounces forward to login for ever.
+      clearTokens()
+      window.location.replace('/login')
+      throw new Error('Session expired')
+    }
+  }
+
+  if (!response.ok) throw new Error(describeFailure(error, response.status))
+  return response.status === 204 ? null : data
+}
+
+/** Run an SDK call, reporting any failure as a toast and returning null. */
+export async function attempt(call) {
   try {
-    return await api(path, options)
-  } catch (error) {
-    pushToast(error.message)
+    return await unwrap(call)
+  } catch (failure) {
+    pushToast(failure.message)
     return null
   }
 }

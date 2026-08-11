@@ -1,5 +1,6 @@
 <script>
-  import { storeTokens } from '../lib/api.js'
+  import { storeTokens, unwrap } from '../lib/api.js'
+  import { login as loginCall } from '../lib/generated/sdk.gen'
   import { navigate } from '../lib/router.js'
 
   let username = $state('')
@@ -11,17 +12,16 @@
     event.preventDefault()
     busy = true
     error = ''
-    const response = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    })
-    busy = false
-    if (!response.ok) {
+    try {
+      storeTokens(
+        await unwrap(() => loginCall({ body: { username, password }, auth: false }))
+      )
+    } catch {
       error = 'That username and password do not match.'
       return
+    } finally {
+      busy = false
     }
-    storeTokens(await response.json())
     navigate('/')
   }
 </script>

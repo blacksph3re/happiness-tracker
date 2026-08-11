@@ -1,6 +1,11 @@
 <script>
   import * as echarts from 'echarts'
-  import { api, tryApi } from '../lib/api.js'
+  import {
+    ensureAnswers,
+    ensurePreferences,
+    ensureVariables,
+    persistPreferences,
+  } from '../lib/store.js'
   import { dayLabel, shiftDay } from '../lib/day.js'
 
   let variables = $state([])
@@ -34,7 +39,6 @@
   // stays shut until the reader wants to change what is plotted.
   let showOpen = $state(false)
   let ready = $state(false)
-  let saveTimer
 
   const VIEWS = [
     ['line', 'Over time'],
@@ -69,14 +73,14 @@
 
   /** Load the plottable variables and the raw answers behind them. */
   async function load() {
-    variables = (await tryApi('/stats/variables')) ?? []
-    rows = (await tryApi('/answers')) ?? []
+    variables = (await ensureVariables()) ?? []
+    rows = (await ensureAnswers()) ?? []
     const axes = variables.filter((v) => v.roles.includes('axis'))
     scatterX = axes[0]?.key ?? ''
     scatterY = axes[1]?.key ?? axes[0]?.key ?? ''
     chosen = new Set(axes.filter((v) => !v.system_key).map((v) => v.key))
 
-    const stored = (await tryApi('/me/preferences')) ?? {}
+    const stored = (await ensurePreferences()) ?? {}
     if (stored.view) view = stored.view
     if (Array.isArray(stored.chosen)) chosen = new Set(stored.chosen)
     if (Number.isFinite(stored.windowDays)) windowDays = stored.windowDays
@@ -95,47 +99,29 @@
     ready = true
   }
 
-  /**
-   * Persist the view state, coalescing the bursts a dragged slider produces
-   * into one write.
-   */
-  function save() {
-    clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => {
-      api('/me/preferences', {
-        method: 'PUT',
-        body: {
-          view,
-          chosen: [...chosen],
-          windowDays,
-          smoothing,
-          filters: Object.fromEntries(
-            Object.entries(filters).map(([key, values]) => [key, [...values]])
-          ),
-          scatterX,
-          scatterY,
-        },
-      }).catch(() => {
-        // View state is a convenience; a failed save must not interrupt reading.
-      })
-    }, 600)
+  /** The view state worth remembering, in a stable shape for comparison. */
+  function snapshot() {
+    return {
+      view,
+      chosen: [...chosen].sort(),
+      windowDays,
+      smoothing,
+      filters: Object.fromEntries(
+        Object.entries(filters)
+          .map(([key, values]) => [key, [...values].sort()])
+          .sort(([a], [b]) => (a < b ? -1 : 1))
+      ),
+      scatterX,
+      scatterY,
+    }
   }
 
   $effect(() => {
-    // Touch everything worth remembering so any change schedules a save.
-    const snapshot = [
-      view,
-      [...chosen].join(),
-      windowDays,
-      smoothing,
-      scatterX,
-      scatterY,
-      Object.entries(filters)
-        .map(([key, values]) => `${key}:${[...values].sort().join('|')}`)
-        .sort()
-        .join(),
-    ]
-    if (ready) save(snapshot)
+    // Reading the snapshot is what subscribes this effect to each control.
+    const current = snapshot()
+    // The store drops a save that matches what is already stored, so arriving
+    // on this page and applying the state it just loaded writes nothing.
+    if (ready) persistPreferences(current)
   })
 
   /** Map a variable to {day: value}, merging every question id behind it. */

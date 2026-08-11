@@ -1,8 +1,9 @@
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from config import get_settings
+from models import PROMPT_MAX_LENGTH
 
 
 class Version(BaseModel):
@@ -157,14 +158,44 @@ class DefaultCatalogueChange(BaseModel):
     """Identifier of the catalogue to answer by default."""
 
 
+PREFERENCES_MAX_BYTES = 8192
+"""Ceiling on a stored preferences document, in bytes of serialised JSON.
+
+Generous for view state - the current frontend stores a few hundred bytes - and
+small enough that the endpoint cannot be used to fill the disk.
+"""
+
+
 class Preferences(BaseModel):
     """Opaque UI state belonging to one user.
 
     The backend stores and returns the document unchanged; only the frontend
-    interprets it.
+    interprets it. It is bounded but not inspected.
     """
 
     model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="after")
+    def _within_size_limit(self) -> "Preferences":
+        """Reject a document too large to be view state.
+
+        Returns
+        -------
+        Preferences
+            The unchanged document.
+
+        Raises
+        ------
+        ValueError
+            If the serialised document exceeds `PREFERENCES_MAX_BYTES`.
+        """
+        size = len(self.model_dump_json().encode())
+        if size > PREFERENCES_MAX_BYTES:
+            raise ValueError(
+                f"preferences must serialise to at most {PREFERENCES_MAX_BYTES} "
+                f"bytes, got {size}"
+            )
+        return self
 
 
 class OptionOut(BaseModel):
@@ -247,7 +278,7 @@ class QuestionCreate(BaseModel):
     kind: str = Field(pattern="^(enum|discrete|continuous)$")
     """One of ``enum``, ``discrete`` or ``continuous``."""
 
-    prompt: str = Field(min_length=1, max_length=500)
+    prompt: str = Field(min_length=1, max_length=PROMPT_MAX_LENGTH)
     """Question text shown to the user."""
 
     position: int = 0
@@ -277,7 +308,9 @@ class QuestionUpdate(BaseModel):
     renames what was recorded rather than rescaling it.
     """
 
-    prompt: str | None = Field(default=None, min_length=1, max_length=500)
+    prompt: str | None = Field(
+        default=None, min_length=1, max_length=PROMPT_MAX_LENGTH
+    )
     """New question text."""
 
     position: int | None = None

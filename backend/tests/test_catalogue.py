@@ -281,3 +281,32 @@ def test_renaming_an_unknown_catalogue_is_a_404(client, admin_headers):
         "/api/catalogues/9999", headers=admin_headers, json={"name": "Nowhere"}
     )
     assert response.status_code == 404
+
+
+def test_a_prompt_longer_than_the_limit_is_refused(client, admin_headers, catalogue_id):
+    """The questionnaire reserves room for exactly this much question."""
+    from models import PROMPT_MAX_LENGTH
+
+    path = f"/api/catalogues/{catalogue_id}/questions"
+    body = {"kind": "discrete", "prompt": "x", "min_value": 1, "max_value": 5}
+
+    at_limit = client.post(
+        path, headers=admin_headers, json={**body, "prompt": "a" * PROMPT_MAX_LENGTH}
+    )
+    assert at_limit.status_code == 201
+
+    too_long = client.post(
+        path, headers=admin_headers, json={**body, "prompt": "a" * (PROMPT_MAX_LENGTH + 1)}
+    )
+    assert too_long.status_code == 422
+
+    # The same ceiling applies when rewording an existing question.
+    created = at_limit.json()
+    assert (
+        client.put(
+            f"/api/questions/{created['id']}",
+            headers=admin_headers,
+            json={"prompt": "a" * (PROMPT_MAX_LENGTH + 1)},
+        ).status_code
+        == 422
+    )

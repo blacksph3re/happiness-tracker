@@ -1,5 +1,7 @@
 <script>
-  import { api, tryApi } from '../lib/api.js'
+  import { attempt, unwrap } from '../lib/api.js'
+  import { createUser as createUserCall, deleteUser, listUsers, resetUserPassword, updateUser } from '../lib/generated/sdk.gen'
+  import { ensureCatalogues, ensureMe } from '../lib/store.js'
   import { pushToast } from '../lib/toasts.js'
 
   let users = $state([])
@@ -14,9 +16,9 @@
 
   async function load() {
     try {
-      me = await tryApi('/me')
-      users = (await tryApi('/users')) ?? []
-      catalogues = (await tryApi('/catalogues')) ?? []
+      me = await ensureMe()
+      users = (await attempt(() => listUsers())) ?? []
+      catalogues = (await ensureCatalogues()) ?? []
     } finally {
       loading = false
     }
@@ -25,13 +27,14 @@
   async function createUser(event) {
     event.preventDefault()
     try {
-      await api('/users', {
-        method: 'POST',
-        body: { ...draft, default_catalogue_id: catalogues[0]?.id ?? null },
-      })
+      await unwrap(() =>
+        createUserCall({
+          body: { ...draft, default_catalogue_id: catalogues[0]?.id ?? null },
+        })
+      )
       pushToast(`Created ${draft.username}`, 'ok')
       draft = { username: '', password: '', is_admin: false, is_editor: false }
-      users = (await tryApi('/users')) ?? []
+      users = (await attempt(() => listUsers())) ?? []
     } catch (error) {
       pushToast(error.message)
     }
@@ -39,8 +42,10 @@
 
   async function toggle(user, field) {
     try {
-      await api(`/users/${user.id}`, { method: 'PUT', body: { [field]: !user[field] } })
-      users = (await tryApi('/users')) ?? []
+      await unwrap(() =>
+        updateUser({ path: { user_id: user.id }, body: { [field]: !user[field] } })
+      )
+      users = (await attempt(() => listUsers())) ?? []
     } catch (error) {
       // The server refuses to let the last admin demote themselves.
       pushToast(error.message)
@@ -51,7 +56,7 @@
     if (!confirm(`Delete ${user.username} and every answer they recorded?`)) return
     try {
       await api(`/users/${user.id}`, { method: 'DELETE' })
-      users = (await tryApi('/users')) ?? []
+      users = (await attempt(() => listUsers())) ?? []
       pushToast(`Deleted ${user.username}`, 'ok')
     } catch (error) {
       pushToast(error.message)

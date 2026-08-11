@@ -219,6 +219,8 @@ def reset_password(
     """
     user = _get_user(db, user_id)
     user.password_hash = hash_password(payload.new_password)
+    # A reset exists to lock someone out; leaving their tokens alive would not.
+    user.token_version += 1
     db.commit()
 
 

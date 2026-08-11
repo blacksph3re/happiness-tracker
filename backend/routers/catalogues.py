@@ -14,7 +14,12 @@ from schemas import (
     QuestionOut,
     QuestionUpdate,
 )
-from services import create_catalogue, question_is_answered
+from services import (
+    QuestionRuleError,
+    check_question_shape,
+    create_catalogue,
+    question_is_answered,
+)
 
 router = APIRouter(tags=["Catalogue"])
 
@@ -24,6 +29,30 @@ FROZEN_MESSAGE = (
     "this question and create a new one."
 )
 """Explanation returned when an edit would change an answered question's shape."""
+
+
+def _enforce(rule) -> None:
+    """Run a domain rule, turning its complaint into a 422.
+
+    Keeps the rules themselves free of HTTP concepts: `services` states what a
+    question may be, and this is the one place that becomes a status code.
+
+    Parameters
+    ----------
+    rule : collections.abc.Callable
+        A no-argument callable that raises `QuestionRuleError` when unhappy.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 422 carrying the rule's own message.
+    """
+    try:
+        rule()
+    except QuestionRuleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from None
 
 
 def _get_catalogue(db: DbSession, catalogue_id: int) -> Catalogue:
@@ -325,33 +354,11 @@ def add_question(
         need an ordered pair of bounds.
     """
     catalogue = _get_catalogue(db, catalogue_id)
-    if payload.kind == "enum":
-        if len(payload.options) < 2:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="An enum question needs at least two options",
-            )
-        if payload.min_value is not None or payload.max_value is not None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="An enum question cannot have bounds",
-            )
-    else:
-        if payload.min_value is None or payload.max_value is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="A scaled question needs a lower and an upper bound",
-            )
-        if payload.min_value >= payload.max_value:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="The lower bound must be below the upper bound",
-            )
-        if payload.options:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="A scaled question cannot have options",
-            )
+    _enforce(
+        lambda: check_question_shape(
+            payload.kind, payload.min_value, payload.max_value, len(payload.options)
+        )
+    )
 
     question = Question(
         catalogue_id=catalogue.id,
@@ -436,13 +443,15 @@ def update_question(
         value is not None and value != getattr(question, name)
         for name, value in frozen_fields.items()
     )
-    if question.kind == "enum" and (
-        payload.min_value is not None or payload.max_value is not None
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="An enum question cannot have bounds",
+    # Check the shape the edit would produce, not the one it arrived with.
+    _enforce(
+        lambda: check_question_shape(
+            question.kind,
+            payload.min_value if payload.min_value is not None else question.min_value,
+            payload.max_value if payload.max_value is not None else question.max_value,
+            len(question.options),
         )
+    )
     if touches_frozen and question_is_answered(db, question.id):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=FROZEN_MESSAGE)
 
@@ -455,17 +464,8 @@ def update_question(
     for name, value in {**frozen_fields, **wording_fields}.items():
         if value is not None:
             setattr(question, name, value)
-    if (
-        question.kind != "enum"
-        and question.min_value is not None
-        and question.max_value is not None
-        and question.min_value >= question.max_value
-    ):
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="The lower bound must be below the upper bound",
-        )
+    # No post-assignment bounds check: the same rule already vetted the shape
+    # this edit produces, before anything was written.
     db.commit()
     db.refresh(question)
     return question

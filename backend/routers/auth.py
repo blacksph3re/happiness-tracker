@@ -94,7 +94,7 @@ def login(payload: LoginRequest, db: DbSession) -> TokenPair:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
         )
-    return TokenPair(**issue_tokens(user.id))
+    return TokenPair(**issue_tokens(user.id, user.token_version))
 
 
 @router.post(
@@ -136,13 +136,15 @@ def refresh(payload: RefreshRequest, db: DbSession) -> AccessToken:
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
         ) from None
     user = db.get(User, int(claims["sub"]))
-    if user is None:
+    if user is None or claims.get("ver", 0) != user.token_version:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
         )
     settings = get_settings()
     return AccessToken(
-        access_token=create_token(user.id, ACCESS_TOKEN_TYPE, settings.access_ttl),
+        access_token=create_token(
+            user.id, ACCESS_TOKEN_TYPE, settings.access_ttl, user.token_version
+        ),
         token_type="bearer",
         expires_in=int(settings.access_ttl.total_seconds()),
     )
@@ -220,6 +222,9 @@ def change_own_password(payload: PasswordChange, user: CurrentUser, db: DbSessio
             status_code=status.HTTP_403_FORBIDDEN, detail="Current password is wrong"
         )
     user.password_hash = hash_password(payload.new_password)
+    # Everything issued under the old password stops working, including sessions
+    # on other devices - which is the point of changing a leaked password.
+    user.token_version += 1
     db.commit()
 
 

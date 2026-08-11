@@ -101,6 +101,55 @@ def create_catalogue(db: Session, name: str) -> Catalogue:
     return catalogue
 
 
+class QuestionRuleError(ValueError):
+    """Raised when a question's shape contradicts the kind it declares.
+
+    A plain exception rather than an HTTP error: these are rules about what a
+    question *is*, and they hold whether the caller arrived over HTTP, through a
+    migration, or from a future import script. The router translates it.
+    """
+
+
+def check_question_shape(
+    kind: str,
+    min_value: float | None,
+    max_value: float | None,
+    option_count: int,
+) -> None:
+    """Check that a question's fields match the kind it declares.
+
+    Parameters
+    ----------
+    kind : str
+        One of ``enum``, ``discrete`` or ``continuous``.
+    min_value : float or None
+        Proposed lower bound.
+    max_value : float or None
+        Proposed upper bound.
+    option_count : int
+        How many choices the question would carry.
+
+    Raises
+    ------
+    QuestionRuleError
+        If an enum carries bounds or fewer than two choices, or a scaled
+        question carries choices, lacks a bound, or has them the wrong way round.
+    """
+    if kind == "enum":
+        if option_count < 2:
+            raise QuestionRuleError("An enum question needs at least two options")
+        if min_value is not None or max_value is not None:
+            raise QuestionRuleError("An enum question cannot have bounds")
+        return
+
+    if option_count:
+        raise QuestionRuleError("A scaled question cannot have options")
+    if min_value is None or max_value is None:
+        raise QuestionRuleError("A scaled question needs a lower and an upper bound")
+    if min_value >= max_value:
+        raise QuestionRuleError("The lower bound must be below the upper bound")
+
+
 def question_is_answered(db: Session, question_id: int) -> bool:
     """Report whether any user has answered a question.
 

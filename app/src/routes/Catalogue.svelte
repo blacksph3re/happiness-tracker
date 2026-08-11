@@ -1,6 +1,14 @@
 <script>
   import QuestionForm from '../lib/QuestionForm.svelte'
-  import { api, tryApi } from '../lib/api.js'
+  import { attempt, unwrap } from '../lib/api.js'
+  import {
+    addQuestionOption,
+    createCatalogue as createCatalogueCall,
+    createQuestion,
+    renameCatalogue as renameCatalogueCall,
+    updateQuestion,
+  } from '../lib/generated/sdk.gen'
+  import { ensureAnswers, ensureCatalogue, ensureCatalogues } from '../lib/store.js'
   import { pushToast } from '../lib/toasts.js'
 
   let catalogues = $state([])
@@ -53,36 +61,40 @@
     // The freeze rule is a server-side fact, so ask rather than guess: a probe
     // update of a field the server always accepts reveals nothing, so instead
     // the answered flag comes from whether any answer references the question.
-    const rows = (await tryApi('/answers')) ?? []
+    const rows = (await ensureAnswers()) ?? []
     editing.answered = rows.some((row) => row.question_id === question.id)
   }
 
   async function saveEdit(edited) {
     try {
-      await api(`/questions/${edited.id}`, {
-        method: 'PUT',
-        body: edited.answered
-          ? { prompt: edited.prompt }
-          : {
-              prompt: edited.prompt,
-              ...(edited.kind === 'enum'
-                ? {}
-                : {
-                    min_value: Number(edited.min_value),
-                    max_value: Number(edited.max_value),
-                    min_label: edited.min_label,
-                    max_label: edited.max_label,
-                  }),
-            },
-      })
+      await unwrap(() =>
+        updateQuestion({
+          path: { question_id: edited.id },
+          body: edited.answered
+            ? { prompt: edited.prompt }
+            : {
+                prompt: edited.prompt,
+                ...(edited.kind === 'enum'
+                  ? {}
+                  : {
+                      min_value: Number(edited.min_value),
+                      max_value: Number(edited.max_value),
+                      min_label: edited.min_label,
+                      max_label: edited.max_label,
+                    }),
+              },
+        })
+      )
       if (edited.kind === 'enum') {
         const added = edited.options.slice(edited.lockedOptions)
         for (const label of added.map((l) => l.trim()).filter(Boolean)) {
-          await api(`/questions/${edited.id}/options`, { method: 'POST', body: { label } })
+          await unwrap(() =>
+            addQuestionOption({ path: { question_id: edited.id }, body: { label } })
+          )
         }
       }
       editing = null
-      detail = await tryApi(`/catalogues/${selectedId}`)
+      detail = await ensureCatalogue(selectedId, { force: true })
       pushToast('Question saved', 'ok')
     } catch (error) {
       pushToast(error.message)
@@ -95,9 +107,9 @@
 
   async function load() {
     try {
-      catalogues = (await tryApi('/catalogues')) ?? []
+      catalogues = (await ensureCatalogues({ force: true })) ?? []
       selectedId ??= catalogues[0]?.id ?? null
-      if (selectedId) detail = await tryApi(`/catalogues/${selectedId}`)
+      if (selectedId) detail = await ensureCatalogue(selectedId, { force: true })
     } finally {
       loading = false
     }
@@ -105,7 +117,7 @@
 
   async function select(id) {
     selectedId = id
-    detail = await tryApi(`/catalogues/${id}`)
+    detail = await ensureCatalogue(id, { force: true })
   }
 
   /** Put the input straight into use, so renaming is one click and then typing. */
@@ -126,26 +138,24 @@
       renaming = false
       return
     }
-    // A clashing name comes back as a 409, which tryApi surfaces as a toast.
-    const updated = await tryApi(`/catalogues/${selectedId}`, {
-      method: 'PUT',
-      body: { name },
-    })
+    // A clashing name comes back as a 409, which attempt surfaces as a toast.
+    const updated = await attempt(() =>
+      renameCatalogueCall({ path: { catalogue_id: selectedId }, body: { name } })
+    )
     if (!updated) return
     renaming = false
-    catalogues = (await tryApi('/catalogues')) ?? []
+    catalogues = (await ensureCatalogues({ force: true })) ?? []
     if (detail) detail = { ...detail, name: updated.name }
     pushToast(`Renamed to ${updated.name}`, 'ok')
   }
 
   async function addCatalogue() {
-    const created = await tryApi('/catalogues', {
-      method: 'POST',
-      body: { name: newName },
-    })
+    const created = await attempt(() =>
+      createCatalogueCall({ body: { name: newName } })
+    )
     if (!created) return
     newName = ''
-    catalogues = (await tryApi('/catalogues')) ?? []
+    catalogues = (await ensureCatalogues({ force: true })) ?? []
     await select(created.id)
     pushToast(`Created ${created.name}`, 'ok')
   }
@@ -170,9 +180,11 @@
       })
     }
     try {
-      await api(`/catalogues/${selectedId}/questions`, { method: 'POST', body })
+      await unwrap(() =>
+        createQuestion({ path: { catalogue_id: selectedId }, body })
+      )
       draft = blankDraft()
-      detail = await tryApi(`/catalogues/${selectedId}`)
+      detail = await ensureCatalogue(selectedId, { force: true })
       pushToast('Question added', 'ok')
     } catch (error) {
       pushToast(error.message)
@@ -190,10 +202,12 @@
     try {
       for (const [position, item] of ordered.entries()) {
         if (item.position !== position) {
-          await api(`/questions/${item.id}`, { method: 'PUT', body: { position } })
+          await unwrap(() =>
+            updateQuestion({ path: { question_id: item.id }, body: { position } })
+          )
         }
       }
-      detail = await tryApi(`/catalogues/${selectedId}`)
+      detail = await ensureCatalogue(selectedId, { force: true })
     } catch (error) {
       pushToast(error.message)
     }
@@ -201,8 +215,10 @@
 
   async function setActive(question, active) {
     try {
-      await api(`/questions/${question.id}`, { method: 'PUT', body: { active } })
-      detail = await tryApi(`/catalogues/${selectedId}`)
+      await unwrap(() =>
+        updateQuestion({ path: { question_id: question.id }, body: { active } })
+      )
+      detail = await ensureCatalogue(selectedId, { force: true })
     } catch (error) {
       pushToast(error.message)
     }

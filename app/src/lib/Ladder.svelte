@@ -1,4 +1,6 @@
 <script>
+  import { ANSWER_MIN_HEIGHT } from './layout.js'
+
   /**
    * The answer scale, rendered as full-bleed bands: one tap answers.
    *
@@ -56,7 +58,10 @@
 
 {#if useSlider}
   <!-- One drag answers a continuous question, matching the one-interaction rule. -->
-  <div class="rounded-lg border border-white/10 bg-ink-soft px-6 py-8">
+  <div
+    class="flex flex-col justify-center rounded-lg border border-white/10 bg-ink-soft
+           px-6 py-8 {ANSWER_MIN_HEIGHT}"
+  >
     <div class="mb-6 flex items-baseline justify-between">
       <span class="meta">{question.min_label ?? question.min_value}</span>
       <span class="numeral text-5xl">

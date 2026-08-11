@@ -8,7 +8,8 @@
   import Users from './routes/Users.svelte'
   import Login from './routes/Login.svelte'
   import Toasts from './lib/Toasts.svelte'
-  import { clearTokens, signedIn, tryApi } from './lib/api.js'
+  import { clearTokens, signedIn } from './lib/api.js'
+  import { ensureMe, me, resetStore } from './lib/store.js'
 
   const ROUTES = {
     '/': Questionnaire,
@@ -24,11 +25,10 @@
 
   let menuOpen = $state(false)
 
-  let me = $state(null)
 
   $effect(() => {
-    if ($signedIn) tryApi('/me').then((user) => (me = user))
-    else me = null
+    if ($signedIn) ensureMe()
+    else resetStore()
   })
 
   // The editor and admin entries are hidden without the matching flag; the API
@@ -37,8 +37,8 @@
     ['/', 'Answer'],
     ['/table', 'Record'],
     ['/stats', 'Patterns'],
-    ...(me?.is_editor ? [['/questions', 'Questions']] : []),
-    ...(me?.is_admin ? [['/people', 'People']] : []),
+    ...($me?.is_editor ? [['/questions', 'Questions']] : []),
+    ...($me?.is_admin ? [['/people', 'People']] : []),
     ['/settings', 'Settings'],
   ])
 

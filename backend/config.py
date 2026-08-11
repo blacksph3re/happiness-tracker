@@ -1,4 +1,3 @@
-import secrets
 from datetime import timedelta
 from functools import lru_cache
 
@@ -59,14 +58,18 @@ class Settings(BaseSettings):
     admin_user: str = "admin"
     """Username of the account created on first startup."""
 
-    admin_password: str = "admin"
-    """Password for that account. Applied only when the account does not exist."""
+    admin_password: str = ""
+    """Password for that account. Applied only when the account does not exist.
+
+    Deliberately without a default: a deployment that forgets it should fail
+    loudly on first start rather than come up with a guessable administrator.
+    """
 
     bootstrap_question_catalogue: bool = True
     """Whether to seed the default catalogue with the three starter questions."""
 
     jwt_secret: str = ""
-    """Signing key for both token types. A random key is generated when unset."""
+    """Signing key for both token types. Required; startup fails without it."""
 
     jwt_algorithm: str = "HS256"
     """Algorithm used to sign and verify tokens."""
@@ -123,10 +126,21 @@ class Settings(BaseSettings):
         Returns
         -------
         str
-            `jwt_secret` when set, otherwise a key generated once per process.
+            The configured `jwt_secret`.
+
+        Raises
+        ------
+        RuntimeError
+            If `JWT_SECRET` is unset. Generating one instead would sign every
+            user out on each restart, and would give each worker of a
+            multi-worker deployment a different key.
         """
         if not self.jwt_secret:
-            self.jwt_secret = secrets.token_urlsafe(48)
+            raise RuntimeError(
+                "JWT_SECRET is not set. Generate one with "
+                "`python -c 'import secrets; print(secrets.token_urlsafe(48))'` "
+                "and pass it to the server."
+            )
         return self.jwt_secret
 
 

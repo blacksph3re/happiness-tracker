@@ -56,7 +56,9 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def create_token(subject: int, token_type: str, ttl: timedelta) -> str:
+def create_token(
+    subject: int, token_type: str, ttl: timedelta, token_version: int = 0
+) -> str:
     """Mint a signed JSON Web Token for a user.
 
     Parameters
@@ -68,6 +70,9 @@ def create_token(subject: int, token_type: str, ttl: timedelta) -> str:
         ``typ`` claim so the two can never substitute for one another.
     ttl : datetime.timedelta
         How long the token stays valid.
+    token_version : int, optional
+        The account's current token version, by default 0. A token whose
+        version no longer matches the account is rejected.
 
     Returns
     -------
@@ -79,6 +84,7 @@ def create_token(subject: int, token_type: str, ttl: timedelta) -> str:
     payload = {
         "sub": str(subject),
         "typ": token_type,
+        "ver": token_version,
         "iat": int(now.timestamp()),
         "exp": int((now + ttl).timestamp()),
     }
@@ -120,13 +126,15 @@ def decode_token(token: str, expected_type: str) -> dict[str, Any]:
     return claims
 
 
-def issue_tokens(user_id: int) -> dict[str, Any]:
+def issue_tokens(user_id: int, token_version: int = 0) -> dict[str, Any]:
     """Create the access and refresh token pair handed out at login.
 
     Parameters
     ----------
     user_id : int
         Identifier of the authenticated user.
+    token_version : int, optional
+        The account's current token version, by default 0.
 
     Returns
     -------
@@ -136,9 +144,11 @@ def issue_tokens(user_id: int) -> dict[str, Any]:
     """
     settings = get_settings()
     return {
-        "access_token": create_token(user_id, ACCESS_TOKEN_TYPE, settings.access_ttl),
+        "access_token": create_token(
+            user_id, ACCESS_TOKEN_TYPE, settings.access_ttl, token_version
+        ),
         "refresh_token": create_token(
-            user_id, REFRESH_TOKEN_TYPE, settings.refresh_ttl
+            user_id, REFRESH_TOKEN_TYPE, settings.refresh_ttl, token_version
         ),
         "token_type": "bearer",
         "expires_in": int(settings.access_ttl.total_seconds()),

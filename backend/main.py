@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
@@ -34,8 +35,12 @@ async def lifespan(app: FastAPI):
     None
         Control returns to the server for the lifetime of the application.
     """
+    settings = get_settings()
+    # Touched here so a missing signing key stops the server on startup rather
+    # than surfacing as a 500 on whoever tries to log in first.
+    settings.signing_key
     with SessionLocal() as db:
-        bootstrap(db, get_settings())
+        bootstrap(db, settings)
     yield
 
 
@@ -81,6 +86,10 @@ app = FastAPI(
     openapi_tags=API_TAGS,
     lifespan=lifespan,
 )
+
+# The answer history is long, repetitive JSON: five years of it compresses by
+# roughly a factor of ten, which matters far more than the server-side time.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")

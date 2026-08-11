@@ -101,3 +101,45 @@ test('deep links open the page they name', async ({ page }) => {
     await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible()
   }
 })
+
+
+test('revisiting the stats page makes no requests, and saves only on a change', async ({
+  page,
+  account,
+}) => {
+  await withHistory(account, 10)
+  await page.goto('/stats')
+  await expect(page.locator('canvas').first()).toBeVisible()
+  // Warm both pages first: the point is what a *revisit* costs, and the record
+  // page legitimately loads catalogues the stats page never needed.
+  await page.getByRole('link', { name: 'Record' }).click()
+  await expect(page.getByRole('heading', { name: 'Record' })).toBeVisible()
+  // The first ever visit persists the defaults it just chose; let that settle.
+  await page.waitForTimeout(900)
+
+  const calls = []
+  page.on('request', (request) => {
+    const url = new URL(request.url())
+    if (url.pathname.startsWith('/api')) calls.push(`${request.method()} ${url.pathname}`)
+  })
+
+  // Leaving and coming back must not refetch what the store already holds, and
+  // must not write back the state it just read.
+  await page.getByRole('link', { name: 'Patterns' }).click()
+  await expect(page.locator('canvas').first()).toBeVisible()
+  await page.getByRole('link', { name: 'Record' }).click()
+  await expect(page.getByRole('heading', { name: 'Record' })).toBeVisible()
+  await page.getByRole('link', { name: 'Patterns' }).click()
+  await expect(page.locator('canvas').first()).toBeVisible()
+  await page.waitForTimeout(900)
+  expect(calls, 'a revisit should cost nothing').toEqual([])
+
+  // An actual change is saved, once.
+  await page.getByRole('button', { name: 'Spread' }).click()
+  await page.waitForTimeout(900)
+  expect(calls).toEqual(['PUT /api/me/preferences'])
+
+  // And it survives a reload.
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Spread' })).toHaveClass(/border-ember/)
+})

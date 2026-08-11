@@ -1,4 +1,8 @@
 <script>
+  // Matches the server's own limit; the questionnaire's layout is built
+  // around it, so the form says so rather than letting a save fail.
+  const PROMPT_MAX_LENGTH = 80
+
   /**
    * The one form used both to add a question and to edit an existing one, so
    * adding an enum option happens in the same place it was first defined
@@ -28,8 +32,14 @@
     <input
       bind:value={draft.prompt}
       required
+      maxlength={PROMPT_MAX_LENGTH}
       class="rounded-lg border border-white/15 bg-ink px-4 py-3"
     />
+    <span class="meta normal-case">
+      {(draft.prompt ?? '').length}/{PROMPT_MAX_LENGTH} characters — the
+      questionnaire reserves room for this much, so longer questions would shift
+      the answers down the page.
+    </span>
   </label>
 
   <label class="mt-3 flex flex-col gap-1.5">
