@@ -114,8 +114,10 @@ A failing run keeps a trace and a video under `app/test-results/`; open the trac
 `pnpm exec playwright show-trace <path>` to step through the failure frame by frame.
 
 Two things the suite pins down deliberately, worth knowing before adding to it: the clock
-is fixed to 2026-06-15 in `Europe/Berlin`, because "today" is computed in the browser and
-an unpinned suite fails around midnight; and each test gets its own freshly created user,
+is set to 2026-06-15 in `Europe/Berlin`, because "today" is computed in the browser and an
+unpinned suite fails around midnight — set, not *frozen*, since stopping time also stops
+anything that animates from time deltas, and a canvas chart then draws its axes and no
+data at all; and each test gets its own freshly created user,
 because answers are per-user and that is what keeps tests from seeing each other's data.
 Take the catalogue by name rather than "the first one" — the listing is alphabetical, and
 a test that creates a catalogue would otherwise change what later tests answer.
@@ -146,75 +148,3 @@ uv run alembic revision --autogenerate -m "what changed"
 ```
 
 Read the generated file before committing it. Autogenerate detects tables, columns and indexes, but it does not see data: converting a column's meaning, backfilling a new `NOT NULL`, or splitting a table needs those statements written by hand. It also cannot infer a `downgrade()` for a data change. SQLite cannot `ALTER` most things, so `env.py` sets `render_as_batch=True` and Alembic rewrites the table instead — the generated code will show `batch_alter_table` blocks. Apply, then `downgrade` and `upgrade` again to confirm the migration works in both directions before you commit.
-
-## Catalogue
-
-There are three types of questions
-- Enum: A set of values that have no numeric correlation (Male/Female, Yes/No, Apples/Pears/Bananas, ...)
-- Discrete: Discrete values that have a scale, an order is assumed (1/2/3/4/5). They have a lower and upper bound with a description (low/high), increment is always 1.
-- Continuous: Continuous values that have a scale. They have a lower and upper bound with a description but no increments.
-
-Furthermore, there are some answers that are always tracked automatically per day, if the user answered any questions:
-- Weekday (enum: Mon … Sun)
-- Day of the year (discrete)
-- Month (enum: Jan … Dec)
-- Year (discrete)
-- Hour of the day when the first question was answered (discrete)
-
-These are not plotted as variables of their own — weekday over time is a sawtooth, and weekday as a radar spoke means nothing. They appear in the stats page under "Only days where" instead, so they subset the data behind the other plots: weekends only, winter months only, and so on. Several can be combined, and they are still shown in the answer table and the .xlsx export.
-
-The default catalogue is the [WHO-5 Well-Being Index](https://www.corc.uk.net/outcome-measures-guidance/directory-of-outcome-measures/the-world-health-organisation-five-well-being-index-who-5/), reproduced verbatim so answers stay comparable with the published instrument. All five are discrete questions on the WHO-5's own six-point scale, from 0 "At no time" to 5 "All of the time":
-
-- I have felt cheerful and in good spirits
-- I have felt calm and relaxed
-- I have felt active and vigorous
-- I woke up feeling fresh and rested
-- My daily life has been filled with things that interest me
-
-Note that the WHO-5 is validated over a two-week recall window. Answering it daily is an adaptation: your own trend over time is meaningful, but the published clinical cut-offs do not apply to a single day's score.
-
-Questions are edited in the question catalogue edit page. This supports some fundamental options
-- Add new question
-- Add an enum option
-- Change bounds/descriptions for a discrete/continuous action.
-- Deactivate a question - it will no longer be displayed in the questionnaire.
-
-In general, all changes to the question catalogue will never modify previous answers.
-
-## User management
-
-The admin user is the only user in the system that can create or delete users. Every user has a username + password and a default catalogue.
-
-The landing page for every user, given it is still logged in, is directly the first question for the day. The user can start answering right away. There is also an option to get to the menu (top right stacked bar button) where the user can select its default catalogue, see stats or change the password. When all questions of the day are answered, it is automatically forwarded to the stats page.
-
-## Question answering
-
-Question answering is as seemless as possible. On tall screens, questions are arranged vertically, on wide screens horizontally. It requires exacly one interaction to answer one question (e.g. drag the continuous slider, click a discrete/enum value) to answer a question, after which the next one is opened after a short flip-page animation. With a back/forth button, questions can be skipped or answers corrected. By default, the questions for the current day are answered. Through the answer table, a past or future day can also be selected and questions can be answered or updated for other days
-
-## Answer table
-
-This is just a tabular display of the answers. The user can see each exact answer it gave. The table scrolls along the x axis for days.
-
-Furthermore, a .xlsx download is available.
-
-## Stats page
-
-The main point of the app is to track mental KPIs over time. The job of the stats page is to display these stats. There are multiple views
-- Simple line plots over time for each discrete/continuous variable
-- Radar charts for every discrete/continuous variable
-- Scatter plots that show correlation between any two variables
-- Boxplots that show distribution of variables across timespans (weeks, months, ...)
-
-Every plot that does not have a time axis allows to be smoothely animated across time through a time slider at the top of the corresponding stats page.
-
-## Non-functional requirements
-
-- The app is fully responsive
-- No server call is required between questions, only at initial page load the whole catalogue is loaded into the frontend. 
-- Answers are directly submitted through PUT at click but the server confirmation is not awaited before continuing user interaction
-- Failed backend requests are displayed to the user with a toast.
-- The backend stores passwords securely, they are never logged
-- Every endpoint except for /version and /login require a valid JWT. This is asserted with a test for every endpoint that passes correct inputs but an invalid JWT.
-- The system is performant enough to render question tracking over multiple years
-- We expect a relatively low number of questions per catalogue (ca 10), design the UI for this amount.
-

@@ -24,6 +24,21 @@
   let future = $state(7)
   let scroller = $state(null)
 
+  // Which view to build, rather than building both and hiding one. The wide
+  // table is a row per question times a column per day; on a phone that is a
+  // lot of DOM for something nobody will see, and hidden text still answers to
+  // anything searching the page.
+  const WIDE = '(min-width: 48rem)'
+  let wide = $state(typeof matchMedia === 'function' ? matchMedia(WIDE).matches : true)
+
+  $effect(() => {
+    if (typeof matchMedia !== 'function') return
+    const query = matchMedia(WIDE)
+    const sync = (event) => (wide = event.matches)
+    query.addEventListener('change', sync)
+    return () => query.removeEventListener('change', sync)
+  })
+
   // Mobile shows one day at a time; the day being read, and which way the last
   // move went, so the change animates in the direction of travel.
   let selectedDay = $state(today())
@@ -177,8 +192,8 @@
   {:else}
     <!-- Narrow screens read one day at a time. Twenty columns of numbers in a
          320 px viewport is not a table anyone can read. -->
+    {#if !wide}
     <div
-      class="md:hidden"
       data-day-view
       ontouchstart={onTouchStart}
       ontouchend={onTouchEnd}
@@ -245,11 +260,9 @@
       </button>
     </div>
 
+    {:else}
     <!-- Days run left to right like a timeline; the table scrolls, the page does not. -->
-    <div
-      bind:this={scroller}
-      class="hidden overflow-x-auto rounded-xl border border-white/10 md:block"
-    >
+    <div bind:this={scroller} class="overflow-x-auto rounded-xl border border-white/10">
       <!-- Fixed widths: a long enum label must not stretch its column and knock
            every other day out of alignment. -->
       <table
@@ -331,6 +344,7 @@
         </tbody>
       </table>
     </div>
+    {/if}
 
     {#if answered.length === 0}
       <p class="mt-4 text-sm text-haze">

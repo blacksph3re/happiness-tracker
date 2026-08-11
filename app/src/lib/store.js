@@ -25,7 +25,7 @@ export const catalogues = writable([])
 export const answers = writable([])
 
 /** Catalogue detail by id, so a page can read questions it did not fetch. */
-export const catalogueDetails = writable({})
+const catalogueDetails = writable({})
 
 /** Plottable variables, as the server derives them from what has been answered. */
 export const variables = writable(null)
@@ -173,13 +173,6 @@ export function rememberAnswer(answer) {
     )
     return [...rest, answer]
   })
-}
-
-/** Forget an answer locally, mirroring a delete. */
-export function forgetAnswer(day, questionId) {
-  answers.update((all) =>
-    all.filter((row) => !(row.day === day && row.question_id === questionId))
-  )
 }
 
 /** Drop every cached value, for a sign-out or a change that invalidates all of it. */

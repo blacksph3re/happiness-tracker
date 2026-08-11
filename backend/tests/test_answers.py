@@ -83,37 +83,6 @@ def test_repeated_answers_upsert_rather_than_duplicate(
     assert rows[0]["value"] == 2.0
 
 
-def test_deleting_the_last_answer_removes_system_rows(
-    client, admin_headers, catalogue_id, starter_questions
-):
-    question_id = starter_questions[0]["id"]
-    answer(client, admin_headers, question_id, 4)
-    assert system_answers(client, admin_headers, catalogue_id)
-
-    response = client.request(
-        "DELETE",
-        "/api/answers",
-        headers=admin_headers,
-        json={"day": DAY, "question_id": question_id},
-    )
-    assert response.status_code == 204
-    assert client.get("/api/answers", headers=admin_headers).json() == []
-
-
-def test_deleting_one_of_several_answers_keeps_system_rows(
-    client, admin_headers, catalogue_id, starter_questions
-):
-    answer(client, admin_headers, starter_questions[0]["id"], 4)
-    answer(client, admin_headers, starter_questions[1]["id"], 3)
-    client.request(
-        "DELETE",
-        "/api/answers",
-        headers=admin_headers,
-        json={"day": DAY, "question_id": starter_questions[0]["id"]},
-    )
-    assert set(system_answers(client, admin_headers, catalogue_id)) == SYSTEM_KEYS
-
-
 def test_past_and_future_days_are_unbounded(
     client, admin_headers, starter_questions
 ):
@@ -213,13 +182,14 @@ def test_users_cannot_see_or_touch_each_others_answers(
     ]
     assert alice_rows[0]["value"] == 5.0
 
-    client.request(
-        "DELETE",
-        "/api/answers",
-        headers=bob,
-        json={"day": DAY, "question_id": question_id},
-    )
-    assert client.get("/api/answers", headers=alice).json() != []
+    # Bob overwriting his own answer leaves Alice's untouched.
+    answer(client, bob, question_id, 2)
+    alice_after = [
+        row
+        for row in client.get("/api/answers", headers=alice).json()
+        if row["question_id"] == question_id
+    ]
+    assert alice_after[0]["value"] == 5.0
 
 
 def test_export_has_one_row_per_day(client, admin_headers, starter_questions):
@@ -345,9 +315,10 @@ def test_one_set_of_system_answers_per_day_across_catalogues(
     assert hours == [8.0], "the day must carry exactly one first-answer hour"
 
 
-def test_system_rows_survive_while_another_catalogue_still_has_answers(
+def test_a_second_catalogue_adds_no_second_set_of_system_rows(
     client, admin_headers, starter_questions
 ):
+    """One day carries one set of auto-tracked answers, whatever it was answered in."""
     answer(client, admin_headers, starter_questions[0]["id"], 4, hour=8)
     second = client.post(
         "/api/catalogues", headers=admin_headers, json={"name": "Evening"}
@@ -359,19 +330,5 @@ def test_system_rows_survive_while_another_catalogue_still_has_answers(
     ).json()
     answer(client, admin_headers, other["id"], 3, hour=20)
 
-    client.request(
-        "DELETE",
-        "/api/answers",
-        headers=admin_headers,
-        json={"day": DAY, "question_id": starter_questions[0]["id"]},
-    )
     rows = client.get("/api/answers", headers=admin_headers).json()
-    assert len(rows) == 6, "one real answer plus its five auto-tracked rows"
-
-    client.request(
-        "DELETE",
-        "/api/answers",
-        headers=admin_headers,
-        json={"day": DAY, "question_id": other["id"]},
-    )
-    assert client.get("/api/answers", headers=admin_headers).json() == []
+    assert len(rows) == 7, "two real answers plus one set of five auto-tracked rows"

@@ -29,7 +29,6 @@ SAMPLE_BODIES = {
         "question_id": 1,
         "value": 3,
     },
-    ("DELETE", "/api/answers"): {"day": "2026-01-01", "question_id": 1},
 }
 
 

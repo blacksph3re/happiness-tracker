@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteAnswerData, DeleteAnswerErrors, DeleteAnswerResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, ExportAnswersData, ExportAnswersErrors, ExportAnswersResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UpsertAnswerData, UpsertAnswerErrors, UpsertAnswerResponses } from './types.gen';
+import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, ExportAnswersData, ExportAnswersErrors, ExportAnswersResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UpsertAnswerData, UpsertAnswerErrors, UpsertAnswerResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -304,21 +304,6 @@ export const deleteQuestionOption = <ThrowOnError extends boolean = false>(optio
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/questions/{question_id}/options/{option_id}',
     ...options
-});
-
-/**
- * Clear an answer
- *
- * Clear one answer. When it was the day's last, that day's auto-tracked rows are removed with it.
- */
-export const deleteAnswer = <ThrowOnError extends boolean = false>(options: Options<DeleteAnswerData, ThrowOnError>): RequestResult<DeleteAnswerResponses, DeleteAnswerErrors, ThrowOnError> => (options.client ?? client).delete<DeleteAnswerResponses, DeleteAnswerErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/answers',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
 });
 
 /**

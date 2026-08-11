@@ -380,16 +380,6 @@ class AnswerIn(BaseModel):
     """Chosen option, for enum questions."""
 
 
-class AnswerDelete(BaseModel):
-    """Identifies a single answer to clear."""
-
-    day: date
-    """Calendar day of the answer."""
-
-    question_id: int
-    """The question whose answer is cleared."""
-
-
 class AnswerOut(BaseModel):
     """An answer as exposed by the API."""
 

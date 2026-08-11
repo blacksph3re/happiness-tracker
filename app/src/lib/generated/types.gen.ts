@@ -25,22 +25,6 @@ export type AccessToken = {
 };
 
 /**
- * AnswerDelete
- *
- * Identifies a single answer to clear.
- */
-export type AnswerDelete = {
-    /**
-     * Day
-     */
-    day: string;
-    /**
-     * Question Id
-     */
-    question_id: number;
-};
-
-/**
  * AnswerIn
  *
  * A single answer submitted by the questionnaire.
@@ -1196,31 +1180,6 @@ export type DeleteQuestionOptionResponses = {
 };
 
 export type DeleteQuestionOptionResponse = DeleteQuestionOptionResponses[keyof DeleteQuestionOptionResponses];
-
-export type DeleteAnswerData = {
-    body: AnswerDelete;
-    path?: never;
-    query?: never;
-    url: '/api/answers';
-};
-
-export type DeleteAnswerErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type DeleteAnswerError = DeleteAnswerErrors[keyof DeleteAnswerErrors];
-
-export type DeleteAnswerResponses = {
-    /**
-     * Successful Response
-     */
-    204: void;
-};
-
-export type DeleteAnswerResponse = DeleteAnswerResponses[keyof DeleteAnswerResponses];
 
 export type ListAnswersData = {
     body?: never;

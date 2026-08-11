@@ -4,7 +4,7 @@ export function today() {
 }
 
 /** Format a Date as the YYYY-MM-DD key the API stores answers under. */
-export function toKey(date) {
+function toKey(date) {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${date.getFullYear()}-${month}-${day}`

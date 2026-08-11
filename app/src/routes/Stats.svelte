@@ -1,6 +1,15 @@
 <script>
   import * as echarts from 'echarts'
   import {
+    PALETTE,
+    baseOptions,
+    boxOptions,
+    lineOptions,
+    radarOptions,
+    scatterOptions,
+  } from '../lib/chart-options.js'
+  import { fiveNumberSummary, movingAverage, tallyPairs } from '../lib/series.js'
+  import {
     ensureAnswers,
     ensurePreferences,
     ensureVariables,
@@ -47,7 +56,6 @@
     ['box', 'Spread'],
   ]
 
-  const PALETTE = ['#6b55b8', '#e8734a', '#6f9e8b', '#b9b3cc', '#a07ae8', '#e8b04a']
 
   const numeric = $derived(variables.filter((v) => v.roles.includes('axis')))
   // Enum answers carry no scale, so they never become an axis. They colour the
@@ -125,9 +133,9 @@
   })
 
   /** Map a variable to {day: value}, merging every question id behind it. */
-  function seriesFor(variable) {
+  function seriesFor(variable, within = days) {
     const ids = new Set(variable.question_ids)
-    const inWindow = new Set(days)
+    const inWindow = within instanceof Set ? within : new Set(within)
     const points = {}
     for (const row of rows) {
       if (!ids.has(row.question_id) || row.value == null) continue
@@ -164,38 +172,6 @@
   }
 
   /** Axis configuration, categorical for enum variables and linear otherwise. */
-  function axisFor(variable, extra) {
-    const shared = {
-      nameLocation: 'middle',
-      splitLine: { lineStyle: { color: '#2a2440' } },
-      ...extra,
-    }
-    if (variable.kind === 'enum') {
-      return {
-        ...shared,
-        type: 'category',
-        data: variable.options.map((option) => option.label),
-        boundaryGap: true,
-        // interval 0 forces every option to be labelled: dropping half of them
-        // on a narrow screen hides which categories exist at all.
-        axisLabel: {
-          interval: 0,
-          rotate: 30,
-          formatter: (v) => (v.length > 14 ? `${v.slice(0, 13)}…` : v),
-        },
-      }
-    }
-    return {
-      ...shared,
-      type: 'value',
-      min: (variable.min_value ?? 0) - 0.5,
-      max: (variable.max_value ?? 5) + 0.5,
-      // The half-step padding keeps marks off the edge; it is not a real value.
-      axisLabel: { formatter: (v) => (Number.isInteger(v) ? v : '') },
-    }
-  }
-
-  /** The selectable values of a filter dimension, as {id, label} pairs. */
   function facetChoices(variable) {
     if (variable.kind === 'enum') {
       return variable.options.map((option) => ({ id: option.id, label: option.label }))
@@ -245,23 +221,6 @@
     Object.entries(filters).filter(([, values]) => values.size > 0)
   )
 
-  function movingAverage(values, span) {
-    if (span <= 1) return values
-    return values.map((_, index) => {
-      const start = Math.max(index - Math.floor((span - 1) / 2), 0)
-      const end = Math.min(start + span - 1, values.length - 1)
-      let total = 0
-      let counted = 0
-      for (let i = start; i <= end; i += 1) {
-        if (values[i] != null) {
-          total += values[i]
-          counted += 1
-        }
-      }
-      return counted ? Number((total / counted).toFixed(2)) : null
-    })
-  }
-
   const days = $derived.by(() => {
     if (allDays.length === 0) return []
     const end = allDays.length - Math.min(offset, maxOffset)
@@ -287,6 +246,51 @@
     return all
   })
 
+  // Half a span, which is how far past each edge a centred average has to see.
+  const smoothingPad = $derived(smoothing > 1 ? Math.floor((smoothing - 1) / 2) : 0)
+
+  /**
+   * The timeline with half a span of real days added at each end.
+   *
+   * The average is computed over this and the padding is then cut off, so the
+   * value drawn at the edge of the window is a full average of the days either
+   * side of it rather than an average of the half that happens to be visible.
+   */
+  const paddedTimeline = $derived.by(() => {
+    if (timelineDays.length === 0) return []
+    const all = []
+    const last = shiftDay(timelineDays.at(-1), smoothingPad)
+    for (
+      let cursor = shiftDay(timelineDays[0], -smoothingPad);
+      cursor <= last;
+      cursor = shiftDay(cursor, 1)
+    ) {
+      all.push(cursor)
+    }
+    return all
+  })
+
+  /**
+   * Which days the average may draw on: the window, plus any day in the padding
+   * that carries an answer and passes the filters.
+   *
+   * Days excluded by a filter stay excluded beyond the edge too, or "weekends
+   * only" would quietly average in the weekdays around them.
+   */
+  const smoothingReach = $derived.by(() => {
+    const reach = new Set(days)
+    if (smoothingPad === 0 || paddedTimeline.length === 0) return reach
+    const first = paddedTimeline[0]
+    const last = paddedTimeline.at(-1)
+    for (const day of allDays) {
+      if (day < first || day > last || reach.has(day)) continue
+      if (activeFilters.every(([key, values]) => values.has(facetTags[key]?.[day]))) {
+        reach.add(day)
+      }
+    }
+    return reach
+  })
+
   $effect(() => {
     if (smoothing > maxSmoothing) smoothing = maxSmoothing
   })
@@ -296,184 +300,64 @@
   )
 
   /** Shared ECharts options: dusk palette, muted gridlines, no chrome. */
-  function baseOptions() {
-    return {
-      backgroundColor: 'transparent',
-      color: PALETTE,
-      textStyle: { color: '#b9b3cc', fontFamily: 'Inter, system-ui, sans-serif' },
-      // Question prompts are long, so the legend scrolls on one line instead of
-      // wrapping into rows that overlap the plot.
-      grid: { left: 48, right: 20, top: 56, bottom: 40 },
-      animationDuration: 300,
-      animationDurationUpdate: 300,
-      animationEasingUpdate: 'cubicOut',
-      legend: {
-        type: 'scroll',
-        top: 0,
-        textStyle: { color: '#b9b3cc' },
-        pageTextStyle: { color: '#b9b3cc' },
-        pageIconColor: '#6b55b8',
-        pageIconInactiveColor: '#3a3350',
-      },
-      tooltip: { trigger: 'axis' },
-    }
-  }
+  // What each view needs, prepared here and rendered by `chart-options`.
 
-  /** Plot every numeric variable against time. */
-  function lineOptions() {
-    return {
-      ...baseOptions(),
-      xAxis: {
-        type: 'category',
-        data: timelineDays,
-        axisLine: { lineStyle: { color: '#3a3350' } },
-        axisLabel: { formatter: (day) => dayLabel(day) },
-      },
-      yAxis: { type: 'value', splitLine: { lineStyle: { color: '#2a2440' } } },
-      series: plotted.map((variable) => {
-        const points = seriesFor(variable)
-        // Untracked days sit in the array as nulls, so they take up their real
-        // width on the axis while the line still spans them.
-        const raw = timelineDays.map((day) => points[day] ?? null)
-        return {
-          name: variable.label,
-          type: 'line',
-          // Heavy smoothing on integer answers invents overshoot between equal
-          // days, so the curve is only softened, never rounded.
-          smooth: 0.2,
-          // An averaged line no longer passes through the answers, so the
-          // markers that would imply it does are dropped.
-          showSymbol: smoothing === 1 && timelineDays.length < 60,
-          sampling: 'lttb',
-          lineStyle: { width: smoothing > 1 ? 2.5 : 2 },
-          connectNulls: true,
-          data: movingAverage(raw, smoothing),
-        }
-      }),
-    }
-  }
+  const lineSeries = $derived(
+    plotted.map((variable) => {
+      const points = seriesFor(variable, smoothingReach)
+      // Untracked days sit in the array as nulls, so they take up their real
+      // width on the axis while the line still spans them. The array runs past
+      // both edges so the average at each edge is a whole one, and the padding
+      // is trimmed again here.
+      const raw = paddedTimeline.map((day) => points[day] ?? null)
+      const averaged = movingAverage(raw, smoothing)
+      return {
+        name: variable.label,
+        data: smoothingPad
+          ? averaged.slice(smoothingPad, raw.length - smoothingPad)
+          : averaged,
+      }
+    })
+  )
 
-  /** Plot each numeric variable's average as one radar shape. */
-  function radarOptions() {
-    const indicators = plotted.map((variable) => ({
+  const radarShape = $derived({
+    indicators: plotted.map((variable) => ({
       name: variable.label,
       max: variable.max_value ?? 5,
       min: variable.min_value ?? 0,
-    }))
-    const averages = plotted.map((variable) => {
+    })),
+    averages: plotted.map((variable) => {
       const values = Object.values(seriesFor(variable))
       return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0
-    })
-    return {
-      ...baseOptions(),
-      grid: undefined,
-      tooltip: {},
-      radar: {
-        indicator: indicators,
-        axisName: { color: '#b9b3cc' },
-        splitLine: { lineStyle: { color: '#2a2440' } },
-        splitArea: { areaStyle: { color: ['transparent'] } },
-        axisLine: { lineStyle: { color: '#2a2440' } },
-      },
-      series: [
-        {
-          type: 'radar',
-          data: [{ value: averages, name: 'Average', areaStyle: { opacity: 0.25 } }],
-        },
-      ],
-    }
-  }
+    }),
+  })
 
-  /** Plot the two chosen variables against each other. */
-  function scatterOptions() {
+  const scatterPair = $derived.by(() => {
     const x = axisChoices.find((v) => v.key === scatterX)
     const y = axisChoices.find((v) => v.key === scatterY)
-    if (!x || !y) return baseOptions()
-    const xs = axisValues(x)
-    const ys = axisValues(y)
-    // Answers collide constantly on a short scale, so an unweighted scatter
-    // shows "this pair happened" and hides "it happened forty times".
-    const tally = new Map()
-    for (const day of days) {
-      if (xs[day] === undefined || ys[day] === undefined) continue
-      const key = `${xs[day]}:${ys[day]}`
-      const seen = tally.get(key)
-      if (seen) seen[2] += 1
-      else tally.set(key, [xs[day], ys[day], 1])
-    }
-    const points = [...tally.values()]
-    const busiest = points.reduce((most, [, , count]) => Math.max(most, count), 1)
-    const readable = (variable, value) =>
-      variable.kind === 'enum' ? (variable.options[value]?.label ?? value) : value
+    if (!x || !y) return null
+    return { x, y, ...tallyPairs(days, axisValues(x), axisValues(y)) }
+  })
 
-    return {
-      ...baseOptions(),
-      legend: undefined,
-      grid: { left: 64, right: 28, top: 24, bottom: x.kind === 'enum' ? 96 : 64 },
-      tooltip: {
-        trigger: 'item',
-        formatter: ({ value: [a, b, count] }) =>
-          `${x.label}: ${readable(x, a)}<br>${y.label}: ${readable(y, b)}<br>` +
-          `${count} ${count === 1 ? 'day' : 'days'}`,
-      },
-      xAxis: axisFor(x, { name: x.label, nameGap: x.kind === 'enum' ? 62 : 34 }),
-      yAxis: axisFor(y, { name: y.label, nameGap: 42 }),
-      series: [
-        {
-          type: 'scatter',
-          // Area scales with the count, so a mark twice the area means twice
-          // the days. Radius alone would exaggerate the busy coordinates.
-          symbolSize: ([, , count]) => 9 + 26 * Math.sqrt(count / busiest),
-          itemStyle: { opacity: 0.75 },
-          data: points,
-        },
-      ],
-    }
-  }
-
-  /** Plot the five-number summary of each numeric variable. */
-  function boxOptions() {
-    const data = plotted.map((variable) => {
-      const values = Object.values(seriesFor(variable)).sort((a, b) => a - b)
-      if (!values.length) return [0, 0, 0, 0, 0]
-      const at = (ratio) => values[Math.floor((values.length - 1) * ratio)]
-      return [values[0], at(0.25), at(0.5), at(0.75), values[values.length - 1]]
-    })
-    return {
-      ...baseOptions(),
-      tooltip: {
-        trigger: 'item',
-        formatter: ({ dataIndex, value }) =>
-          `<b>${plotted[dataIndex]?.label ?? ''}</b><br>` +
-          `min ${value[1]} · q1 ${value[2]} · median ${value[3]} · ` +
-          `q3 ${value[4]} · max ${value[5]}`,
-      },
-      legend: undefined,
-      // Numbering the categories keeps the plot readable at any width; the
-      // key below the chart carries the full prompts.
-      xAxis: {
-        type: 'category',
-        data: plotted.map((_, index) => String(index + 1)),
-        axisLabel: { interval: 0 },
-      },
-      yAxis: { type: 'value', splitLine: { lineStyle: { color: '#2a2440' } } },
-      series: [
-        {
-          type: 'boxplot',
-          data,
-          itemStyle: { color: '#2a2440', borderWidth: 2 },
-          // One colour per box, matching the key rendered under the chart.
-          colorBy: 'data',
-        },
-      ],
-    }
-  }
+  const boxSummaries = $derived({
+    labels: plotted.map((variable) => variable.label),
+    summaries: plotted.map((variable) =>
+      fiveNumberSummary(Object.values(seriesFor(variable)))
+    ),
+  })
 
   const options = $derived.by(() => {
-    if (view === 'radar') return radarOptions()
-    if (view === 'scatter') return scatterOptions()
-    if (view === 'box') return boxOptions()
-    return lineOptions()
+    if (view === 'radar') return radarOptions(radarShape)
+    if (view === 'scatter') {
+      return scatterPair ? scatterOptions(scatterPair) : baseOptions()
+    }
+    if (view === 'box') return boxOptions(boxSummaries)
+    return lineOptions({
+      days: timelineDays,
+      series: lineSeries,
+      showSymbols: smoothing === 1 && timelineDays.length < 60,
+      smoothed: smoothing > 1,
+    })
   })
 
   function toggle(key) {

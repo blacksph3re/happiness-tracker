@@ -9,8 +9,8 @@ from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
 from models import Answer, Question, QuestionOption
-from schemas import AnswerDelete, AnswerIn, AnswerOut
-from services import prune_system_answers, sync_system_answers
+from schemas import AnswerIn, AnswerOut
+from services import sync_system_answers
 
 router = APIRouter(prefix="/answers", tags=["Answers"])
 
@@ -157,49 +157,6 @@ def upsert_answer(payload: AnswerIn, user: CurrentUser, db: DbSession) -> None:
     sync_system_answers(
         db, user.id, question.catalogue_id, payload.day, payload.local_hour
     )
-    db.commit()
-
-
-@router.delete(
-    "",
-    status_code=status.HTTP_204_NO_CONTENT,
-    operation_id="deleteAnswer",
-    summary="Clear an answer",
-    description=(
-        "Clear one answer. When it was the day's last, that day's auto-tracked "
-        "rows are removed with it."
-    ),
-)
-def delete_answer(payload: AnswerDelete, user: CurrentUser, db: DbSession) -> None:
-    """Clear one answer, and the day's auto-tracked rows if it was the last.
-
-    Parameters
-    ----------
-    payload : AnswerDelete
-        The day and question to clear.
-    user : User
-        The authenticated user.
-    db : sqlalchemy.orm.Session
-        Active database session.
-
-    Raises
-    ------
-    fastapi.HTTPException
-        With status 403 when the question is auto-tracked, or 404 when it does
-        not exist.
-    """
-    _load_answerable_question(db, payload.question_id)
-    answer = db.execute(
-        select(Answer).where(
-            Answer.user_id == user.id,
-            Answer.question_id == payload.question_id,
-            Answer.day == payload.day,
-        )
-    ).scalar_one_or_none()
-    if answer is not None:
-        db.delete(answer)
-        db.flush()
-    prune_system_answers(db, user.id, payload.day)
     db.commit()
 
 

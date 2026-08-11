@@ -77,7 +77,12 @@ export const test = base.extend({
    * test would be slow and would test the login page over and over.
    */
   page: async ({ page, account }, use) => {
-    await page.clock.setFixedTime(NOW)
+    // setSystemTime, not setFixedTime: pinning the date keeps "today"
+    // deterministic, but *freezing* it stops anything that animates from time
+    // deltas. Canvas charts then draw their axes and no series at all, which
+    // looks like a broken chart rather than a stopped clock. Noon leaves twelve
+    // hours of headroom before the pinned date could roll over.
+    await page.clock.setSystemTime(NOW)
     await page.addInitScript(
       ([access, refresh]) => {
         localStorage.setItem('ht.access', access)

@@ -16,7 +16,7 @@ const REFRESH_KEY = 'ht.refresh'
 export const signedIn = writable(Boolean(localStorage.getItem(ACCESS_KEY)))
 
 /** Read the stored access token, or null when signed out. */
-export function accessToken() {
+function accessToken() {
   return localStorage.getItem(ACCESS_KEY)
 }
 
@@ -37,13 +37,9 @@ export function clearTokens() {
 /**
  * Trade the stored refresh token for a new access token.
  *
- * Exported so a caller that leaves the generated client - the spreadsheet
- * download, which needs the raw response - can still get a usable token first,
- * rather than reaching for an unrelated endpoint to provoke a refresh.
- *
  * @returns {Promise<boolean>} True when a usable access token is now stored.
  */
-export async function ensureFreshToken() {
+async function ensureFreshToken() {
   const refresh_token = localStorage.getItem(REFRESH_KEY)
   if (!refresh_token) return false
   const { data } = await refreshCall({ body: { refresh_token }, auth: false })
@@ -60,7 +56,7 @@ export async function ensureFreshToken() {
  * Passing that list to `new Error()` yields "[object Object]", which tells the
  * reader nothing about which field was wrong.
  */
-export function describeFailure(payload, status) {
+function describeFailure(payload, status) {
   const detail = payload?.detail
   if (typeof detail === 'string' && detail) return detail
 
