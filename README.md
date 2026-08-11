@@ -64,9 +64,43 @@ Then open http://localhost:5173 and sign in with `ADMIN_USER` / `ADMIN_PASSWORD`
 Useful extras:
 
 ```bash
-cd backend && uv run pytest    # the test suite
+cd backend && uv run pytest    # the API test suite
 cd app && pnpm build           # emit the production bundle into backend/static
 ```
+
+### End-to-end tests
+
+Playwright drives a real browser against the app as it ships — one FastAPI process
+serving both the API and the built frontend, not the two dev servers.
+
+```bash
+cd app
+pnpm exec playwright install chromium   # first time only, ~180 MB
+pnpm e2e
+```
+
+That builds the frontend, migrates a throwaway database at `/tmp/happiness-e2e.db`,
+starts a server on port 8123, runs the suite, and shuts everything down. It touches
+neither your development database nor a running dev server, so it is safe to run at any
+time. It is deliberately not wired into any commit hook — `uv run pytest` is the check
+worth running constantly; this one you run when you want it.
+
+```bash
+pnpm e2e:ui       # pick and step through tests interactively
+pnpm e2e:report   # open the HTML report from the last run
+pnpm exec playwright test e2e/answering.spec.js   # one file
+pnpm exec playwright test --grep "double tap"     # one test by name
+```
+
+A failing run keeps a trace and a video under `app/test-results/`; open the trace with
+`pnpm exec playwright show-trace <path>` to step through the failure frame by frame.
+
+Two things the suite pins down deliberately, worth knowing before adding to it: the clock
+is fixed to 2026-06-15 in `Europe/Berlin`, because "today" is computed in the browser and
+an unpinned suite fails around midnight; and each test gets its own freshly created user,
+because answers are per-user and that is what keeps tests from seeing each other's data.
+Take the catalogue by name rather than "the first one" — the listing is alphabetical, and
+a test that creates a catalogue would otherwise change what later tests answer.
 
 Once `pnpm build` has run, `uv run fastapi dev` alone serves the built frontend on `:8000` too, which is the quickest way to check the single-process setup behaves the same as in Docker. Delete `backend/static` to go back to backend-only mode.
 

@@ -71,7 +71,11 @@
     <label class="mt-3 flex flex-col gap-1.5">
       <span class="meta">New password</span>
       <input type="password" bind:value={newPassword} autocomplete="new-password"
+        required minlength={me?.password_min_length}
         class="rounded-lg border border-white/15 bg-ink px-4 py-3" />
+      {#if me?.password_min_length}
+        <span class="meta normal-case">At least {me.password_min_length} characters</span>
+      {/if}
     </label>
     <button type="submit" class="mt-4 rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift">
       Change password

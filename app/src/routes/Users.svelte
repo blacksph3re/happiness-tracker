@@ -126,7 +126,13 @@
         <label class="flex flex-col gap-1.5">
           <span class="meta">Password</span>
           <input type="password" bind:value={draft.password} required autocomplete="new-password"
+            minlength={me?.password_min_length}
             class="rounded-lg border border-white/15 bg-ink px-4 py-3" />
+          {#if me?.password_min_length}
+            <span class="meta normal-case">
+              At least {me.password_min_length} characters
+            </span>
+          {/if}
         </label>
       </div>
       <div class="mt-4 flex flex-wrap gap-5">

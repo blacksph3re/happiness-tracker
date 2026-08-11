@@ -190,3 +190,20 @@ def test_preferences_round_trip_and_are_not_gated(client, admin_headers):
     }
     # One user's view state must never leak into another's.
     assert client.get("/api/me/preferences", headers=admin_headers).json() == {}
+
+
+def test_me_exposes_the_password_policy(client, admin_headers, monkeypatch):
+    """Forms need the minimum length to check before spending a round trip."""
+    me = client.get("/api/me", headers=admin_headers).json()
+    assert me["password_min_length"] == 8
+    # And it is the configured value, not a constant baked into the schema.
+    from config import get_settings
+
+    assert me["password_min_length"] == get_settings().password_min_length
+
+
+def test_user_listing_does_not_carry_the_password_policy(client, admin_headers):
+    """It is a server rule, not an attribute of each account."""
+    users = client.get("/api/users", headers=admin_headers).json()
+    assert users
+    assert all("password_min_length" not in user for user in users)

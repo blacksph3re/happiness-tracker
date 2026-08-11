@@ -7,6 +7,7 @@ from deps import CurrentUser, DbSession
 from models import Catalogue, User
 from schemas import (
     AccessToken,
+    MeOut,
     DefaultCatalogueChange,
     LoginRequest,
     PasswordChange,
@@ -149,14 +150,21 @@ def refresh(payload: RefreshRequest, db: DbSession) -> AccessToken:
 
 @router.get(
     "/me",
-    response_model=UserOut,
+    response_model=MeOut,
     operation_id="getCurrentUser",
     summary="Get my account",
-    description="Return the signed-in account, without any password material.",
+    description=(
+        "Return the signed-in account, without any password material, together "
+        "with the password rules its own forms have to obey."
+    ),
     tags=["Account"],
 )
-def read_me(user: CurrentUser) -> User:
-    """Return the authenticated user's own account.
+def read_me(user: CurrentUser) -> MeOut:
+    """Return the authenticated user's own account and the password policy.
+
+    The policy travels with the account so that a form can reject a too-short
+    password before spending a round trip on it, without hardcoding a limit that
+    the deployment is free to change.
 
     Parameters
     ----------
@@ -165,10 +173,14 @@ def read_me(user: CurrentUser) -> User:
 
     Returns
     -------
-    User
-        The same user, serialised without password material.
+    MeOut
+        The account, serialised without password material, plus
+        ``password_min_length``.
     """
-    return user
+    return MeOut(
+        **UserOut.model_validate(user).model_dump(),
+        password_min_length=get_settings().password_min_length,
+    )
 
 
 @router.put(

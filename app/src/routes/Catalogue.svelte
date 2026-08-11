@@ -8,6 +8,8 @@
   let detail = $state(null)
   let loading = $state(true)
   let newName = $state('')
+  let renaming = $state(false)
+  let renameValue = $state('')
   let draft = $state(blankDraft())
   let editing = $state(null)
 
@@ -106,6 +108,36 @@
     detail = await tryApi(`/catalogues/${id}`)
   }
 
+  /** Put the input straight into use, so renaming is one click and then typing. */
+  function focusOnMount(node) {
+    node.focus()
+    node.select()
+  }
+
+  function startRename() {
+    renameValue = catalogues.find((c) => c.id === selectedId)?.name ?? ''
+    renaming = true
+  }
+
+  async function renameCatalogue() {
+    const name = renameValue.trim()
+    const current = catalogues.find((c) => c.id === selectedId)
+    if (!name || name === current?.name) {
+      renaming = false
+      return
+    }
+    // A clashing name comes back as a 409, which tryApi surfaces as a toast.
+    const updated = await tryApi(`/catalogues/${selectedId}`, {
+      method: 'PUT',
+      body: { name },
+    })
+    if (!updated) return
+    renaming = false
+    catalogues = (await tryApi('/catalogues')) ?? []
+    if (detail) detail = { ...detail, name: updated.name }
+    pushToast(`Renamed to ${updated.name}`, 'ok')
+  }
+
   async function addCatalogue() {
     const created = await tryApi('/catalogues', {
       method: 'POST',
@@ -192,32 +224,67 @@
     <p class="meta">Loading…</p>
   {:else}
     <div class="mb-6 flex flex-wrap items-center gap-2">
-      {#each catalogues as catalogue (catalogue.id)}
-        <button
-          class="meta rounded-md border px-4 py-2 transition
-                 {catalogue.id === selectedId
-            ? 'border-ember bg-ember/10 text-paper'
-            : 'border-white/15 hover:border-white/40'}"
-          onclick={() => select(catalogue.id)}
-        >
-          {catalogue.name}
-        </button>
-      {/each}
-      <span class="ml-auto flex items-center gap-2">
+      {#if renaming}
         <input
-          bind:value={newName}
-          placeholder="New catalogue"
-          class="rounded-md border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+          bind:value={renameValue}
+          use:focusOnMount
+          aria-label="Catalogue name"
+          onkeydown={(event) => {
+            if (event.key === 'Enter') renameCatalogue()
+            if (event.key === 'Escape') renaming = false
+          }}
+          class="rounded-md border border-ember bg-ink-soft px-3 py-2 text-sm"
         />
         <button
           class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                  disabled:opacity-30"
-          disabled={!newName.trim()}
-          onclick={addCatalogue}
+          disabled={!renameValue.trim()}
+          onclick={renameCatalogue}
         >
-          Add
+          Save
         </button>
-      </span>
+        <button
+          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+          onclick={() => (renaming = false)}
+        >
+          Cancel
+        </button>
+      {:else}
+        {#each catalogues as catalogue (catalogue.id)}
+          <button
+            class="meta rounded-md border px-4 py-2 transition
+                   {catalogue.id === selectedId
+              ? 'border-ember bg-ember/10 text-paper'
+              : 'border-white/15 hover:border-white/40'}"
+            onclick={() => select(catalogue.id)}
+          >
+            {catalogue.name}
+          </button>
+        {/each}
+        <span class="ml-auto flex items-center gap-2">
+          {#if selectedId}
+            <button
+              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+              onclick={startRename}
+            >
+              Rename
+            </button>
+          {/if}
+          <input
+            bind:value={newName}
+            placeholder="New catalogue"
+            class="rounded-md border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+          />
+          <button
+            class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                   disabled:opacity-30"
+            disabled={!newName.trim()}
+            onclick={addCatalogue}
+          >
+            Add
+          </button>
+        </span>
+      {/if}
     </div>
 
     <ul class="flex flex-col gap-2">

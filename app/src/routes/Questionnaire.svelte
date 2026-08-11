@@ -117,6 +117,12 @@
     if (next >= 0 && next < questions.length) index = next
   }
 
+  // The day pair and the question pair read as one control column on the right,
+  // so they share a width and a style rather than each sizing to its own label.
+  const STEPPER =
+    'meta w-28 rounded-md border border-white/15 px-3 py-2 text-center transition ' +
+    'hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-30'
+
   async function changeDay(delta) {
     day = shiftDay(day, delta)
     // Keep the URL in step so the day survives a reload or a shared link.
@@ -144,11 +150,11 @@
           {current.prompt}
         </h1>
       </div>
-      <div class="flex items-center gap-2">
-        <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-          onclick={() => changeDay(-1)}>← Day</button>
-        <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-          onclick={() => changeDay(1)}>Day →</button>
+      <!-- ml-auto keeps the pair on the right even when a long prompt pushes it
+           onto its own line, where justify-between alone would strand it left. -->
+      <div class="ml-auto flex items-center gap-2">
+        <button class={STEPPER} onclick={() => changeDay(-1)}>← Day</button>
+        <button class={STEPPER} onclick={() => changeDay(1)}>Day →</button>
       </div>
     </header>
 
@@ -188,18 +194,12 @@
       <Ladder question={current} value={answers[current.id]} onanswer={record} />
     </div>
 
-    <footer class="mt-6 flex items-center justify-between">
-      <button
-        class="meta rounded-md border border-white/15 px-4 py-2 hover:border-white/40
-               disabled:cursor-not-allowed disabled:opacity-30"
-        disabled={index === 0}
-        onclick={() => step(-1)}
-      >
+    <footer class="mt-6 flex items-center justify-end gap-2">
+      <button class={STEPPER} disabled={index === 0} onclick={() => step(-1)}>
         ← Back
       </button>
       <button
-        class="meta rounded-md border border-white/15 px-4 py-2 hover:border-white/40
-               disabled:cursor-not-allowed disabled:opacity-30"
+        class={STEPPER}
         disabled={index === questions.length - 1}
         onclick={() => step(1)}
       >

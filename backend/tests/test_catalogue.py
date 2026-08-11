@@ -227,3 +227,57 @@ def test_bounds_cannot_be_set_on_an_enum_question(client, admin_headers, catalog
         f"/api/questions/{created['id']}", headers=admin_headers, json={"min_value": 1}
     )
     assert response.status_code == 422
+
+
+def test_renaming_a_catalogue_keeps_its_questions_and_answers(
+    client, admin_headers, catalogue_id, starter_questions
+):
+    client.put(
+        "/api/answers",
+        headers=admin_headers,
+        json={
+            "day": "2026-03-04",
+            "local_hour": 9,
+            "question_id": starter_questions[0]["id"],
+            "value": 4,
+        },
+    )
+    renamed = client.put(
+        f"/api/catalogues/{catalogue_id}",
+        headers=admin_headers,
+        json={"name": "Evening check-in"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Evening check-in"
+
+    listed = client.get("/api/catalogues", headers=admin_headers).json()
+    assert [c["name"] for c in listed] == ["Evening check-in"]
+
+    detail = client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers).json()
+    assert len(detail["questions"]) == len(starter_questions) + 5
+    assert client.get("/api/answers", headers=admin_headers).json() != []
+
+
+def test_renaming_onto_an_existing_name_is_rejected(client, admin_headers, catalogue_id):
+    client.post("/api/catalogues", headers=admin_headers, json={"name": "Work"})
+    clash = client.put(
+        f"/api/catalogues/{catalogue_id}", headers=admin_headers, json={"name": "Work"}
+    )
+    assert clash.status_code == 409
+    # The failed rename must not have half-applied.
+    names = {c["name"] for c in client.get("/api/catalogues", headers=admin_headers).json()}
+    assert "Work" in names and len(names) == 2
+
+
+def test_renaming_to_a_blank_name_is_rejected(client, admin_headers, catalogue_id):
+    response = client.put(
+        f"/api/catalogues/{catalogue_id}", headers=admin_headers, json={"name": ""}
+    )
+    assert response.status_code == 422
+
+
+def test_renaming_an_unknown_catalogue_is_a_404(client, admin_headers):
+    response = client.put(
+        "/api/catalogues/9999", headers=admin_headers, json={"name": "Nowhere"}
+    )
+    assert response.status_code == 404

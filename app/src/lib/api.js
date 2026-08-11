@@ -44,6 +44,34 @@ async function refreshAccessToken() {
 }
 
 /**
+ * Turn an error body into one sentence a person can act on.
+ *
+ * A handler raising HTTPException puts a string in `detail`, but a failed
+ * schema validation puts a *list* of `{loc, msg}` objects there instead.
+ * Passing that list to `new Error()` yields "[object Object]", which tells the
+ * reader nothing about which field was wrong.
+ */
+export function describeFailure(payload, status) {
+  const detail = payload?.detail
+  if (typeof detail === 'string' && detail) return detail
+
+  if (Array.isArray(detail) && detail.length > 0) {
+    return detail
+      .map((problem) => {
+        // `loc` is ["body", "password"]; the field name is the informative part.
+        const field = Array.isArray(problem.loc)
+          ? problem.loc.filter((part) => part !== 'body').join('.')
+          : ''
+        const message = problem.msg ?? 'is not valid'
+        return field ? `${field}: ${message}` : message
+      })
+      .join('; ')
+  }
+
+  return `Request failed (${status})`
+}
+
+/**
  * Call the API, refreshing the access token once if it has expired.
  *
  * Throws on failure so callers can decide whether to surface a toast; the
@@ -74,8 +102,7 @@ export async function api(path, { method = 'GET', body, retry = true } = {}) {
   if (!response.ok) {
     let detail = `Request failed (${response.status})`
     try {
-      const payload = await response.json()
-      if (payload.detail) detail = payload.detail
+      detail = describeFailure(await response.json(), response.status)
     } catch {
       /* keep the status-code message */
     }

@@ -79,6 +79,17 @@ class UserOut(BaseModel):
     """Catalogue presented to this user when answering."""
 
 
+class MeOut(UserOut):
+    """The signed-in account, plus the rules its own forms have to obey.
+
+    Kept separate from `UserOut` so that a password policy does not appear on
+    every row of the user listing, where it would read as a per-user setting.
+    """
+
+    password_min_length: int
+    """Shortest password the server will accept, so forms can say so up front."""
+
+
 def _password_field() -> Field:
     """Build the shared password field with the configured minimum length.
 
