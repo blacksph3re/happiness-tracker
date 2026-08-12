@@ -3,7 +3,7 @@ import { ADMIN } from '../playwright.config.js'
 
 test('the navigation shows only what the flags allow', async ({ page, account, admin }) => {
   // Neither flag: no editing, no people.
-  await page.goto('/')
+  await page.goto('/answer')
   const nav = page.locator('header')
   await expect(nav.getByRole('link', { name: 'Patterns' })).toBeVisible()
   await expect(nav.getByRole('link', { name: 'Questions' })).toHaveCount(0)
@@ -31,7 +31,7 @@ test('the server refuses what the navigation hides', async ({ account }) => {
 })
 
 test('signing out clears the app and returns to the form', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/answer')
   await page.getByRole('button', { name: 'Sign out' }).click()
 
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
@@ -40,15 +40,18 @@ test('signing out clears the app and returns to the form', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0)
 })
 
-test('signing in through the form reaches the questionnaire', async ({ page, account }) => {
-  await page.goto('/')
+test('signing in through the form reaches the chooser', async ({ page, account }) => {
+  await page.goto('/answer')
   await page.getByRole('button', { name: 'Sign out' }).click()
 
   await page.getByLabel('Username').fill(account.username)
   await page.getByLabel('Password').fill(account.password)
   await page.getByRole('button', { name: 'Sign in' }).click()
 
-  await expect(page.getByRole('link', { name: 'Patterns' })).toBeVisible()
+  // Signing in lands on the landing page, which is the only bridge between the
+  // two halves - so both are one tap away and neither is assumed.
+  await expect(page.locator('[data-card=wellbeing]')).toBeVisible()
+  await expect(page.locator('[data-card=time]')).toBeVisible()
   await expect(page.getByRole('heading', { level: 1 })).not.toHaveText('Sign in')
 })
 

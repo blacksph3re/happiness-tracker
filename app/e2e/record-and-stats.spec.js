@@ -34,7 +34,7 @@ test('the record shows the history and opens a day for answering', async ({
 
   // A day's Answer button opens the questionnaire on that day.
   await table.getByRole('button', { name: 'Answer' }).first().click()
-  await expect(page).toHaveURL(/\/\?day=\d{4}-\d{2}-\d{2}/)
+  await expect(page).toHaveURL(/\/answer\?day=\d{4}-\d{2}-\d{2}/)
   await expect(page.getByRole('group')).toBeVisible()
 })
 

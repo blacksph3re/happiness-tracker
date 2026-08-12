@@ -1,10 +1,10 @@
 <script>
-  import { attempt } from '../lib/api.js'
-  import { exportAnswers } from '../lib/generated/sdk.gen'
-  import { ensureAllCatalogues, ensureAnswers } from '../lib/store.js'
-  import { dayLabel, shiftDay, today } from '../lib/day.js'
-  import { navigate } from '../lib/router.js'
-  import { pushToast } from '../lib/toasts.js'
+  import { attempt } from '../../lib/api.js'
+  import { exportAnswers } from '../../lib/generated/sdk.gen'
+  import { ensureAllCatalogues, ensureAnswers } from '../../lib/store.js'
+  import { dayLabel, shiftDay, today } from '../../lib/day.js'
+  import { navigate } from '../../lib/router.js'
+  import { pushToast } from '../../lib/toasts.js'
   import { fly } from 'svelte/transition'
 
   const WINDOW_STEP = 14
@@ -254,7 +254,7 @@
                {selectedDay === today()
           ? 'border-ember/60 text-paper hover:bg-ember/10'
           : 'border-white/15 hover:border-white/40'}"
-        onclick={() => navigate(`/?day=${selectedDay}`)}
+        onclick={() => navigate(`/answer?day=${selectedDay}`)}
       >
         Answer this day
       </button>
@@ -334,7 +334,7 @@
                          {day === today()
                     ? 'border-ember/60 text-paper hover:bg-ember/10'
                     : 'border-white/15 hover:border-white/40'}"
-                  onclick={() => navigate(`/?day=${day}`)}
+                  onclick={() => navigate(`/answer?day=${day}`)}
                 >
                   Answer
                 </button>

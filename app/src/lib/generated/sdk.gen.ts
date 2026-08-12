@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, ExportAnswersData, ExportAnswersErrors, ExportAnswersResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UpsertAnswerData, UpsertAnswerErrors, UpsertAnswerResponses } from './types.gen';
+import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CheckInData, CheckInErrors, CheckInResponses, CheckOutData, CheckOutErrors, CheckOutResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTimeEntryData, CreateTimeEntryErrors, CreateTimeEntryResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteTimeEntryData, DeleteTimeEntryErrors, DeleteTimeEntryResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, ExportAnswersData, ExportAnswersErrors, ExportAnswersResponses, ExportTimeData, ExportTimeErrors, ExportTimeResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListProjectsData, ListProjectsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateTimeEntryData, UpdateTimeEntryErrors, UpdateTimeEntryResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UpsertAnswerData, UpsertAnswerErrors, UpsertAnswerResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -392,5 +392,213 @@ export const exportAnswers = <ThrowOnError extends boolean = false>(options?: Op
 export const listStatsVariables = <ThrowOnError extends boolean = false>(options?: Options<ListStatsVariablesData, ThrowOnError>): RequestResult<ListStatsVariablesResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListStatsVariablesResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/stats/variables',
+    ...options
+});
+
+/**
+ * List projects
+ *
+ * Every project the signed-in account owns, active ones first.
+ */
+export const listProjects = <ThrowOnError extends boolean = false>(options?: Options<ListProjectsData, ThrowOnError>): RequestResult<ListProjectsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListProjectsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/projects',
+    ...options
+});
+
+/**
+ * Create a project
+ *
+ * Add a project to the signed-in account. No editor flag needed.
+ */
+export const createProject = <ThrowOnError extends boolean = false>(options: Options<CreateProjectData, ThrowOnError>): RequestResult<CreateProjectResponses, CreateProjectErrors, ThrowOnError> => (options.client ?? client).post<CreateProjectResponses, CreateProjectErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/projects',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete a project
+ *
+ * Remove a project that has never been tracked against. One with sessions is archived instead, so the hours survive.
+ */
+export const deleteProject = <ThrowOnError extends boolean = false>(options: Options<DeleteProjectData, ThrowOnError>): RequestResult<DeleteProjectResponses, DeleteProjectErrors, ThrowOnError> => (options.client ?? client).delete<DeleteProjectResponses, DeleteProjectErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/projects/{project_id}',
+    ...options
+});
+
+/**
+ * Edit a project
+ *
+ * Rename, recolour, reorder, re-tag or archive a project. Archiving one whose timer is still running is refused.
+ */
+export const updateProject = <ThrowOnError extends boolean = false>(options: Options<UpdateProjectData, ThrowOnError>): RequestResult<UpdateProjectResponses, UpdateProjectErrors, ThrowOnError> => (options.client ?? client).put<UpdateProjectResponses, UpdateProjectErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/projects/{project_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List tags
+ *
+ * Every tag the signed-in account owns, in display order.
+ */
+export const listTags = <ThrowOnError extends boolean = false>(options?: Options<ListTagsData, ThrowOnError>): RequestResult<ListTagsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListTagsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/tags',
+    ...options
+});
+
+/**
+ * Create a tag
+ *
+ * Add a label that projects can be grouped by.
+ */
+export const createTag = <ThrowOnError extends boolean = false>(options: Options<CreateTagData, ThrowOnError>): RequestResult<CreateTagResponses, CreateTagErrors, ThrowOnError> => (options.client ?? client).post<CreateTagResponses, CreateTagErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/tags',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete a tag
+ *
+ * Remove a label. No session references a tag, so this unlabels the projects it covered and destroys no tracked time.
+ */
+export const deleteTag = <ThrowOnError extends boolean = false>(options: Options<DeleteTagData, ThrowOnError>): RequestResult<DeleteTagResponses, DeleteTagErrors, ThrowOnError> => (options.client ?? client).delete<DeleteTagResponses, DeleteTagErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/tags/{tag_id}',
+    ...options
+});
+
+/**
+ * Edit a tag
+ *
+ * Rename, recolour or reorder a tag.
+ */
+export const updateTag = <ThrowOnError extends boolean = false>(options: Options<UpdateTagData, ThrowOnError>): RequestResult<UpdateTagResponses, UpdateTagErrors, ThrowOnError> => (options.client ?? client).put<UpdateTagResponses, UpdateTagErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/tags/{tag_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Start a timer
+ *
+ * Open a session on a project. Other projects may already be running - this never closes them.
+ */
+export const checkIn = <ThrowOnError extends boolean = false>(options: Options<CheckInData, ThrowOnError>): RequestResult<CheckInResponses, CheckInErrors, ThrowOnError> => (options.client ?? client).post<CheckInResponses, CheckInErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/projects/{project_id}/check-in',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Stop a timer
+ *
+ * Close the session running on a project.
+ */
+export const checkOut = <ThrowOnError extends boolean = false>(options: Options<CheckOutData, ThrowOnError>): RequestResult<CheckOutResponses, CheckOutErrors, ThrowOnError> => (options.client ?? client).post<CheckOutResponses, CheckOutErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/projects/{project_id}/check-out',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List sessions
+ *
+ * Every session of the signed-in account overlapping the range, the running ones included.
+ */
+export const listTimeEntries = <ThrowOnError extends boolean = false>(options?: Options<ListTimeEntriesData, ThrowOnError>): RequestResult<ListTimeEntriesResponses, ListTimeEntriesErrors, ThrowOnError> => (options?.client ?? client).get<ListTimeEntriesResponses, ListTimeEntriesErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/time/entries',
+    ...options
+});
+
+/**
+ * Record a past session
+ *
+ * Add a session that was never tracked live. Always finished: a timer is started with check-in.
+ */
+export const createTimeEntry = <ThrowOnError extends boolean = false>(options: Options<CreateTimeEntryData, ThrowOnError>): RequestResult<CreateTimeEntryResponses, CreateTimeEntryErrors, ThrowOnError> => (options.client ?? client).post<CreateTimeEntryResponses, CreateTimeEntryErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/time/entries',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete a session
+ *
+ * Remove a session outright. A check-in to the wrong project is not a record to be corrected, it is a row that should not exist.
+ */
+export const deleteTimeEntry = <ThrowOnError extends boolean = false>(options: Options<DeleteTimeEntryData, ThrowOnError>): RequestResult<DeleteTimeEntryResponses, DeleteTimeEntryErrors, ThrowOnError> => (options.client ?? client).delete<DeleteTimeEntryResponses, DeleteTimeEntryErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/time/entries/{entry_id}',
+    ...options
+});
+
+/**
+ * Correct a session
+ *
+ * Change either end, the project or the note. Overlapping other sessions is allowed - parallel timers are the point.
+ */
+export const updateTimeEntry = <ThrowOnError extends boolean = false>(options: Options<UpdateTimeEntryData, ThrowOnError>): RequestResult<UpdateTimeEntryResponses, UpdateTimeEntryErrors, ThrowOnError> => (options.client ?? client).put<UpdateTimeEntryResponses, UpdateTimeEntryErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/time/entries/{entry_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Total tracked time
+ *
+ * Tracked seconds per local day, grouped by project or by tag. Sessions crossing midnight are already split; parallel sessions are added, so a day can total more than 24 hours.
+ */
+export const timeSummary = <ThrowOnError extends boolean = false>(options?: Options<TimeSummaryData, ThrowOnError>): RequestResult<TimeSummaryResponses, TimeSummaryErrors, ThrowOnError> => (options?.client ?? client).get<TimeSummaryResponses, TimeSummaryErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/time/summary',
+    ...options
+});
+
+/**
+ * Download sessions as a spreadsheet
+ *
+ * Every session on one sheet, with the daily totals per project and per tag on two more, worked out the same way the app shows them.
+ */
+export const exportTime = <ThrowOnError extends boolean = false>(options?: Options<ExportTimeData, ThrowOnError>): RequestResult<ExportTimeResponses, ExportTimeErrors, ThrowOnError> => (options?.client ?? client).get<ExportTimeResponses, ExportTimeErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/time/export.xlsx',
     ...options
 });

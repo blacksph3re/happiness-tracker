@@ -7,15 +7,15 @@
     lineOptions,
     radarOptions,
     scatterOptions,
-  } from '../lib/chart-options.js'
-  import { fiveNumberSummary, movingAverage, tallyPairs } from '../lib/series.js'
+  } from '../../lib/chart-options.js'
+  import { fiveNumberSummary, movingAverage, tallyPairs } from '../../lib/wellbeing/series.js'
   import {
     ensureAnswers,
     ensurePreferences,
     ensureVariables,
     persistPreferences,
-  } from '../lib/store.js'
-  import { dayLabel, shiftDay } from '../lib/day.js'
+  } from '../../lib/store.js'
+  import { dayLabel, shiftDay } from '../../lib/day.js'
 
   let variables = $state([])
   let rows = $state([])

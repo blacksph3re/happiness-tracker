@@ -1,14 +1,14 @@
 <script>
-  import Ladder from '../lib/Ladder.svelte'
-  import { link } from '../lib/router.js'
-  import { attempt } from '../lib/api.js'
-  import { upsertAnswer } from '../lib/generated/sdk.gen'
-  import { ensureAnswers, ensureCatalogue, ensureCatalogues, ensureMe, rememberAnswer } from '../lib/store.js'
-  import { dayLabel, localHour, shiftDay, today } from '../lib/day.js'
-  import { ANSWER_MIN_HEIGHT } from '../lib/layout.js'
-  import { answerRatio, tint } from '../lib/scale.js'
-  import { pushToast } from '../lib/toasts.js'
-  import { navigate, query } from '../lib/router.js'
+  import Ladder from '../../lib/wellbeing/Ladder.svelte'
+  import { link } from '../../lib/router.js'
+  import { attempt } from '../../lib/api.js'
+  import { upsertAnswer } from '../../lib/generated/sdk.gen'
+  import { ensureAnswers, ensureCatalogue, ensureCatalogues, ensureMe, rememberAnswer } from '../../lib/store.js'
+  import { dayLabel, localHour, shiftDay, today } from '../../lib/day.js'
+  import { ANSWER_MIN_HEIGHT } from '../../lib/layout.js'
+  import { answerRatio, tint } from '../../lib/wellbeing/scale.js'
+  import { pushToast } from '../../lib/toasts.js'
+  import { navigate, query } from '../../lib/router.js'
 
   // How long a card takes to leave. Used for both the animation and the wait
   // before the next card is put in its place: two numbers that must agree, so
@@ -213,7 +213,7 @@
    * @param {number} delta Days to move, negative for the past.
    */
   function changeDay(delta) {
-    navigate(`/?day=${shiftDay(day, delta)}`, { replace: true })
+    navigate(`/answer?day=${shiftDay(day, delta)}`, { replace: true })
   }
 </script>
 

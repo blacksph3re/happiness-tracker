@@ -13,7 +13,12 @@
 /* Dusk palette. Days end when you log them, so the app is built out of the
    colours of one: deep aubergine through indigo, with a single ember accent
    reserved for "now". */
-@theme {
+/* `static` matters: Tailwind v4 only emits the custom properties some utility
+ * actually references, so a token named only at runtime — `var(--color-sage)`
+ * built from a project's stored colour — resolves to nothing and silently
+ * falls back. Same trap as a class name assembled at runtime, one layer down.
+ * `static` emits every variable in the block whether a utility uses it or not. */
+@theme static {
   --color-ink: #191627;
   --color-ink-soft: #251f3b;
   --color-paper: #f4f2f7;
@@ -24,6 +29,21 @@
   --color-ember: #e8734a;
   --color-haze: #b9b3cc;
   --color-sage: #6f9e8b;
+
+  /* The time section's accents. Cool against the wellbeing purple, so the two
+     halves read as different places rather than as a theme bug. Named tokens
+     rather than a second set of utilities: `.section-time` below remaps the
+     accent variables, and every existing `bg-dusk` inside it follows. */
+  /* Project and tag colours. Deliberately none of the accent tokens the time
+     section remaps: a project coloured `dusk-lift` would turn teal in there and
+     collapse into the others. These six mean the same thing in both halves. */
+  --color-iris: #8b6fd6;
+  --color-rose: #d4638a;
+
+  --color-tide: #1f6f7a;
+  --color-tide-deep: #16525a;
+  --color-tide-lift: #2f9aa8;
+  --color-amber: #d9a33c;
 
   --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-meta: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace;
@@ -38,6 +58,20 @@ body {
   color: var(--color-paper);
   font-family: var(--font-display);
   -webkit-font-smoothing: antialiased;
+}
+
+/* The time half of the app, recoloured in one place.
+ *
+ * Tailwind v4 compiles `bg-dusk` to `background-color: var(--color-dusk)`, so
+ * rebinding the accent variables here recolours every button, ring and
+ * highlight inside the section without a parallel set of class names - and
+ * without the silent-missing-token trap, since no new utility is invented.
+ * Ink, paper, haze, type, spacing and the chart palette stay shared. */
+.section-time {
+  --color-dusk: var(--color-tide);
+  --color-dusk-deep: var(--color-tide-deep);
+  --color-dusk-lift: var(--color-tide-lift);
+  --color-ember: var(--color-amber);
 }
 
 /* Metadata, labels and anything tabular reads as instrument output. */

@@ -196,3 +196,38 @@ export function recentDays(count, end = TODAY) {
   }
   return days
 }
+
+/**
+ * Create a project for the signed-in account and return it.
+ *
+ * Projects are per-user, so unlike catalogues there is nothing shared to
+ * collide over — each test's account starts with none.
+ */
+export async function makeProject(account, name, extra = {}) {
+  const response = await account.api.post('/api/projects', {
+    data: { name, ...extra },
+  })
+  expect(response.status(), `creating project ${name}`).toBe(201)
+  return response.json()
+}
+
+/** Create a tag for the signed-in account and return it. */
+export async function makeTag(account, name, extra = {}) {
+  const response = await account.api.post('/api/tags', { data: { name, ...extra } })
+  expect(response.status(), `creating tag ${name}`).toBe(201)
+  return response.json()
+}
+
+/** Record a finished session, as the record view's "add" form does. */
+export async function recordSession(account, projectId, startedAt, endedAt) {
+  const response = await account.api.post('/api/time/entries', {
+    data: {
+      project_id: projectId,
+      started_at: startedAt,
+      ended_at: endedAt,
+      utc_offset: 0,
+    },
+  })
+  expect(response.status(), 'recording a session').toBe(201)
+  return response.json()
+}

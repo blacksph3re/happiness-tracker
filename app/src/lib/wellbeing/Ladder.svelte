@@ -1,5 +1,5 @@
 <script>
-  import { ANSWER_MIN_HEIGHT } from './layout.js'
+  import { ANSWER_MIN_HEIGHT } from '../layout.js'
 
   /**
    * The answer scale, rendered as full-bleed bands: one tap answers.

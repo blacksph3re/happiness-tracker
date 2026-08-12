@@ -11,7 +11,7 @@ from starlette.types import Scope
 from bootstrap import bootstrap
 from config import get_settings
 from database import SessionLocal
-from routers import answers, auth, catalogues, stats, users
+from routers import answers, auth, catalogues, projects, stats, time, users
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 """Directory holding the compiled frontend, produced by `pnpm build` in `app/`."""
@@ -96,6 +96,8 @@ app.include_router(users.router, prefix="/api")
 app.include_router(catalogues.router, prefix="/api")
 app.include_router(answers.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
+app.include_router(projects.router, prefix="/api")
+app.include_router(time.router, prefix="/api")
 
 
 class SinglePageApp(StaticFiles):

@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -369,3 +370,186 @@ class Answer(Base):
 
     option: Mapped["QuestionOption | None"] = relationship()
     """The option chosen, for enum questions."""
+
+
+# ---------------------------------------------------------------------------
+# Time tracking. Projects and sessions are independent of the questionnaire
+# above: nothing here references a question, and nothing above references a
+# project. They share only the user and the local-day convention.
+# ---------------------------------------------------------------------------
+
+TRACK_NAME_MAX_LENGTH = 80
+"""Longest a project or tag name may be, matching the question prompt cap."""
+
+
+class Project(Base):
+    """Something a user tracks time against. A "timeline" in the iOS app."""
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_project_name_per_user"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The owner. Projects are personal; sharing is not modelled yet."""
+
+    name: Mapped[str] = mapped_column(
+        String(TRACK_NAME_MAX_LENGTH), nullable=False
+    )
+    """Display name, unique among that user's projects."""
+
+    colour: Mapped[str] = mapped_column(String(16), nullable=False)
+    """Palette token, stored rather than assigned, so reordering projects does
+    not shift what colour a project has had throughout its history."""
+
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """Sort order in the track view."""
+
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    """Whether the project is still offered for check-in. An archived project
+    keeps every session it already holds."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    """Timestamp set by the database when the row is inserted."""
+
+    user: Mapped["User"] = relationship()
+    """The owner."""
+
+    tags: Mapped[list["Tag"]] = relationship(
+        secondary="project_tags", back_populates="projects"
+    )
+    """Labels covering this project. Several are allowed."""
+
+
+class Tag(Base):
+    """A label over projects, so totals can be read by group."""
+
+    __tablename__ = "tags"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_tag_name_per_user"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The owner, as for projects."""
+
+    name: Mapped[str] = mapped_column(
+        String(TRACK_NAME_MAX_LENGTH), nullable=False
+    )
+    """Display name, unique among that user's tags."""
+
+    colour: Mapped[str] = mapped_column(String(16), nullable=False)
+    """Palette token, as for projects."""
+
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """Sort order in the tag grouping."""
+
+    projects: Mapped[list["Project"]] = relationship(
+        secondary="project_tags", back_populates="tags"
+    )
+    """Projects this tag covers."""
+
+
+class ProjectTag(Base):
+    """Which projects a tag covers.
+
+    A plain join table: no session ever references a tag, so re-tagging a
+    project regroups its whole history. That is what makes a tag a view of the
+    time rather than a second record of it.
+    """
+
+    __tablename__ = "project_tags"
+    __table_args__ = (
+        UniqueConstraint("project_id", "tag_id", name="uq_project_tag"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The tagged project."""
+
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("tags.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The tag applied."""
+
+
+class TimeEntry(Base):
+    """One check-in and the check-out that ended it."""
+
+    __tablename__ = "time_entries"
+    __table_args__ = (
+        CheckConstraint(
+            "ended_at is null or ended_at > started_at",
+            name="ck_entry_ends_after_start",
+        ),
+        # At most one *running* session per project. Several projects may run at
+        # once - that is the point - but checking into one twice would produce
+        # two rows no interface could tell apart. Partial indexes are the one
+        # way to say "unique among the open ones", and SQLite supports them.
+        Index(
+            "uq_open_entry_per_project",
+            "user_id",
+            "project_id",
+            unique=True,
+            sqlite_where=text("ended_at IS NULL"),
+        ),
+        Index("ix_time_entries_user_started", "user_id", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    """Whose session this is."""
+
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    """What was being worked on. Restricted rather than cascading: deleting a
+    project must not silently delete the hours spent on it."""
+
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    """When the session began, in UTC."""
+
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When it ended, in UTC. Null while the timer is still running."""
+
+    utc_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    """Minutes east of UTC at check-in.
+
+    What makes local midnight knowable on the server, and so what lets a
+    session be divided across the days it touches. Kept beside the instants
+    rather than replacing them, because a duration computed from local wall
+    times is wrong by an hour across a daylight-saving change.
+    """
+
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Optional free text about the session."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    """Timestamp set by the database when the row is inserted."""
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    """Timestamp set on insert and refreshed on every update."""
+
+    project: Mapped["Project"] = relationship()
+    """The project this session counts towards."""

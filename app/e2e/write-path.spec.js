@@ -2,7 +2,7 @@ import { answerBand, catalogueOf, expect, grant, realQuestions, test } from './f
 
 test('moving between questions makes no server call', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
 
   // Everything after the initial load must be a write, never a read.
@@ -29,7 +29,7 @@ test('a stalled write never blocks the next question', async ({ page, account })
   await page.route('**/api/answers', (route) =>
     route.request().method() === 'PUT' ? undefined : route.continue()
   )
-  await page.goto('/')
+  await page.goto('/answer')
 
   await page.getByRole('group').getByRole('button').nth(3).click()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[1].prompt)
@@ -44,7 +44,7 @@ test('a rejected write is reported and the app stays usable', async ({ page, acc
       ? route.fulfill({ status: 500, json: { detail: 'The server fell over' } })
       : route.continue()
   )
-  await page.goto('/')
+  await page.goto('/answer')
 
   await page.getByRole('group').getByRole('button').nth(3).click()
   await expect(page.getByText('The server fell over')).toBeVisible()

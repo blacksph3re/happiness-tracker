@@ -1,9 +1,10 @@
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.fields import FieldInfo
 
 from config import get_settings
-from models import PROMPT_MAX_LENGTH
+from models import PROMPT_MAX_LENGTH, TRACK_NAME_MAX_LENGTH
 
 
 class Version(BaseModel):
@@ -91,7 +92,7 @@ class MeOut(UserOut):
     """Shortest password the server will accept, so forms can say so up front."""
 
 
-def _password_field() -> Field:
+def _password_field() -> FieldInfo:
     """Build the shared password field with the configured minimum length.
 
     Returns
@@ -515,3 +516,213 @@ class Variable(BaseModel):
 
     roles: list[str] = []
     """Which plot roles the variable supports: ``axis``, ``group``, ``radar``."""
+
+
+# ---------------------------------------------------------------------------
+# Time tracking
+# ---------------------------------------------------------------------------
+
+COLOUR_PATTERN = "^[a-z][a-z0-9-]{0,15}$"
+"""Shape of a palette token. A name, not a hex value, so the two halves of the
+app cannot drift apart on what "the fourth colour" is."""
+
+
+class TagOut(BaseModel):
+    """A label over projects, as exposed by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    """Surrogate primary key."""
+
+    name: str
+    """Display name."""
+
+    colour: str
+    """Palette token."""
+
+    position: int
+    """Sort order."""
+
+
+class TagCreate(BaseModel):
+    """Payload for defining a tag."""
+
+    name: str = Field(min_length=1, max_length=TRACK_NAME_MAX_LENGTH)
+    """Display name, unique among the user's tags."""
+
+    colour: str = Field(default="tide", pattern=COLOUR_PATTERN)
+    """Palette token."""
+
+    position: int = 0
+    """Sort order."""
+
+
+class TagUpdate(BaseModel):
+    """Payload for editing a tag. Omitted fields are left alone."""
+
+    name: str | None = Field(
+        default=None, min_length=1, max_length=TRACK_NAME_MAX_LENGTH
+    )
+    """New display name."""
+
+    colour: str | None = Field(default=None, pattern=COLOUR_PATTERN)
+    """New palette token."""
+
+    position: int | None = None
+    """New sort order."""
+
+
+class ProjectOut(BaseModel):
+    """A project as exposed by the API, with the tags covering it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    """Surrogate primary key."""
+
+    name: str
+    """Display name."""
+
+    colour: str
+    """Palette token."""
+
+    position: int
+    """Sort order."""
+
+    active: bool
+    """Whether the project is still offered for check-in."""
+
+    tags: list[TagOut] = []
+    """Labels covering this project."""
+
+
+class ProjectCreate(BaseModel):
+    """Payload for creating a project."""
+
+    name: str = Field(min_length=1, max_length=TRACK_NAME_MAX_LENGTH)
+    """Display name, unique among the user's projects."""
+
+    colour: str = Field(default="tide", pattern=COLOUR_PATTERN)
+    """Palette token."""
+
+    position: int = 0
+    """Sort order."""
+
+    tag_ids: list[int] = []
+    """Tags to apply."""
+
+
+class ProjectUpdate(BaseModel):
+    """Payload for editing a project. Omitted fields are left alone."""
+
+    name: str | None = Field(
+        default=None, min_length=1, max_length=TRACK_NAME_MAX_LENGTH
+    )
+    """New display name."""
+
+    colour: str | None = Field(default=None, pattern=COLOUR_PATTERN)
+    """New palette token."""
+
+    position: int | None = None
+    """New sort order."""
+
+    active: bool | None = None
+    """Whether the project is offered for check-in."""
+
+    tag_ids: list[int] | None = None
+    """Replacement set of tags, when given."""
+
+
+class TimeEntryOut(BaseModel):
+    """One session as exposed by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    """Surrogate primary key."""
+
+    project_id: int
+    """The project this session counts towards."""
+
+    started_at: datetime
+    """When it began, in UTC."""
+
+    ended_at: datetime | None
+    """When it ended, in UTC. Null while it is still running."""
+
+    utc_offset: int
+    """Minutes east of UTC at check-in."""
+
+    note: str | None
+    """Optional free text."""
+
+
+class CheckIn(BaseModel):
+    """Payload for starting a timer."""
+
+    at: datetime
+    """The instant of the check-in, in UTC, as the client reports it."""
+
+    utc_offset: int = Field(ge=-720, le=840)
+    """Minutes east of UTC where the client is."""
+
+    note: str | None = Field(default=None, max_length=500)
+    """Optional free text."""
+
+
+class CheckOut(BaseModel):
+    """Payload for stopping a timer."""
+
+    at: datetime
+    """The instant of the check-out, in UTC, as the client reports it."""
+
+
+class TimeEntryCreate(BaseModel):
+    """Payload for recording a session that was never tracked live."""
+
+    project_id: int
+    """The project it counts towards."""
+
+    started_at: datetime
+    """When it began, in UTC."""
+
+    ended_at: datetime
+    """When it ended, in UTC. A session added by hand is always finished."""
+
+    utc_offset: int = Field(ge=-720, le=840)
+    """Minutes east of UTC the session happened in."""
+
+    note: str | None = Field(default=None, max_length=500)
+    """Optional free text."""
+
+
+class TimeEntryUpdate(BaseModel):
+    """Payload for correcting a session. Omitted fields are left alone."""
+
+    project_id: int | None = None
+    """Move the session to another project."""
+
+    started_at: datetime | None = None
+    """Corrected start, in UTC."""
+
+    ended_at: datetime | None = None
+    """Corrected end, in UTC."""
+
+    note: str | None = Field(default=None, max_length=500)
+    """Replacement free text."""
+
+
+class SummaryRow(BaseModel):
+    """How long one project or tag ran on one day."""
+
+    day: date
+    """Local calendar day."""
+
+    key: int | None
+    """The project id, or the tag id when grouping by tag. ``None`` is the
+    untagged bucket, which only appears when grouping by tag."""
+
+    seconds: int
+    """Tracked seconds. Parallel sessions are added, so a day's rows can sum to
+    more than 24 hours."""

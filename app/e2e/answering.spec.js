@@ -15,7 +15,7 @@ function bands(page) {
 
 test('answering a day, start to finish', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
 
   // Lands straight on the first question, no menu in between.
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
@@ -39,7 +39,7 @@ test('answering a day, start to finish', async ({ page, account }) => {
   for (let remaining = questions.length - 1; remaining > 0; remaining -= 1) {
     await answerBand(page, 3)
   }
-  await expect(page).toHaveURL(/\/(\?.*)?$/)
+  await expect(page).toHaveURL(/\/answer(\?.*)?$/)
   await expect(page.getByRole('heading', { name: 'That is the day recorded' })).toBeVisible()
   await expect(page.getByText('Done')).toBeVisible()
 
@@ -55,7 +55,7 @@ test('answering a day, start to finish', async ({ page, account }) => {
 
 test('a double tap during the change does not skip a question', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
 
   // Two clicks inside the exit animation must answer one question, not two.
   const first = bands(page).nth(2)
@@ -68,12 +68,12 @@ test('a double tap during the change does not skip a question', async ({ page, a
 
 test('a finished day reopens for review and reloads intact', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
   for (let i = 0; i < questions.length; i += 1) await answerBand(page, 2)
   await expect(page.getByRole('heading', { name: 'That is the day recorded' })).toBeVisible()
 
   // Reopening shows it for review rather than the closing card again.
-  await page.goto('/')
+  await page.goto('/answer')
   await expect(page.getByText('Every question is answered for this day.')).toBeVisible()
   await expect(bands(page).nth(2)).toHaveAttribute('aria-pressed', 'true')
 
@@ -86,7 +86,7 @@ test('a day given in the URL is the day that gets answered', async ({ page, acco
   const questions = realQuestions(await catalogueOf(account.api))
   const past = '2026-06-01'
 
-  await page.goto(`/?day=${past}`)
+  await page.goto(`/answer?day=${past}`)
   await answerBand(page, 5)
 
   const rows = await (await account.api.get(`/api/answers?from=${past}&to=${past}`)).json()
@@ -106,11 +106,11 @@ test('correcting an answer replaces it everywhere', async ({ page, account }) =>
   const target = questions[0]
 
   // Answer the whole day, then come back to change one of them.
-  await page.goto('/')
+  await page.goto('/answer')
   for (let i = 0; i < questions.length; i += 1) await answerBand(page, 2)
   await expect(page.getByRole('heading', { name: 'That is the day recorded' })).toBeVisible()
 
-  await page.goto('/')
+  await page.goto('/answer')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(target.prompt)
   await expect(bands(page).nth(2)).toHaveAttribute('aria-pressed', 'true')
 
@@ -148,12 +148,12 @@ test('correcting an answer leaves the auto-tracked hour alone', async ({
   account,
 }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
   await answerBand(page, 3)
 
   const hourBefore = await firstAnswerHour(account)
   await answerBand(page, 1)
-  await page.goto('/')
+  await page.goto('/answer')
   await answerBand(page, 4)
 
   // The day's first submission is what the hour records; a later correction
@@ -177,7 +177,7 @@ test('the closing card offers the stats page rather than going there', async ({
   account,
 }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
   for (let i = 0; i < questions.length; i += 1) await answerBand(page, 3)
 
   // Finishing leaves you on the questionnaire, with the choice in your hands.
@@ -201,12 +201,12 @@ test('re-answering walks on through the day rather than jumping to the end', asy
   account,
 }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
   for (let i = 0; i < questions.length; i += 1) await answerBand(page, 2)
   await expect(page.getByRole('heading', { name: 'That is the day recorded' })).toBeVisible()
 
   // Reopen the finished day and correct several answers in a row.
-  await page.goto('/')
+  await page.goto('/answer')
   for (const [position, question] of questions.entries()) {
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(question.prompt)
     await answerBand(page, 4)
@@ -232,7 +232,7 @@ test('re-answering walks on through the day rather than jumping to the end', asy
 
 test('every answer moves exactly one question forward', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
 
   // Skip the second question, then answer the rest. Answering must never jump
   // back to fill the gap, nor skip over anything.
@@ -274,6 +274,9 @@ test('the day steppers work after arriving from the record', async ({ page, acco
   await expect(page).toHaveURL(/\?day=\d{4}-\d{2}-\d{2}/)
 
   const arrivedOn = new URL(page.url()).searchParams.get('day')
+  // While it loads, that same paragraph reads "Loading your questions…", and
+  // capturing *that* as the baseline makes the assertions below meaningless.
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
   const label = page.locator('section p.meta').first()
   const arrivedLabel = await label.textContent()
 
@@ -296,7 +299,7 @@ test('the day steppers work after arriving from the record', async ({ page, acco
 
 test('the progress bar jumps back to a question', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
 
   await answerBand(page, 2)
   await answerBand(page, 3)
@@ -323,7 +326,7 @@ test('the progress bar jumps back to a question', async ({ page, account }) => {
 
 test('the progress segments are a real touch target', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
+  await page.goto('/answer')
 
   // A 6px bar is unhittable on a phone; the button around it must be taller.
   const segment = page
@@ -355,7 +358,7 @@ test('a long question does not shift the answer scale down the page', async ({
 
   for (const width of [768, 1024, 1280]) {
     await page.setViewportSize({ width, height: 900 })
-    await page.goto('/')
+    await page.goto('/answer')
 
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
     const withShort = (await page.getByRole('group').boundingBox()).y

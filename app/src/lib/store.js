@@ -7,7 +7,10 @@ import {
   getMyPreferences,
   listAnswers,
   listCatalogues,
+  listProjects,
   listStatsVariables,
+  listTags,
+  listTimeEntries,
   setMyPreferences,
 } from './generated/sdk.gen'
 
@@ -32,6 +35,25 @@ export const variables = writable(null)
 
 /** Saved view state for the stats page. */
 export const preferences = writable(null)
+
+/** The signed-in account's projects, with the tags covering each. */
+export const projects = writable(null)
+
+/** The signed-in account's tags. */
+export const tags = writable(null)
+
+/** Tracked sessions, for the days `loadedRange` covers. */
+export const timeEntries = writable([])
+
+/**
+ * Which local days `timeEntries` is known to hold every session for.
+ *
+ * Sessions are read by range, so the cache has to remember the range as well as
+ * the rows: a narrower request is answered from memory, and a wider one only
+ * fetches what extends it. Without this a page asking for a shorter window
+ * would look like a cache hit and silently drop everything outside it.
+ */
+let loadedRange = null
 
 const inFlight = new Map()
 
@@ -175,6 +197,79 @@ export function rememberAnswer(answer) {
   })
 }
 
+/** Load the account's projects, unless they are already known. */
+export async function ensureProjects({ force = false } = {}) {
+  if (!force && get(projects)) return get(projects)
+  return once('projects', async () => {
+    const loaded = (await attempt(() => listProjects())) ?? []
+    projects.set(loaded)
+    return loaded
+  })
+}
+
+/** Load the account's tags, unless they are already known. */
+export async function ensureTags({ force = false } = {}) {
+  if (!force && get(tags)) return get(tags)
+  return once('tags', async () => {
+    const loaded = (await attempt(() => listTags())) ?? []
+    tags.set(loaded)
+    return loaded
+  })
+}
+
+/**
+ * Load the sessions covering a range of local days.
+ *
+ * Widening the window refetches; narrowing it, or asking again for the same
+ * days, is answered from what is already held.
+ *
+ * @param {{start?: string, end?: string, force?: boolean}} options
+ * @returns {Promise<Array<object>>} Every cached session, not only the range asked for.
+ */
+export async function ensureTimeEntries({ start, end, force = false } = {}) {
+  const covers =
+    loadedRange &&
+    (!loadedRange.start || (start && start >= loadedRange.start)) &&
+    (!loadedRange.end || (end && end <= loadedRange.end))
+  if (!force && covers) return get(timeEntries)
+
+  const wanted = {
+    start: loadedRange?.start && start ? min(loadedRange.start, start) : undefined,
+    end: loadedRange?.end && end ? max(loadedRange.end, end) : undefined,
+  }
+  return once(`time:${wanted.start ?? ''}:${wanted.end ?? ''}`, async () => {
+    const query = {}
+    if (wanted.start) query.start = wanted.start
+    if (wanted.end) query.end = wanted.end
+    const loaded = (await attempt(() => listTimeEntries({ query }))) ?? []
+    timeEntries.set(loaded)
+    loadedRange = wanted
+    return loaded
+  })
+}
+
+/**
+ * Apply a session locally, so every time view reflects it without a refetch.
+ *
+ * A check-in has to appear the instant it is made - the timer starts ticking
+ * from the cached `started_at` - so the response is folded in rather than
+ * triggering another read.
+ *
+ * @param {object} entry The session as the server returned it.
+ */
+export function rememberEntry(entry) {
+  timeEntries.update((all) => [...all.filter((row) => row.id !== entry.id), entry])
+}
+
+/**
+ * Drop a session from the cache after it has been deleted on the server.
+ *
+ * @param {number} id Identifier of the session.
+ */
+export function forgetEntry(id) {
+  timeEntries.update((all) => all.filter((row) => row.id !== id))
+}
+
 /** Drop every cached value, for a sign-out or a change that invalidates all of it. */
 export function resetStore() {
   me.set(null)
@@ -183,6 +278,10 @@ export function resetStore() {
   catalogueDetails.set({})
   variables.set(null)
   preferences.set(null)
+  projects.set(null)
+  tags.set(null)
+  timeEntries.set([])
+  loadedRange = null
   persisted = null
   inFlight.clear()
 }

@@ -1,7 +1,7 @@
 import { expect, privateCatalogue, test } from './fixtures.js'
 
 test('the day controls belong to the date line they move', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/answer')
 
   const previous = page.getByRole('button', { name: 'Previous day' })
   const next = page.getByRole('button', { name: 'Next day' })
@@ -28,7 +28,7 @@ test('the day controls belong to the date line they move', async ({ page }) => {
 })
 
 test('the question steppers sit at the outer edges', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/answer')
 
   const frame = await page.locator('section').first().boundingBox()
   const back = await page.getByRole('button', { name: '← Back' }).boundingBox()
@@ -42,7 +42,7 @@ test('the question steppers sit at the outer edges', async ({ page }) => {
 })
 
 test('the day controls stay above the question at every width', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/answer')
   for (const width of [390, 768, 1024, 1280, 1536]) {
     await page.setViewportSize({ width, height: 900 })
     const previous = await page.getByRole('button', { name: 'Previous day' }).boundingBox()
@@ -68,7 +68,7 @@ test('every kind of answer holds the same height, unless it cannot', async ({
   const card = page.locator('[data-card]')
   for (const width of [768, 1024, 1280]) {
     await page.setViewportSize({ width, height: 1000 })
-    await page.goto('/')
+    await page.goto('/answer')
 
     const heights = []
     for (const label of ['Discrete', 'Continuous', 'Enum short']) {
@@ -98,7 +98,7 @@ test('an enum with long labels grows rather than clipping them', async ({
     },
   ])
   await page.setViewportSize({ width: 1280, height: 1000 })
-  await page.goto('/')
+  await page.goto('/answer')
 
   const card = page.locator('[data-card]')
   const baseline = Math.round((await card.boundingBox()).height)
@@ -121,7 +121,7 @@ test('one ring slides between questions rather than fading in and out', async ({
   page,
   account,
 }) => {
-  await page.goto('/')
+  await page.goto('/answer')
 
   const ring = page.locator('nav[aria-label="Questions in this day"] span[aria-hidden="true"]')
   const segments = page.getByRole('navigation', { name: 'Questions in this day' }).getByRole('button')

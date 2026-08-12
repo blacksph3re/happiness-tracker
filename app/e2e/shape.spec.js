@@ -8,7 +8,7 @@ import {
 
 test('the scale stacks on a tall screen and spreads on a wide one', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
+  await page.goto('/answer')
   const bands = page.getByRole('group').getByRole('button')
 
   // Narrow: one band above the next.
@@ -27,7 +27,7 @@ test('the scale stacks on a tall screen and spreads on a wide one', async ({ pag
 
 test('the menu collapses on a narrow screen and still navigates', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
+  await page.goto('/answer')
 
   const header = page.locator('header')
   await expect(header.getByRole('link', { name: 'Patterns' })).toBeHidden()
@@ -39,7 +39,7 @@ test('the menu collapses on a narrow screen and still navigates', async ({ page 
 
 test('a question can be answered from the keyboard alone', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.goto('/')
+  await page.goto('/answer')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
 
   // Walk forward until a band takes focus, then answer with the keyboard. The
@@ -76,7 +76,7 @@ async function swipe(page, from, to) {
 test('swiping moves between questions', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
+  await page.goto('/answer')
   const heading = page.getByRole('heading', { level: 1 })
   await expect(heading).toHaveText(questions[0].prompt)
 
@@ -125,7 +125,7 @@ test('dragging a continuous slider answers it rather than turning the page', asy
     { kind: 'discrete', prompt: 'How rested', min_value: 1, max_value: 5 },
   ])
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
+  await page.goto('/answer')
 
   const heading = page.getByRole('heading', { level: 1 })
   await expect(heading).toHaveText('How much of the day was yours')

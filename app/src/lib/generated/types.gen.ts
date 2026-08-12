@@ -127,6 +127,38 @@ export type CatalogueOut = {
 };
 
 /**
+ * CheckIn
+ *
+ * Payload for starting a timer.
+ */
+export type CheckIn = {
+    /**
+     * At
+     */
+    at: string;
+    /**
+     * Utc Offset
+     */
+    utc_offset: number;
+    /**
+     * Note
+     */
+    note?: string | null;
+};
+
+/**
+ * CheckOut
+ *
+ * Payload for stopping a timer.
+ */
+export type CheckOut = {
+    /**
+     * At
+     */
+    at: string;
+};
+
+/**
  * DefaultCatalogueChange
  *
  * Payload for a user choosing their own default catalogue.
@@ -273,6 +305,90 @@ export type PasswordReset = {
  */
 export type Preferences = {
     [key: string]: unknown;
+};
+
+/**
+ * ProjectCreate
+ *
+ * Payload for creating a project.
+ */
+export type ProjectCreate = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Colour
+     */
+    colour?: string;
+    /**
+     * Position
+     */
+    position?: number;
+    /**
+     * Tag Ids
+     */
+    tag_ids?: Array<number>;
+};
+
+/**
+ * ProjectOut
+ *
+ * A project as exposed by the API, with the tags covering it.
+ */
+export type ProjectOut = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Colour
+     */
+    colour: string;
+    /**
+     * Position
+     */
+    position: number;
+    /**
+     * Active
+     */
+    active: boolean;
+    /**
+     * Tags
+     */
+    tags?: Array<TagOut>;
+};
+
+/**
+ * ProjectUpdate
+ *
+ * Payload for editing a project. Omitted fields are left alone.
+ */
+export type ProjectUpdate = {
+    /**
+     * Name
+     */
+    name?: string | null;
+    /**
+     * Colour
+     */
+    colour?: string | null;
+    /**
+     * Position
+     */
+    position?: number | null;
+    /**
+     * Active
+     */
+    active?: boolean | null;
+    /**
+     * Tag Ids
+     */
+    tag_ids?: Array<number> | null;
 };
 
 /**
@@ -529,6 +645,174 @@ export type ScoreUpdate = {
      * Active
      */
     active?: boolean | null;
+};
+
+/**
+ * SummaryRow
+ *
+ * How long one project or tag ran on one day.
+ */
+export type SummaryRow = {
+    /**
+     * Day
+     */
+    day: string;
+    /**
+     * Key
+     */
+    key: number | null;
+    /**
+     * Seconds
+     */
+    seconds: number;
+};
+
+/**
+ * TagCreate
+ *
+ * Payload for defining a tag.
+ */
+export type TagCreate = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Colour
+     */
+    colour?: string;
+    /**
+     * Position
+     */
+    position?: number;
+};
+
+/**
+ * TagOut
+ *
+ * A label over projects, as exposed by the API.
+ */
+export type TagOut = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Colour
+     */
+    colour: string;
+    /**
+     * Position
+     */
+    position: number;
+};
+
+/**
+ * TagUpdate
+ *
+ * Payload for editing a tag. Omitted fields are left alone.
+ */
+export type TagUpdate = {
+    /**
+     * Name
+     */
+    name?: string | null;
+    /**
+     * Colour
+     */
+    colour?: string | null;
+    /**
+     * Position
+     */
+    position?: number | null;
+};
+
+/**
+ * TimeEntryCreate
+ *
+ * Payload for recording a session that was never tracked live.
+ */
+export type TimeEntryCreate = {
+    /**
+     * Project Id
+     */
+    project_id: number;
+    /**
+     * Started At
+     */
+    started_at: string;
+    /**
+     * Ended At
+     */
+    ended_at: string;
+    /**
+     * Utc Offset
+     */
+    utc_offset: number;
+    /**
+     * Note
+     */
+    note?: string | null;
+};
+
+/**
+ * TimeEntryOut
+ *
+ * One session as exposed by the API.
+ */
+export type TimeEntryOut = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Project Id
+     */
+    project_id: number;
+    /**
+     * Started At
+     */
+    started_at: string;
+    /**
+     * Ended At
+     */
+    ended_at: string | null;
+    /**
+     * Utc Offset
+     */
+    utc_offset: number;
+    /**
+     * Note
+     */
+    note: string | null;
+};
+
+/**
+ * TimeEntryUpdate
+ *
+ * Payload for correcting a session. Omitted fields are left alone.
+ */
+export type TimeEntryUpdate = {
+    /**
+     * Project Id
+     */
+    project_id?: number | null;
+    /**
+     * Started At
+     */
+    started_at?: string | null;
+    /**
+     * Ended At
+     */
+    ended_at?: string | null;
+    /**
+     * Note
+     */
+    note?: string | null;
 };
 
 /**
@@ -1493,3 +1777,470 @@ export type ListStatsVariablesResponses = {
 };
 
 export type ListStatsVariablesResponse = ListStatsVariablesResponses[keyof ListStatsVariablesResponses];
+
+export type ListProjectsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/projects';
+};
+
+export type ListProjectsResponses = {
+    /**
+     * Response Listprojects
+     *
+     * Successful Response
+     */
+    200: Array<ProjectOut>;
+};
+
+export type ListProjectsResponse = ListProjectsResponses[keyof ListProjectsResponses];
+
+export type CreateProjectData = {
+    body: ProjectCreate;
+    path?: never;
+    query?: never;
+    url: '/api/projects';
+};
+
+export type CreateProjectErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateProjectError = CreateProjectErrors[keyof CreateProjectErrors];
+
+export type CreateProjectResponses = {
+    /**
+     * Successful Response
+     */
+    201: ProjectOut;
+};
+
+export type CreateProjectResponse = CreateProjectResponses[keyof CreateProjectResponses];
+
+export type DeleteProjectData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         */
+        project_id: number;
+    };
+    query?: never;
+    url: '/api/projects/{project_id}';
+};
+
+export type DeleteProjectErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteProjectError = DeleteProjectErrors[keyof DeleteProjectErrors];
+
+export type DeleteProjectResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteProjectResponse = DeleteProjectResponses[keyof DeleteProjectResponses];
+
+export type UpdateProjectData = {
+    body: ProjectUpdate;
+    path: {
+        /**
+         * Project Id
+         */
+        project_id: number;
+    };
+    query?: never;
+    url: '/api/projects/{project_id}';
+};
+
+export type UpdateProjectErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateProjectError = UpdateProjectErrors[keyof UpdateProjectErrors];
+
+export type UpdateProjectResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProjectOut;
+};
+
+export type UpdateProjectResponse = UpdateProjectResponses[keyof UpdateProjectResponses];
+
+export type ListTagsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/tags';
+};
+
+export type ListTagsResponses = {
+    /**
+     * Response Listtags
+     *
+     * Successful Response
+     */
+    200: Array<TagOut>;
+};
+
+export type ListTagsResponse = ListTagsResponses[keyof ListTagsResponses];
+
+export type CreateTagData = {
+    body: TagCreate;
+    path?: never;
+    query?: never;
+    url: '/api/tags';
+};
+
+export type CreateTagErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateTagError = CreateTagErrors[keyof CreateTagErrors];
+
+export type CreateTagResponses = {
+    /**
+     * Successful Response
+     */
+    201: TagOut;
+};
+
+export type CreateTagResponse = CreateTagResponses[keyof CreateTagResponses];
+
+export type DeleteTagData = {
+    body?: never;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: number;
+    };
+    query?: never;
+    url: '/api/tags/{tag_id}';
+};
+
+export type DeleteTagErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteTagError = DeleteTagErrors[keyof DeleteTagErrors];
+
+export type DeleteTagResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteTagResponse = DeleteTagResponses[keyof DeleteTagResponses];
+
+export type UpdateTagData = {
+    body: TagUpdate;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: number;
+    };
+    query?: never;
+    url: '/api/tags/{tag_id}';
+};
+
+export type UpdateTagErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateTagError = UpdateTagErrors[keyof UpdateTagErrors];
+
+export type UpdateTagResponses = {
+    /**
+     * Successful Response
+     */
+    200: TagOut;
+};
+
+export type UpdateTagResponse = UpdateTagResponses[keyof UpdateTagResponses];
+
+export type CheckInData = {
+    body: CheckIn;
+    path: {
+        /**
+         * Project Id
+         */
+        project_id: number;
+    };
+    query?: never;
+    url: '/api/projects/{project_id}/check-in';
+};
+
+export type CheckInErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CheckInError = CheckInErrors[keyof CheckInErrors];
+
+export type CheckInResponses = {
+    /**
+     * Successful Response
+     */
+    201: TimeEntryOut;
+};
+
+export type CheckInResponse = CheckInResponses[keyof CheckInResponses];
+
+export type CheckOutData = {
+    body: CheckOut;
+    path: {
+        /**
+         * Project Id
+         */
+        project_id: number;
+    };
+    query?: never;
+    url: '/api/projects/{project_id}/check-out';
+};
+
+export type CheckOutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CheckOutError = CheckOutErrors[keyof CheckOutErrors];
+
+export type CheckOutResponses = {
+    /**
+     * Successful Response
+     */
+    200: TimeEntryOut;
+};
+
+export type CheckOutResponse = CheckOutResponses[keyof CheckOutResponses];
+
+export type ListTimeEntriesData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Start
+         */
+        start?: string | null;
+        /**
+         * End
+         */
+        end?: string | null;
+    };
+    url: '/api/time/entries';
+};
+
+export type ListTimeEntriesErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListTimeEntriesError = ListTimeEntriesErrors[keyof ListTimeEntriesErrors];
+
+export type ListTimeEntriesResponses = {
+    /**
+     * Response Listtimeentries
+     *
+     * Successful Response
+     */
+    200: Array<TimeEntryOut>;
+};
+
+export type ListTimeEntriesResponse = ListTimeEntriesResponses[keyof ListTimeEntriesResponses];
+
+export type CreateTimeEntryData = {
+    body: TimeEntryCreate;
+    path?: never;
+    query?: never;
+    url: '/api/time/entries';
+};
+
+export type CreateTimeEntryErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateTimeEntryError = CreateTimeEntryErrors[keyof CreateTimeEntryErrors];
+
+export type CreateTimeEntryResponses = {
+    /**
+     * Successful Response
+     */
+    201: TimeEntryOut;
+};
+
+export type CreateTimeEntryResponse = CreateTimeEntryResponses[keyof CreateTimeEntryResponses];
+
+export type DeleteTimeEntryData = {
+    body?: never;
+    path: {
+        /**
+         * Entry Id
+         */
+        entry_id: number;
+    };
+    query?: never;
+    url: '/api/time/entries/{entry_id}';
+};
+
+export type DeleteTimeEntryErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteTimeEntryError = DeleteTimeEntryErrors[keyof DeleteTimeEntryErrors];
+
+export type DeleteTimeEntryResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteTimeEntryResponse = DeleteTimeEntryResponses[keyof DeleteTimeEntryResponses];
+
+export type UpdateTimeEntryData = {
+    body: TimeEntryUpdate;
+    path: {
+        /**
+         * Entry Id
+         */
+        entry_id: number;
+    };
+    query?: never;
+    url: '/api/time/entries/{entry_id}';
+};
+
+export type UpdateTimeEntryErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateTimeEntryError = UpdateTimeEntryErrors[keyof UpdateTimeEntryErrors];
+
+export type UpdateTimeEntryResponses = {
+    /**
+     * Successful Response
+     */
+    200: TimeEntryOut;
+};
+
+export type UpdateTimeEntryResponse = UpdateTimeEntryResponses[keyof UpdateTimeEntryResponses];
+
+export type TimeSummaryData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Start
+         */
+        start?: string | null;
+        /**
+         * End
+         */
+        end?: string | null;
+        /**
+         * As Of
+         */
+        as_of?: string | null;
+        /**
+         * By
+         */
+        by?: string;
+    };
+    url: '/api/time/summary';
+};
+
+export type TimeSummaryErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type TimeSummaryError = TimeSummaryErrors[keyof TimeSummaryErrors];
+
+export type TimeSummaryResponses = {
+    /**
+     * Response Timesummary
+     *
+     * Successful Response
+     */
+    200: Array<SummaryRow>;
+};
+
+export type TimeSummaryResponse = TimeSummaryResponses[keyof TimeSummaryResponses];
+
+export type ExportTimeData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Start
+         */
+        start?: string | null;
+        /**
+         * End
+         */
+        end?: string | null;
+        /**
+         * As Of
+         */
+        as_of?: string | null;
+    };
+    url: '/api/time/export.xlsx';
+};
+
+export type ExportTimeErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ExportTimeError = ExportTimeErrors[keyof ExportTimeErrors];
+
+export type ExportTimeResponses = {
+    /**
+     * An .xlsx workbook.
+     */
+    200: unknown;
+};

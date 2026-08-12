@@ -25,7 +25,7 @@ from sqlalchemy import select  # noqa: E402
 import main  # noqa: E402
 from database import SessionLocal  # noqa: E402
 from models import Answer, Question, User  # noqa: E402
-from services import _system_values  # noqa: E402
+from services.wellbeing import _system_values  # noqa: E402
 
 
 def seed(years: int) -> tuple[int, int]:

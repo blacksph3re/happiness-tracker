@@ -61,7 +61,7 @@ test('deactivating a question hides it but keeps its history', async ({
   await grant(admin, account, { is_editor: true })
   const target = realQuestions(await catalogueOf(account.api))[0]
 
-  await page.goto('/')
+  await page.goto('/answer')
   await answerBand(page, 4)
 
   await page.goto('/questions')
@@ -73,7 +73,7 @@ test('deactivating a question hides it but keeps its history', async ({
   await expect(row.getByRole('button', { name: 'Reactivate' })).toBeVisible()
 
   // Gone from the questionnaire...
-  await page.goto('/')
+  await page.goto('/answer')
   await expect(page.getByRole('heading', { level: 1 })).not.toHaveText(target.prompt)
 
   // ...but the answer it already holds is still recorded.
@@ -88,7 +88,7 @@ test('an answered question says why its scale is fixed', async ({
 }) => {
   await grant(admin, account, { is_editor: true })
   const target = realQuestions(await catalogueOf(account.api))[0]
-  await page.goto('/')
+  await page.goto('/answer')
   await answerBand(page, 4)
 
   await page.goto('/questions')

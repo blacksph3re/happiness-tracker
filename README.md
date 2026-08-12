@@ -1,6 +1,8 @@
 # Happiness tracker
 
-Track your satisfaction with work/life/whatever in regular questionaries, then get automated statistics.
+Track your satisfaction with work/life/whatever in regular questionaries, then get automated statistics. Alongside it, track where your hours go: check in to a project, check out when you stop, and read the week back.
+
+Two halves, one login. A landing page puts each of them one tap away; inside either, the navigation is only about that half.
 
 ## Screenshots
 
@@ -16,6 +18,18 @@ Patterns: line, radar, scatter and box views over a window you choose, with a sm
 
 ![The stats page, plotting several questions over time](docs/screenshots/patterns.png)
 
+Time: projects as check-in cards, several timers at once, and the running one in the browser tab.
+
+![The track view, with two timers running](docs/screenshots/track.png)
+
+The `Day` window on Patterns: one day along the clock, a lane per project, so a meeting inside a work session reads as exactly that.
+
+![A day laid out as a horizontal timeline with one lane per project](docs/screenshots/time-day.png)
+
+Where the hours went, by project or grouped by tag.
+
+![Hours per project per day, with a share donut and a weekday breakdown](docs/screenshots/time-patterns.png)
+
 ## Scores
 
 A catalogue can define a score: a total or an average over the questions you pick,
@@ -27,6 +41,43 @@ only when every question feeding it was answered.
 
 The starter catalogue ships with the WHO-5 raw score, defined as ordinary catalogue
 data. Scores are edited under **Questions**, below the question list.
+
+## Tracked time
+
+A **project** is anything you want the hours for; a **session** is one check-in and
+the check-out that ends it. Both belong to you alone — there is no editor flag and no
+shared list.
+
+- **Several timers may run at once.** A "meeting" inside a "work" session is the case
+  this is built for, so checking in never closes anything. It also means a day can
+  total more than 24 hours: that is what a sum over projects is, and the app says so
+  rather than hiding it.
+- **A session crossing midnight counts on both days**, split at local midnight. The
+  split is worked out when the time is read, so one session stays one row and
+  correcting a check-out time is still a single edit.
+- **Instants are stored in UTC** with the offset captured at check-in. Durations are
+  therefore exact across a daylight-saving change, where local arithmetic would report
+  an eight-hour day as seven.
+- **Nothing is auto-closed.** A session running for three days shows up as exactly that
+  in the record, where it can be corrected; the app does not invent an end it cannot
+  know.
+- **Tags group projects** on the patterns page. A project can carry several, so tag
+  totals overlap rather than partition — they are a way of reading the time, not a
+  filing of it. Projects with no tag are reported as *Untagged*, so nothing is hidden.
+
+On **Patterns**, the shortest window — `Day` — is drawn along a clock rather than as
+totals: a lane per project, showing *when* rather than how much. It is the only view
+where overlap reads as overlap instead of as two numbers that happen to add past 24
+hours. The axis fits the hours actually used, with a `Full day` toggle for the whole
+24, and the project/tag switch regroups the lanes while each block keeps its own
+project's colour.
+
+Sessions are edited, added by hand and deleted in **Record**, which also has a
+`Merge sessions` toggle: one row per project per day, from the first start to the last
+end, showing the time *tracked* rather than the distance between them — so a lunch
+break shortens the duration without moving the clock. Projects, colours and tags live
+in **Projects**. `Download .xlsx` gives every session on one sheet and the
+daily totals per project and per tag on two more.
 
 ## Installation
 
@@ -93,6 +144,7 @@ Useful extras:
 cd backend && uv run pytest    # the API test suite
 cd backend && uv run ruff check .   # lint, the same rules the hook applies
 cd backend && uv run python scripts/seed_answers.py --days 90   # a history to look at
+cd backend && uv run python scripts/seed_time.py --days 30      # and some tracked hours
 cd app && pnpm build           # emit the production bundle into backend/static
 cd app && pnpm api:generate    # regenerate the typed API client after an endpoint changes
 ```

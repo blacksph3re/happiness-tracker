@@ -1,7 +1,7 @@
 <script>
-  import QuestionForm from '../lib/QuestionForm.svelte'
-  import ScoreForm from '../lib/ScoreForm.svelte'
-  import { attempt, unwrap } from '../lib/api.js'
+  import QuestionForm from '../../lib/wellbeing/QuestionForm.svelte'
+  import ScoreForm from '../../lib/wellbeing/ScoreForm.svelte'
+  import { attempt, unwrap } from '../../lib/api.js'
   import {
     addQuestionOption,
     createCatalogue as createCatalogueCall,
@@ -11,14 +11,14 @@
     renameCatalogue as renameCatalogueCall,
     updateQuestion,
     updateScore,
-  } from '../lib/generated/sdk.gen'
+  } from '../../lib/generated/sdk.gen'
   import {
     ensureAnswers,
     ensureCatalogue,
     ensureCatalogues,
     ensureVariables,
-  } from '../lib/store.js'
-  import { pushToast } from '../lib/toasts.js'
+  } from '../../lib/store.js'
+  import { pushToast } from '../../lib/toasts.js'
 
   let catalogues = $state([])
   let selectedId = $state(null)
