@@ -3,10 +3,38 @@ import sys
 from pathlib import Path
 
 import pytest
+from beartype.claw import beartype_packages
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 VENV_DIR = BACKEND_DIR / ".venv"
 sys.path.insert(0, str(BACKEND_DIR))
+
+CHECKED_MODULES = (
+    "bootstrap",
+    "config",
+    "database",
+    "deps",
+    "main",
+    "models",
+    "routers",
+    "schemas",
+    "security",
+    "services",
+)
+"""The application's own modules, which the suite type-checks at runtime.
+
+Listed rather than checking everything: beartype would otherwise wrap SQLAlchemy
+and FastAPI too, which costs time and reports on code this repo does not own.
+"""
+
+# Every annotation in those modules becomes an assertion for the duration of the
+# suite, so a function that says it returns a Question and hands back a dict
+# fails here rather than at some distance from its cause. This is deliberately
+# not installed anywhere the application itself imports: beartype is a dev
+# dependency, the image is built with `--no-dev`, and a running server is
+# unaffected. The hook rewrites modules as they are imported, so it has to be in
+# place before any of them are - which is what puts it at the top of conftest.
+beartype_packages(CHECKED_MODULES)
 
 os.environ.setdefault("JWT_SECRET", "test-secret-key")
 os.environ.setdefault("ADMIN_USER", "admin")

@@ -251,3 +251,4 @@ def test_defining_a_score_needs_the_editor_flag(
 ):
     _, plain_headers = make_user(client, admin_headers, "reader")
     assert make_score(client, plain_headers, catalogue_id).status_code == 403
+

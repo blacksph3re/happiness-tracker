@@ -73,10 +73,25 @@ pnpm dev
 
 Then open http://localhost:5173 and sign in with `ADMIN_USER` / `ADMIN_PASSWORD` (`admin` / `dev-admin-password` with the command above). Svelte components swap in place without losing page state; the backend restarts on save and the browser picks it up on the next request.
 
+Under `pytest`, [beartype](https://beartype.readthedocs.io/) turns every annotation in
+the application's own modules into a runtime assertion, so a function that claims to
+return a `Question` and hands back a dict fails in the test that touched it rather than
+somewhere downstream. The hook is installed in `tests/conftest.py` and nowhere else:
+beartype is a dev dependency, the image is built with `--no-dev`, and a running server
+neither imports it nor pays for it. `tests/test_typing.py` fails if the hook ever stops
+being installed.
+
+Linting is [ruff](https://docs.astral.sh/ruff/), configured in `backend/pyproject.toml`
+and wired to a pre-commit hook that only looks at `backend/`. Install it once with
+`pre-commit install`; after that a commit runs `ruff check --fix` over the Python that
+changed. Run it by hand with `cd backend && uv run ruff check .`. Beyond the usual
+lint rules it enforces the numpy docstrings this repo asks for, with tests exempt.
+
 Useful extras:
 
 ```bash
 cd backend && uv run pytest    # the API test suite
+cd backend && uv run ruff check .   # lint, the same rules the hook applies
 cd backend && uv run python scripts/seed_answers.py --days 90   # a history to look at
 cd app && pnpm build           # emit the production bundle into backend/static
 cd app && pnpm api:generate    # regenerate the typed API client after an endpoint changes
