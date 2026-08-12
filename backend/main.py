@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     # Touched here so a missing signing key stops the server on startup rather
     # than surfacing as a 500 on whoever tries to log in first.
-    settings.signing_key
+    settings.signing_key  # noqa: B018  - the read itself is the check
     with SessionLocal() as db:
         bootstrap(db, settings)
     yield

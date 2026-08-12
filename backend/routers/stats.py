@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
-from models import Answer, ORIGIN_COMPUTED, Question
+from models import ORIGIN_COMPUTED, Answer, Question
 from schemas import OptionOut, Variable
 from services import score_bounds
 

@@ -12,9 +12,9 @@ Create Date: 2026-08-11 09:14:08.044294
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '98c9a74fa88c'
@@ -84,7 +84,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Turn weekday and month back into discrete scales."""
     connection = op.get_bind()
-    for system_key, labels in CONVERTED.items():
+    for system_key in CONVERTED:
         low, high, low_label, high_label = BOUNDS[system_key]
         questions = connection.execute(
             sa.text("SELECT id FROM questions WHERE system_key = :key"),

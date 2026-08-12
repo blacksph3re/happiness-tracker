@@ -18,15 +18,19 @@ def test_bootstrap_creates_starter_catalogue(client, admin_headers, catalogue_id
     # The WHO-5 response scale runs 0-5, not 1-5.
     assert all((q["min_value"], q["max_value"]) == (0.0, 5.0) for q in asked)
     assert all(q["min_label"] == "At no time" for q in asked)
-    assert {q["system_key"] for q in detail["questions"] if q["system_key"]} == SYSTEM_KEYS
+    keys = {q["system_key"] for q in detail["questions"] if q["system_key"]}
+    assert keys == SYSTEM_KEYS
 
 
 def test_new_catalogue_gets_its_own_system_questions(client, admin_headers):
     created = client.post(
         "/api/catalogues", headers=admin_headers, json={"name": "Work"}
     ).json()
-    detail = client.get(f"/api/catalogues/{created['id']}", headers=admin_headers).json()
-    assert {q["system_key"] for q in detail["questions"] if q["system_key"]} == SYSTEM_KEYS
+    detail = client.get(
+        f"/api/catalogues/{created['id']}", headers=admin_headers
+    ).json()
+    keys = {q["system_key"] for q in detail["questions"] if q["system_key"]}
+    assert keys == SYSTEM_KEYS
     assert [q for q in detail["questions"] if q["origin"] != "auto"] == []
 
 
@@ -261,14 +265,17 @@ def test_renaming_a_catalogue_keeps_its_questions_and_answers(
     assert client.get("/api/answers", headers=admin_headers).json() != []
 
 
-def test_renaming_onto_an_existing_name_is_rejected(client, admin_headers, catalogue_id):
+def test_renaming_onto_an_existing_name_is_rejected(
+    client, admin_headers, catalogue_id
+):
     client.post("/api/catalogues", headers=admin_headers, json={"name": "Work"})
     clash = client.put(
         f"/api/catalogues/{catalogue_id}", headers=admin_headers, json={"name": "Work"}
     )
     assert clash.status_code == 409
     # The failed rename must not have half-applied.
-    names = {c["name"] for c in client.get("/api/catalogues", headers=admin_headers).json()}
+    listed = client.get("/api/catalogues", headers=admin_headers).json()
+    names = {c["name"] for c in listed}
     assert "Work" in names and len(names) == 2
 
 
@@ -299,7 +306,9 @@ def test_a_prompt_longer_than_the_limit_is_refused(client, admin_headers, catalo
     assert at_limit.status_code == 201
 
     too_long = client.post(
-        path, headers=admin_headers, json={**body, "prompt": "a" * (PROMPT_MAX_LENGTH + 1)}
+        path,
+        headers=admin_headers,
+        json={**body, "prompt": "a" * (PROMPT_MAX_LENGTH + 1)},
     )
     assert too_long.status_code == 422
 

@@ -2,8 +2,7 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from sqlalchemy import engine_from_config, event
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, event, pool
 
 from alembic import context
 

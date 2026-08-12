@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
-from models import Answer, ORIGIN_COMPUTED, Question, QuestionOption
+from models import ORIGIN_COMPUTED, Answer, Question, QuestionOption
 from schemas import AnswerIn, AnswerOut
 from services import score_for_day, sync_system_answers
 

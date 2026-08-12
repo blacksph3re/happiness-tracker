@@ -18,8 +18,9 @@ def revisions():
 
 def upgrade(target):
     """Migrate the database named by ``DB_STORAGE`` to one revision."""
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     config = Config()
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))

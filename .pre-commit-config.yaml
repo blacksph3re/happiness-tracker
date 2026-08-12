@@ -1,0 +1,10 @@
+# Hooks run on commit. Install once with `pre-commit install`.
+# The frontend is not covered: nothing here lints JavaScript or Svelte.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.2
+    hooks:
+      - id: ruff-check
+        name: ruff (backend)
+        args: [--fix]
+        files: ^backend/

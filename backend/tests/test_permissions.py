@@ -60,7 +60,7 @@ def test_catalogue_routes_need_editor_flag(actors, client, method, path, body):
 
 
 def test_reading_catalogues_needs_no_flag(actors, client, catalogue_id):
-    for label, headers in actors.items():
+    for headers in actors.values():
         assert client.get("/api/catalogues", headers=headers).status_code == 200
         assert (
             client.get(f"/api/catalogues/{catalogue_id}", headers=headers).status_code
@@ -138,7 +138,9 @@ def test_wrong_current_password_is_rejected_even_for_admin(client, admin_headers
 def test_short_passwords_are_rejected_everywhere(client, admin_headers):
     assert (
         client.post(
-            "/api/users", headers=admin_headers, json={"username": "x", "password": "abc"}
+            "/api/users",
+            headers=admin_headers,
+            json={"username": "x", "password": "abc"},
         ).status_code
         == 422
     )

@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config import Settings
-from models import Catalogue, ORIGIN_COMPUTED, Question, ScoreComponent, User
+from models import ORIGIN_COMPUTED, Catalogue, Question, ScoreComponent, User
 from security import hash_password
 from services import create_catalogue
 

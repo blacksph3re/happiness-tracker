@@ -1,4 +1,4 @@
-"""Measure the answer endpoints against a long history.
+r"""Measure the answer endpoints against a long history.
 
 Seeds one account with several years of daily answers and times the reads the
 frontend actually makes, so a decision about pagination rests on numbers rather
@@ -20,12 +20,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import select  # noqa: E402
 
 import main  # noqa: E402
 from database import SessionLocal  # noqa: E402
 from models import Answer, Question, User  # noqa: E402
 from services import _system_values  # noqa: E402
-from sqlalchemy import select  # noqa: E402
 
 
 def seed(years: int) -> tuple[int, int]:

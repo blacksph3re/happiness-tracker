@@ -3,13 +3,14 @@ import json
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
+from config import get_settings
 from deps import CurrentUser, DbSession
 from models import Catalogue, User
 from schemas import (
     AccessToken,
-    MeOut,
     DefaultCatalogueChange,
     LoginRequest,
+    MeOut,
     PasswordChange,
     Preferences,
     RefreshRequest,
@@ -27,7 +28,6 @@ from security import (
     issue_tokens,
     verify_password,
 )
-from config import get_settings
 
 router = APIRouter()
 
@@ -196,7 +196,9 @@ def read_me(user: CurrentUser) -> MeOut:
     ),
     tags=["Account"],
 )
-def change_own_password(payload: PasswordChange, user: CurrentUser, db: DbSession) -> None:
+def change_own_password(
+    payload: PasswordChange, user: CurrentUser, db: DbSession
+) -> None:
     """Change the authenticated user's own password.
 
     Open to every user regardless of their permission flags, and always

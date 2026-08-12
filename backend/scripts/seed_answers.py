@@ -25,7 +25,7 @@ from sqlalchemy import select  # noqa: E402
 from sqlalchemy.orm import selectinload  # noqa: E402
 
 from database import SessionLocal  # noqa: E402
-from models import Answer, ORIGIN_ASKED, Question, User  # noqa: E402
+from models import ORIGIN_ASKED, Answer, Question, User  # noqa: E402
 from services import sync_system_answers  # noqa: E402
 
 WEEKDAY_LIFT = (-0.2, -0.1, 0.0, 0.1, 0.4, 0.7, 0.5)

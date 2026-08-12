@@ -49,7 +49,8 @@ def system_answers(client, headers, catalogue_id, day=DAY):
 def test_answering_a_day_materialises_system_answers(
     client, admin_headers, catalogue_id, starter_questions
 ):
-    assert answer(client, admin_headers, starter_questions[0]["id"], 4).status_code == 204
+    written = answer(client, admin_headers, starter_questions[0]["id"], 4)
+    assert written.status_code == 204
     recorded = system_answers(client, admin_headers, catalogue_id)
     assert set(recorded) == SYSTEM_KEYS
     assert recorded["weekday"] == "Wed"  # 2026-03-04 was a Wednesday
@@ -64,7 +65,8 @@ def test_later_answers_do_not_move_the_first_hour(
 ):
     answer(client, admin_headers, starter_questions[0]["id"], 4, hour=9)
     answer(client, admin_headers, starter_questions[1]["id"], 2, hour=21)
-    assert system_answers(client, admin_headers, catalogue_id)["first_answer_hour"] == 9.0
+    tracked = system_answers(client, admin_headers, catalogue_id)
+    assert tracked["first_answer_hour"] == 9.0
 
 
 def test_repeated_answers_upsert_rather_than_duplicate(
@@ -89,7 +91,8 @@ def test_past_and_future_days_are_unbounded(
     question_id = starter_questions[0]["id"]
     for day in ("1999-01-01", "2099-12-31"):
         assert answer(client, admin_headers, question_id, 3, day=day).status_code == 204
-    days = {row["day"] for row in client.get("/api/answers", headers=admin_headers).json()}
+    rows = client.get("/api/answers", headers=admin_headers).json()
+    days = {row["day"] for row in rows}
     assert {"1999-01-01", "2099-12-31"} <= days
 
 
@@ -242,7 +245,8 @@ def test_stats_variables_report_roles(
     for key in SYSTEM_KEYS:
         assert by_key[key]["roles"] == ["filter"], key
     assert by_key["weekday"]["kind"] == "enum"
-    assert [o["label"] for o in by_key["weekday"]["options"]][:3] == ["Mon", "Tue", "Wed"]
+    labels = [o["label"] for o in by_key["weekday"]["options"]]
+    assert labels[:3] == ["Mon", "Tue", "Wed"]
     assert by_key["month"]["kind"] == "enum"
     assert by_key["year"]["kind"] == "discrete"
     assert by_key[f"q{created['id']}"]["roles"] == ["group", "radar"]
@@ -311,7 +315,8 @@ def test_one_set_of_system_answers_per_day_across_catalogues(
     variables = client.get("/api/stats/variables", headers=admin_headers).json()
     hour_variable = next(v for v in variables if v["system_key"] == "first_answer_hour")
     rows = client.get("/api/answers", headers=admin_headers).json()
-    hours = [row["value"] for row in rows if row["question_id"] in hour_variable["question_ids"]]
+    hour_ids = hour_variable["question_ids"]
+    hours = [row["value"] for row in rows if row["question_id"] in hour_ids]
     assert hours == [8.0], "the day must carry exactly one first-answer hour"
 
 

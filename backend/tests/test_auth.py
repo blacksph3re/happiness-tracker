@@ -3,7 +3,6 @@ from datetime import timedelta
 
 import pytest
 
-
 PUBLIC_PATHS = {"/api/version", "/api/login", "/api/refresh"}
 DOCS_PATHS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
@@ -108,7 +107,8 @@ def test_token_for_deleted_user_is_rejected(client, admin_headers):
 
     user, headers = make_user(client, admin_headers, "doomed")
     assert client.get("/api/me", headers=headers).status_code == 200
-    assert client.delete(f"/api/users/{user['id']}", headers=admin_headers).status_code == 204
+    deleted = client.delete(f"/api/users/{user['id']}", headers=admin_headers)
+    assert deleted.status_code == 204
     assert client.get("/api/me", headers=headers).status_code == 401
 
 

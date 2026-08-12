@@ -5,14 +5,13 @@ from sqlalchemy.orm import Session, selectinload
 
 from models import (
     AGGREGATES,
-    Answer,
-    Catalogue,
     ORIGIN_ASKED,
     ORIGIN_AUTO,
+    SYSTEM_KEYS,
+    Answer,
+    Catalogue,
     Question,
     QuestionOption,
-    ScoreComponent,
-    SYSTEM_KEYS,
 )
 
 WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -230,7 +229,9 @@ def check_score_shape(aggregate: str, components: list[Question]) -> None:
         has no numeric value to contribute.
     """
     if aggregate not in AGGREGATES:
-        raise ScoreRuleError(f"A score is combined with one of: {', '.join(AGGREGATES)}")
+        raise ScoreRuleError(
+            f"A score is combined with one of: {', '.join(AGGREGATES)}"
+        )
     if not components:
         raise ScoreRuleError("A score needs at least one question to combine")
 
@@ -288,7 +289,9 @@ def score_for_day(score: Question, values: dict[int, float]) -> float | None:
         The score, or None when the day cannot produce one: no component
         answered, or - when `require_all` is set - any component missing.
     """
-    present = [c for c in score.components if values.get(c.source_question_id) is not None]
+    present = [
+        c for c in score.components if values.get(c.source_question_id) is not None
+    ]
     if not present:
         return None
     if score.require_all and len(present) != len(score.components):

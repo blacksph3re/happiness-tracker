@@ -4,10 +4,9 @@ from sqlalchemy.exc import IntegrityError
 
 from deps import CurrentUser, DbSession, EditorUser
 from models import (
+    ORIGIN_COMPUTED,
     Answer,
     Catalogue,
-    ORIGIN_ASKED,
-    ORIGIN_COMPUTED,
     Question,
     QuestionOption,
     ScoreComponent,
@@ -17,7 +16,6 @@ from schemas import (
     CatalogueDetail,
     CatalogueOut,
     OptionCreate,
-    OptionUpdate,
     QuestionCreate,
     QuestionOut,
     QuestionUpdate,
