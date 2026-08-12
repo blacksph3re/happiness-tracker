@@ -3,8 +3,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
-from models import Answer, Question
+from models import Answer, ORIGIN_COMPUTED, Question
 from schemas import OptionOut, Variable
+from services import score_bounds
 
 router = APIRouter(prefix="/stats", tags=["Stats"])
 
@@ -13,6 +14,9 @@ NUMERIC_ROLES = ["axis", "radar"]
 
 ENUM_ROLES = ["group", "radar"]
 """Plot roles an enum question can fill: never an axis, since it has no scale."""
+
+COMPUTED_ROLES = ["axis", "radar"]
+"""A score is a number over time, so it plots like any other scale."""
 
 SYSTEM_ROLES = ["filter"]
 """The only role an auto-tracked variable fills.
@@ -53,7 +57,7 @@ def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
     list of Variable
         Variables in display order, each carrying the plot roles it supports.
     """
-    questions = (
+    answered = (
         db.execute(
             select(Question)
             .options(selectinload(Question.options))
@@ -66,6 +70,28 @@ def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
         .all()
     )
 
+    # A score has no answers of its own to join against - it is worked out when
+    # answers are read - so it is picked up by the catalogues the user has
+    # actually answered in.
+    catalogue_ids = {question.catalogue_id for question in answered}
+    scores = (
+        db.execute(
+            select(Question)
+            .options(selectinload(Question.components))
+            .where(
+                Question.origin == ORIGIN_COMPUTED,
+                Question.active.is_(True),
+                Question.catalogue_id.in_(catalogue_ids),
+            )
+        )
+        .scalars()
+        .all()
+        if catalogue_ids
+        else []
+    )
+
+    questions = sorted([*answered, *scores], key=lambda q: (q.position, q.id))
+
     variables: list[Variable] = []
     by_system_key: dict[str, Variable] = {}
     for question in questions:
@@ -74,19 +100,27 @@ def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
             if merged is not None:
                 merged.question_ids.append(question.id)
                 continue
+        low, high = (
+            score_bounds(question)
+            if question.origin == ORIGIN_COMPUTED
+            else (question.min_value, question.max_value)
+        )
         variable = Variable(
             key=question.system_key or f"q{question.id}",
+            origin=question.origin,
             label=question.prompt,
             kind=question.kind,
             system_key=question.system_key,
-            min_value=question.min_value,
-            max_value=question.max_value,
+            min_value=low,
+            max_value=high,
             min_label=question.min_label,
             max_label=question.max_label,
             options=[OptionOut.model_validate(option) for option in question.options],
             question_ids=[question.id],
             roles=(
-                SYSTEM_ROLES
+                COMPUTED_ROLES
+                if question.origin == ORIGIN_COMPUTED
+                else SYSTEM_ROLES
                 if question.system_key is not None
                 else ENUM_ROLES
                 if question.kind == "enum"

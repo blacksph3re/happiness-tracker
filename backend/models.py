@@ -27,6 +27,26 @@ fills them. Above 1024px the same text takes two. The heading reserves that
 space, so no question makes the answer scale jump down the page.
 """
 
+ORIGIN_ASKED = "asked"
+"""A question the user answers."""
+
+ORIGIN_AUTO = "auto"
+"""An auto-tracked question the server records for them."""
+
+ORIGIN_COMPUTED = "computed"
+"""A score derived from other questions, computed when read and never stored."""
+
+ORIGINS = (ORIGIN_ASKED, ORIGIN_AUTO, ORIGIN_COMPUTED)
+"""Where a question's answers come from.
+
+Replaces asking "is `system_key` set?" to mean "the user does not answer this".
+That test had only two outcomes, so a third kind of question would have needed a
+second, parallel notion of the same thing.
+"""
+
+AGGREGATES = ("sum", "mean")
+"""How a score combines the questions that feed it."""
+
 SYSTEM_KEYS = ("weekday", "day_of_year", "month", "year", "first_answer_hour")
 """Stable identifiers of the five auto-tracked questions, in display order."""
 
@@ -152,8 +172,25 @@ class Question(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     """Whether the question still appears in the questionnaire."""
 
+    origin: Mapped[str] = mapped_column(
+        String(16), default=ORIGIN_ASKED, server_default=ORIGIN_ASKED, nullable=False
+    )
+    """One of ``asked``, ``auto`` or ``computed``."""
+
     system_key: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    """Identifier of an auto-tracked question, or null for an ordinary one."""
+    """Which auto-tracked variable this is, for questions of origin ``auto``."""
+
+    aggregate: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    """``sum`` or ``mean``, for questions of origin ``computed``."""
+
+    require_all: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", nullable=False
+    )
+    """Whether a score needs every component answered before it has a value.
+
+    A total over three of five answers is not that total, so by default a day
+    missing any component scores nothing rather than understating.
+    """
 
     min_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     """Lower bound for discrete and continuous questions."""
@@ -178,16 +215,46 @@ class Question(Base):
     )
     """Choices for an enum question, in display order."""
 
+    components: Mapped[list["ScoreComponent"]] = relationship(
+        back_populates="score",
+        foreign_keys="ScoreComponent.score_question_id",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    """The questions feeding this score, for questions of origin ``computed``."""
+
     @property
     def is_system(self) -> bool:
-        """Report whether this question is one of the auto-tracked ones.
+        """Report whether the server records this question's answers.
 
         Returns
         -------
         bool
-            True when `system_key` is set.
+            True for the auto-tracked questions.
         """
-        return self.system_key is not None
+        return self.origin == ORIGIN_AUTO
+
+    @property
+    def is_computed(self) -> bool:
+        """Report whether this question is a score derived from others.
+
+        Returns
+        -------
+        bool
+            True for scores.
+        """
+        return self.origin == ORIGIN_COMPUTED
+
+    @property
+    def is_asked(self) -> bool:
+        """Report whether the user answers this question themselves.
+
+        Returns
+        -------
+        bool
+            True for ordinary questions, and only those.
+        """
+        return self.origin == ORIGIN_ASKED
 
 
 class QuestionOption(Base):
@@ -211,6 +278,41 @@ class QuestionOption(Base):
 
     question: Mapped["Question"] = relationship(back_populates="options")
     """The question this option belongs to."""
+
+
+class ScoreComponent(Base):
+    """One question feeding one score, with the weight it carries."""
+
+    __tablename__ = "score_components"
+    __table_args__ = (
+        UniqueConstraint(
+            "score_question_id", "source_question_id", name="uq_score_component"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    score_question_id: Mapped[int] = mapped_column(
+        ForeignKey("questions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The computed question this contributes to."""
+
+    source_question_id: Mapped[int] = mapped_column(
+        ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
+    )
+    """The question whose answer is taken."""
+
+    weight: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    """Multiplier applied to the answer before combining."""
+
+    score: Mapped["Question"] = relationship(
+        back_populates="components", foreign_keys=[score_question_id]
+    )
+    """The score this component belongs to."""
+
+    source: Mapped["Question"] = relationship(foreign_keys=[source_question_id])
+    """The question this component reads."""
 
 
 class Answer(Base):

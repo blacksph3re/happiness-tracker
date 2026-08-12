@@ -82,6 +82,9 @@ test('a long answer does not move the rows a short one occupies', async ({
     return boxes
   }
 
+  // Measuring an empty list would compare nothing against nothing, so wait for
+  // the day to be on screen before reading any geometry.
+  await expect(dayView(page).getByText('Home', { exact: true })).toBeVisible()
   const withShortAnswer = await positionsOn()
   await page.getByRole('button', { name: '← Earlier' }).click()
   await expect(dayView(page).getByText('at the office in south east paris')).toBeVisible()

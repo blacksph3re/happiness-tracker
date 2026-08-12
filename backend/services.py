@@ -3,7 +3,17 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from models import Answer, Catalogue, Question, QuestionOption, SYSTEM_KEYS
+from models import (
+    AGGREGATES,
+    Answer,
+    Catalogue,
+    ORIGIN_ASKED,
+    ORIGIN_AUTO,
+    Question,
+    QuestionOption,
+    ScoreComponent,
+    SYSTEM_KEYS,
+)
 
 WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 """Weekday option labels, ordered so that index 0 is Monday."""
@@ -83,6 +93,7 @@ def create_catalogue(db: Session, name: str) -> Catalogue:
             prompt=spec["prompt"],
             position=1000 + offset,
             active=True,
+            origin=ORIGIN_AUTO,
             system_key=key,
             min_value=low,
             max_value=high,
@@ -110,13 +121,72 @@ class QuestionRuleError(ValueError):
     """
 
 
+def check_question_bounds(
+    kind: str, min_value: float | None, max_value: float | None
+) -> None:
+    """Check that a question's bounds match the kind it declares.
+
+    Kept apart from the option rule because the two are edited in different
+    places: the bounds arrive on the question itself, the options through their
+    own endpoint. An edit is only ever held to the rule it can actually break.
+
+    Parameters
+    ----------
+    kind : str
+        One of ``enum``, ``discrete`` or ``continuous``.
+    min_value : float or None
+        Proposed lower bound.
+    max_value : float or None
+        Proposed upper bound.
+
+    Raises
+    ------
+    QuestionRuleError
+        If an enum carries bounds, or a scaled question lacks one or has them
+        the wrong way round.
+    """
+    if kind == "enum":
+        if min_value is not None or max_value is not None:
+            raise QuestionRuleError("An enum question cannot have bounds")
+        return
+
+    if min_value is None or max_value is None:
+        raise QuestionRuleError("A scaled question needs a lower and an upper bound")
+    if min_value >= max_value:
+        raise QuestionRuleError("The lower bound must be below the upper bound")
+
+
+def check_question_options(kind: str, option_count: int) -> None:
+    """Check that a question carries the choices its kind calls for.
+
+    Parameters
+    ----------
+    kind : str
+        One of ``enum``, ``discrete`` or ``continuous``.
+    option_count : int
+        How many choices the question would carry.
+
+    Raises
+    ------
+    QuestionRuleError
+        If an enum has fewer than two choices, or a scaled question has any.
+    """
+    if kind == "enum":
+        if option_count < 2:
+            raise QuestionRuleError("An enum question needs at least two options")
+        return
+
+    if option_count:
+        raise QuestionRuleError("A scaled question cannot have options")
+
+
 def check_question_shape(
     kind: str,
     min_value: float | None,
     max_value: float | None,
     option_count: int,
 ) -> None:
-    """Check that a question's fields match the kind it declares.
+    """Check every rule a question must satisfy to be created whole.
 
     Parameters
     ----------
@@ -135,19 +205,102 @@ def check_question_shape(
         If an enum carries bounds or fewer than two choices, or a scaled
         question carries choices, lacks a bound, or has them the wrong way round.
     """
-    if kind == "enum":
-        if option_count < 2:
-            raise QuestionRuleError("An enum question needs at least two options")
-        if min_value is not None or max_value is not None:
-            raise QuestionRuleError("An enum question cannot have bounds")
-        return
+    check_question_options(kind, option_count)
+    check_question_bounds(kind, min_value, max_value)
 
-    if option_count:
-        raise QuestionRuleError("A scaled question cannot have options")
-    if min_value is None or max_value is None:
-        raise QuestionRuleError("A scaled question needs a lower and an upper bound")
-    if min_value >= max_value:
-        raise QuestionRuleError("The lower bound must be below the upper bound")
+
+class ScoreRuleError(ValueError):
+    """Raised when a score's definition does not describe a usable score."""
+
+
+def check_score_shape(aggregate: str, components: list[Question]) -> None:
+    """Check that a score can be computed from the questions it names.
+
+    Parameters
+    ----------
+    aggregate : str
+        How the components combine.
+    components : list of Question
+        The questions the score would read, already loaded.
+
+    Raises
+    ------
+    ScoreRuleError
+        If the aggregate is unknown, no components were given, or one of them
+        has no numeric value to contribute.
+    """
+    if aggregate not in AGGREGATES:
+        raise ScoreRuleError(f"A score is combined with one of: {', '.join(AGGREGATES)}")
+    if not components:
+        raise ScoreRuleError("A score needs at least one question to combine")
+
+    for question in components:
+        if question.origin != ORIGIN_ASKED:
+            raise ScoreRuleError(
+                f"{question.prompt!r} is not a question people answer, so it cannot "
+                "feed a score"
+            )
+        if question.kind == "enum":
+            raise ScoreRuleError(
+                f"{question.prompt!r} is a set of choices, not a scale, so it has no "
+                "value to add up. A scored yes/no is a discrete question with bounds "
+                "0 and 1."
+            )
+
+
+def score_bounds(score: Question) -> tuple[float, float]:
+    """Derive the range a score can take from the questions feeding it.
+
+    Configuring the bounds separately would let them contradict the components;
+    deriving them means the stats axis is always the truth.
+
+    Parameters
+    ----------
+    score : Question
+        A question of origin ``computed``, with its components loaded.
+
+    Returns
+    -------
+    tuple of (float, float)
+        Lowest and highest value the score can reach.
+    """
+    low = sum((c.source.min_value or 0) * c.weight for c in score.components)
+    high = sum((c.source.max_value or 0) * c.weight for c in score.components)
+    if score.aggregate == "mean":
+        total_weight = sum(c.weight for c in score.components) or 1.0
+        return low / total_weight, high / total_weight
+    return low, high
+
+
+def score_for_day(score: Question, values: dict[int, float]) -> float | None:
+    """Combine one day's answers into this score.
+
+    Parameters
+    ----------
+    score : Question
+        A question of origin ``computed``, with its components loaded.
+    values : dict of int to float
+        The day's numeric answers, keyed by question id.
+
+    Returns
+    -------
+    float or None
+        The score, or None when the day cannot produce one: no component
+        answered, or - when `require_all` is set - any component missing.
+    """
+    present = [c for c in score.components if values.get(c.source_question_id) is not None]
+    if not present:
+        return None
+    if score.require_all and len(present) != len(score.components):
+        return None
+
+    total = sum(values[c.source_question_id] * c.weight for c in present)
+    if score.aggregate == "mean":
+        total_weight = sum(c.weight for c in present)
+        if not total_weight:
+            return None
+        total /= total_weight
+    return round(total, 4)
 
 
 def question_is_answered(db: Session, question_id: int) -> bool:

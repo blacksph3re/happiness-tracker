@@ -3,7 +3,15 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from deps import CurrentUser, DbSession, EditorUser
-from models import Answer, Catalogue, Question, QuestionOption
+from models import (
+    Answer,
+    Catalogue,
+    ORIGIN_ASKED,
+    ORIGIN_COMPUTED,
+    Question,
+    QuestionOption,
+    ScoreComponent,
+)
 from schemas import (
     CatalogueCreate,
     CatalogueDetail,
@@ -13,10 +21,15 @@ from schemas import (
     QuestionCreate,
     QuestionOut,
     QuestionUpdate,
+    ScoreCreate,
+    ScoreUpdate,
 )
 from services import (
     QuestionRuleError,
+    ScoreRuleError,
+    check_question_bounds,
     check_question_shape,
+    check_score_shape,
     create_catalogue,
     question_is_answered,
 )
@@ -113,6 +126,11 @@ def _get_question(db: DbSession, question_id: int) -> Question:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Auto-tracked questions cannot be edited",
+        )
+    if question.is_computed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A score is edited through the score routes, not as a question",
         )
     return question
 
@@ -443,13 +461,15 @@ def update_question(
         value is not None and value != getattr(question, name)
         for name, value in frozen_fields.items()
     )
-    # Check the shape the edit would produce, not the one it arrived with.
+    # Check the bounds the edit would produce, not the ones it arrived with.
+    # The option count is deliberately not re-checked here: this endpoint cannot
+    # change it, so holding a rename to it would leave a question whose options
+    # are missing with no way to put them back.
     _enforce(
-        lambda: check_question_shape(
+        lambda: check_question_bounds(
             question.kind,
             payload.min_value if payload.min_value is not None else question.min_value,
             payload.max_value if payload.max_value is not None else question.max_value,
-            len(question.options),
         )
     )
     if touches_frozen and question_is_answered(db, question.id):
@@ -572,3 +592,261 @@ def delete_option(
     db.commit()
     db.refresh(question)
     return question
+
+
+def _enforce_score(rule) -> None:
+    """Run a score rule, turning its complaint into a 422.
+
+    The score equivalent of `_enforce`: `services` says what a score may be, and
+    this is the one place that becomes a status code.
+
+    Parameters
+    ----------
+    rule : collections.abc.Callable
+        A no-argument callable that raises `ScoreRuleError` when unhappy.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 422 carrying the rule's own message.
+    """
+    try:
+        rule()
+    except ScoreRuleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from None
+
+
+def _load_components(
+    db: DbSession, catalogue_id: int, components: list
+) -> list[Question]:
+    """Load the questions a score names, refusing any from another catalogue.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    catalogue_id : int
+        The catalogue the score belongs to.
+    components : list of ScoreComponentIn
+        The requested components.
+
+    Returns
+    -------
+    list of Question
+        The questions, in the order requested.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 422 when a component is missing or belongs elsewhere.
+    """
+    loaded = []
+    for component in components:
+        question = db.get(Question, component.source_question_id)
+        if question is None or question.catalogue_id != catalogue_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="A score can only combine questions from its own catalogue",
+            )
+        loaded.append(question)
+    return loaded
+
+
+def _get_score(db: DbSession, score_id: int) -> Question:
+    """Load a score or raise.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    score_id : int
+        Identifier of the computed question.
+
+    Returns
+    -------
+    Question
+        The score.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 404 when there is no such score.
+    """
+    score = db.get(Question, score_id)
+    if score is None or not score.is_computed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Score not found"
+        )
+    return score
+
+
+@router.post(
+    "/catalogues/{catalogue_id}/scores",
+    response_model=QuestionOut,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="createScore",
+    summary="Define a score",
+    description=(
+        "Define a value computed from other questions in the same catalogue - a "
+        "total or an average, optionally weighted. Scores are never answered and "
+        "never stored: they are computed whenever answers are read, so changing a "
+        "definition applies to the whole history at once."
+    ),
+)
+def add_score(
+    catalogue_id: int, payload: ScoreCreate, editor: EditorUser, db: DbSession
+) -> Question:
+    """Define a score over other questions in a catalogue.
+
+    Parameters
+    ----------
+    catalogue_id : int
+        Catalogue that will own the score.
+    payload : ScoreCreate
+        The score to create.
+    editor : User
+        The authenticated editor.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Returns
+    -------
+    Question
+        The created score.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 422 when the definition names nothing usable.
+    """
+    catalogue = _get_catalogue(db, catalogue_id)
+    sources = _load_components(db, catalogue.id, payload.components)
+    _enforce_score(lambda: check_score_shape(payload.aggregate, sources))
+
+    score = Question(
+        catalogue_id=catalogue.id,
+        # A score is a scale, so the rest of the app treats it as one; its
+        # bounds are derived from the components rather than stored.
+        kind="continuous",
+        prompt=payload.prompt,
+        position=payload.position,
+        active=True,
+        origin=ORIGIN_COMPUTED,
+        aggregate=payload.aggregate,
+        require_all=payload.require_all,
+        min_value=0.0,
+        max_value=1.0,
+    )
+    db.add(score)
+    db.flush()
+    for component in payload.components:
+        db.add(
+            ScoreComponent(
+                score_question_id=score.id,
+                source_question_id=component.source_question_id,
+                weight=component.weight,
+            )
+        )
+    db.commit()
+    db.refresh(score)
+    return score
+
+
+@router.put(
+    "/scores/{score_id}",
+    response_model=QuestionOut,
+    operation_id="updateScore",
+    summary="Change a score",
+    description=(
+        "Change a score's name, aggregate, components or completeness rule. The "
+        "change applies to every day already recorded, because the score is "
+        "computed rather than stored."
+    ),
+)
+def update_score(
+    score_id: int, payload: ScoreUpdate, editor: EditorUser, db: DbSession
+) -> Question:
+    """Change a score's definition.
+
+    Parameters
+    ----------
+    score_id : int
+        Identifier of the score.
+    payload : ScoreUpdate
+        Fields to apply. Omitted fields are left alone.
+    editor : User
+        The authenticated editor.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Returns
+    -------
+    Question
+        The updated score.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 422 when the result would not describe a usable score.
+    """
+    score = _get_score(db, score_id)
+    aggregate = payload.aggregate or score.aggregate
+    sources = (
+        _load_components(db, score.catalogue_id, payload.components)
+        if payload.components is not None
+        else [component.source for component in score.components]
+    )
+    _enforce_score(lambda: check_score_shape(aggregate, sources))
+
+    if payload.prompt is not None:
+        score.prompt = payload.prompt
+    if payload.position is not None:
+        score.position = payload.position
+    if payload.active is not None:
+        score.active = payload.active
+    if payload.require_all is not None:
+        score.require_all = payload.require_all
+    score.aggregate = aggregate
+
+    if payload.components is not None:
+        score.components.clear()
+        db.flush()
+        for component in payload.components:
+            db.add(
+                ScoreComponent(
+                    score_question_id=score.id,
+                    source_question_id=component.source_question_id,
+                    weight=component.weight,
+                )
+            )
+    db.commit()
+    db.refresh(score)
+    return score
+
+
+@router.delete(
+    "/scores/{score_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="deleteScore",
+    summary="Remove a score",
+    description=(
+        "Remove a score. Nothing recorded is lost, because a score never held "
+        "anything of its own."
+    ),
+)
+def delete_score(score_id: int, editor: EditorUser, db: DbSession) -> None:
+    """Remove a score definition.
+
+    Parameters
+    ----------
+    score_id : int
+        Identifier of the score.
+    editor : User
+        The authenticated editor.
+    db : sqlalchemy.orm.Session
+        Active database session.
+    """
+    db.delete(_get_score(db, score_id))
+    db.commit()

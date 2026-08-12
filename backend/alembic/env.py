@@ -2,7 +2,7 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from sqlalchemy import engine_from_config
+from sqlalchemy import engine_from_config, event
 from sqlalchemy import pool
 
 from alembic import context
@@ -68,6 +68,31 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+
+    # SQLite cannot alter a column in place, so batch mode rebuilds the whole
+    # table: copy, DROP, rename. With foreign keys enforced - which the app
+    # switches on for every connection - that DROP cascades, and every answer
+    # and option referencing the table is deleted along with it. Alembic's own
+    # SQLite guidance is to turn enforcement off while migrating.
+    #
+    # It is done on the raw connection rather than through the Connection,
+    # because SQLite ignores the pragma inside a transaction and issuing it
+    # through SQLAlchemy opens one - which also swallows Alembic's commit, so
+    # the schema changes but the version stamp never lands.
+    if connectable.dialect.name == "sqlite":
+
+        @event.listens_for(connectable, "connect")
+        def _relax_foreign_keys(dbapi_connection, connection_record) -> None:
+            """Turn off foreign key enforcement for the migration connection.
+
+            Parameters
+            ----------
+            dbapi_connection : sqlite3.Connection
+                The freshly opened driver connection.
+            connection_record : sqlalchemy.pool.base._ConnectionRecord
+                Pool bookkeeping for that connection. Unused.
+            """
+            dbapi_connection.execute("PRAGMA foreign_keys=OFF")
 
     with connectable.connect() as connection:
         context.configure(

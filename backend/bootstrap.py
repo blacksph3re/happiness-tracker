@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config import Settings
-from models import Catalogue, Question, User
+from models import Catalogue, ORIGIN_COMPUTED, Question, ScoreComponent, User
 from security import hash_password
 from services import create_catalogue
 
@@ -25,6 +25,59 @@ adaptation: the trend is meaningful, the published clinical cut-offs are not.
 
 STARTER_BOUNDS = (0.0, 5.0, "At no time", "All of the time")
 """The WHO-5 response scale: a six-point frequency rating from 0 to 5."""
+
+STARTER_SCORE = "Raw score"
+"""Name of the total the starter catalogue reports over its five items.
+
+Seeded as catalogue data, exactly as the five questions are: nothing in the code
+knows what the WHO-5 is or that its items are meant to be added up.
+"""
+
+SCORE_POSITION = 500
+"""Where a seeded score sorts: after the questions it reads, before the
+auto-tracked variables, which start at 1000."""
+
+
+def _seed_score(db: Session, catalogue: Catalogue) -> None:
+    """Add a total over every asked question of a freshly seeded catalogue.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    catalogue : Catalogue
+        The catalogue just populated with its starter questions.
+    """
+    score = Question(
+        catalogue_id=catalogue.id,
+        kind="continuous",
+        prompt=STARTER_SCORE,
+        position=SCORE_POSITION,
+        active=True,
+        origin=ORIGIN_COMPUTED,
+        aggregate="sum",
+        require_all=True,
+        # Bounds are worked out from the components on read, so the stored pair
+        # is only there to satisfy the column.
+        min_value=0.0,
+        max_value=1.0,
+    )
+    db.add(score)
+    db.flush()
+
+    sources = db.execute(
+        select(Question).where(
+            Question.catalogue_id == catalogue.id,
+            Question.origin == "asked",
+        )
+    ).scalars()
+    for source in sources:
+        db.add(
+            ScoreComponent(
+                score_question_id=score.id, source_question_id=source.id, weight=1.0
+            )
+        )
+    db.flush()
 
 
 def bootstrap(db: Session, settings: Settings) -> None:
@@ -65,6 +118,7 @@ def bootstrap(db: Session, settings: Settings) -> None:
                     )
                 )
             db.flush()
+            _seed_score(db, catalogue)
 
     admin = db.execute(
         select(User).where(User.username == settings.admin_user)

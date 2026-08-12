@@ -161,7 +161,7 @@ export async function catalogueOf(api) {
 
 /** The answerable questions of a catalogue, in display order. */
 export function realQuestions(catalogue) {
-  return catalogue.questions.filter((q) => !q.system_key && q.active)
+  return catalogue.questions.filter((q) => q.origin === 'asked' && q.active)
 }
 
 /**

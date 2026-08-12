@@ -1,14 +1,23 @@
 <script>
   import QuestionForm from '../lib/QuestionForm.svelte'
+  import ScoreForm from '../lib/ScoreForm.svelte'
   import { attempt, unwrap } from '../lib/api.js'
   import {
     addQuestionOption,
     createCatalogue as createCatalogueCall,
     createQuestion,
+    createScore,
+    deleteScore,
     renameCatalogue as renameCatalogueCall,
     updateQuestion,
+    updateScore,
   } from '../lib/generated/sdk.gen'
-  import { ensureAnswers, ensureCatalogue, ensureCatalogues } from '../lib/store.js'
+  import {
+    ensureAnswers,
+    ensureCatalogue,
+    ensureCatalogues,
+    ensureVariables,
+  } from '../lib/store.js'
   import { pushToast } from '../lib/toasts.js'
 
   let catalogues = $state([])
@@ -20,10 +29,17 @@
   let renameValue = $state('')
   let draft = $state(blankDraft())
   let editing = $state(null)
+  let scoreDraft = $state(null)
+  let editingScore = $state(null)
 
   const questions = $derived(
-    detail ? detail.questions.filter((q) => !q.system_key) : []
+    detail ? detail.questions.filter((q) => q.origin === 'asked') : []
   )
+  const scores = $derived(
+    detail ? detail.questions.filter((q) => q.origin === 'computed') : []
+  )
+  // A score reads numbers, so an options question has nothing to contribute.
+  const scorable = $derived(questions.filter((q) => q.kind !== 'enum'))
 
   function blankDraft() {
     return {
@@ -224,6 +240,112 @@
     }
   }
 
+  /**
+   * Build the editable shape of a score: every scorable question listed, with
+   * the ones this score already reads ticked.
+   *
+   * @param {object|null} score An existing score, or null for a new one.
+   */
+  function toScoreDraft(score) {
+    const weights = new Map(
+      (score?.components ?? []).map((c) => [c.source_question_id, c.weight])
+    )
+    return {
+      id: score?.id,
+      prompt: score?.prompt ?? '',
+      aggregate: score?.aggregate ?? 'sum',
+      require_all: score?.require_all ?? true,
+      components: scorable.map((question) => ({
+        source_question_id: question.id,
+        prompt: question.prompt,
+        min_value: question.min_value,
+        max_value: question.max_value,
+        include: score ? weights.has(question.id) : true,
+        weight: weights.get(question.id) ?? 1,
+      })),
+    }
+  }
+
+  function scoreBody(edited) {
+    return {
+      prompt: edited.prompt,
+      aggregate: edited.aggregate,
+      require_all: edited.require_all,
+      components: edited.components
+        .filter((c) => c.include)
+        .map((c) => ({
+          source_question_id: c.source_question_id,
+          weight: Number(c.weight),
+        })),
+    }
+  }
+
+  async function saveScore(edited) {
+    const saved = await attempt(() =>
+      edited.id
+        ? updateScore({ path: { score_id: edited.id }, body: scoreBody(edited) })
+        : createScore({
+            path: { catalogue_id: selectedId },
+            // Scores sort after the questions they read and before the
+            // auto-tracked block, which starts at 1000.
+            body: { ...scoreBody(edited), position: 500 + scores.length },
+          })
+    )
+    if (!saved) return
+    scoreDraft = null
+    editingScore = null
+    detail = await ensureCatalogue(selectedId, { force: true })
+    await refreshDerived()
+    pushToast(edited.id ? 'Score saved' : 'Score added', 'ok')
+  }
+
+  async function removeScore(score) {
+    // A 204 unwraps to null, which is also what a failure returns, so this one
+    // reads the exception rather than the value.
+    try {
+      await unwrap(() => deleteScore({ path: { score_id: score.id } }))
+    } catch (error) {
+      pushToast(error.message)
+      return
+    }
+    detail = await ensureCatalogue(selectedId, { force: true })
+    await refreshDerived()
+    pushToast(`Removed ${score.prompt}`, 'ok')
+  }
+
+  async function setScoreActive(score, active) {
+    const saved = await attempt(() =>
+      updateScore({ path: { score_id: score.id }, body: { active } })
+    )
+    if (!saved) return
+    detail = await ensureCatalogue(selectedId, { force: true })
+    await refreshDerived()
+  }
+
+  /**
+   * Reload what a score definition changes.
+   *
+   * Scores are worked out on read, so editing one silently rewrites the values
+   * the store is already holding for the record table and the stats page.
+   */
+  async function refreshDerived() {
+    await Promise.all([
+      ensureAnswers({ force: true }),
+      ensureVariables({ force: true }),
+    ])
+  }
+
+  /** Say what a score adds up, in the words of the questions it reads. */
+  function describeScore(score) {
+    const named = new Map(questions.map((q) => [q.id, q.prompt]))
+    const parts = score.components.map((component) => {
+      const prompt = named.get(component.source_question_id) ?? 'a removed question'
+      return component.weight === 1 ? prompt : `${component.weight} × ${prompt}`
+    })
+    const how = score.aggregate === 'mean' ? 'Average of' : 'Total of'
+    return `${how} ${parts.join(' · ')}`
+  }
+
   function describe(question) {
     if (question.kind === 'enum') {
       return question.options.map((option) => option.label).join(' · ')
@@ -306,6 +428,7 @@
     <ul class="flex flex-col gap-2">
       {#each questions as question, position (question.id)}
         <li
+          data-question
           class="flex flex-wrap items-center justify-between gap-3 rounded-lg border
                  border-white/10 bg-ink-soft px-5 py-4 {question.active ? '' : 'opacity-50'}"
         >
@@ -366,7 +489,86 @@
       {/each}
     </ul>
 
-    <div class="mt-8">
+    <div class="mt-10">
+      <h2 class="font-semibold">Scores</h2>
+      <p class="mt-1 mb-3 text-sm text-haze">
+        A score is worked out from the answers above rather than asked, so changing
+        one applies to every day already recorded.
+      </p>
+
+      <ul class="flex flex-col gap-2">
+        {#each scores as score (score.id)}
+          <li
+            data-score
+            class="flex flex-wrap items-center justify-between gap-3 rounded-lg border
+                   border-white/10 bg-ink-soft px-5 py-4 {score.active ? '' : 'opacity-50'}"
+          >
+            <div class="min-w-0">
+              <p class="font-medium italic">{score.prompt}</p>
+              <p class="meta mt-1 normal-case">{describeScore(score)}</p>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+              <button
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                onclick={() => {
+                  scoreDraft = null
+                  editingScore = toScoreDraft(score)
+                }}
+              >
+                Edit
+              </button>
+              <button
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                onclick={() => setScoreActive(score, !score.active)}
+              >
+                {score.active ? 'Deactivate' : 'Reactivate'}
+              </button>
+              <button
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                onclick={() => removeScore(score)}
+              >
+                Remove
+              </button>
+            </div>
+            {#if editingScore?.id === score.id}
+              <div class="mt-4 w-full">
+                <ScoreForm
+                  draft={editingScore}
+                  submitLabel="Save score"
+                  oncancel={() => (editingScore = null)}
+                  onsubmit={saveScore}
+                />
+              </div>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+
+      {#if scoreDraft}
+        <div class="mt-3">
+          <ScoreForm
+            draft={scoreDraft}
+            submitLabel="Add score"
+            oncancel={() => (scoreDraft = null)}
+            onsubmit={saveScore}
+          />
+        </div>
+      {:else}
+        <button
+          class="meta mt-3 rounded-md border border-white/15 px-4 py-2 hover:border-white/40
+                 disabled:cursor-not-allowed disabled:opacity-30"
+          disabled={scorable.length === 0}
+          onclick={() => {
+            editingScore = null
+            scoreDraft = toScoreDraft(null)
+          }}
+        >
+          Add a score
+        </button>
+      {/if}
+    </div>
+
+    <div class="mt-10">
       <h2 class="mb-3 font-semibold">Add a question</h2>
       <p class="mb-3 text-sm text-haze">
         Scale and options are fixed once the first answer is recorded, so history stays

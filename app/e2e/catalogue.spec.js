@@ -6,6 +6,12 @@ function chips(page) {
   return page.locator('section')
 }
 
+/** One question's row. A score's row names the questions it reads, so an
+ *  unscoped `li` filter matches both. */
+function questionRow(page, prompt) {
+  return page.locator('li[data-question]').filter({ hasText: prompt })
+}
+
 // One catalogue lifecycle rather than five separate ones: creating, renaming and
 // adding a question do not interfere, and sharing the setup keeps the run short.
 test('a catalogue can be created, renamed, and filled with questions', async ({
@@ -62,7 +68,7 @@ test('deactivating a question hides it but keeps its history', async ({
   // The editor opens the alphabetically first catalogue, which another test may
   // have added to; pick the one this account actually answers.
   await chips(page).getByRole('button', { name: DEFAULT_CATALOGUE, exact: true }).click()
-  const row = page.locator('li').filter({ hasText: target.prompt })
+  const row = questionRow(page, target.prompt)
   await row.getByRole('button', { name: 'Deactivate' }).click()
   await expect(row.getByRole('button', { name: 'Reactivate' })).toBeVisible()
 
@@ -87,7 +93,7 @@ test('an answered question says why its scale is fixed', async ({
 
   await page.goto('/questions')
   await chips(page).getByRole('button', { name: DEFAULT_CATALOGUE, exact: true }).click()
-  const row = page.locator('li').filter({ hasText: target.prompt })
+  const row = questionRow(page, target.prompt)
   await row.getByRole('button', { name: 'Edit' }).click()
 
   // The rule is explained and the fields are locked, rather than letting the
@@ -100,5 +106,5 @@ test('an answered question says why its scale is fixed', async ({
   // Rewording stays allowed.
   await row.getByLabel('Question').fill('Reworded prompt')
   await row.getByRole('button', { name: 'Save question' }).click()
-  await expect(chips(page).getByText('Reworded prompt')).toBeVisible()
+  await expect(questionRow(page, 'Reworded prompt')).toBeVisible()
 })

@@ -213,7 +213,7 @@
             <li
               class="flex {ROW_HEIGHT} items-center border-t border-white/8 px-4 py-2
                      text-sm first:border-t-0
-                     {question.system_key ? 'text-haze' : 'text-paper'}"
+                     {question.origin === 'asked' ? 'text-paper' : 'text-haze'}"
             >
               <span class="line-clamp-2">{question.prompt}</span>
             </li>
@@ -302,7 +302,7 @@
               <th
                 class="sticky left-0 z-20 truncate border-r border-white/15
                        bg-ink-soft px-4 py-3 text-left
-                       font-medium {question.system_key ? 'text-haze' : 'text-paper'}"
+                       font-medium {question.origin === 'asked' ? 'text-paper' : 'text-haze'}"
                 scope="row"
                 title={question.prompt}
               >

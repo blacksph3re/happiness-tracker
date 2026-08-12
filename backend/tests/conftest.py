@@ -33,18 +33,14 @@ def apply_migrations():
     command.upgrade(config, "head")
 
 
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    """Yield a TestClient backed by a fresh, bootstrapped database."""
-    import config
+def forget_application_modules():
+    """Drop every already-imported application module.
 
-    monkeypatch.setenv("DB_STORAGE", str(tmp_path / "test.db"))
-    config.get_settings.cache_clear()
-
-    # Drop every already-imported application module so the next import rebuilds
-    # the engine against this test's database. The `routers` *package* must go
-    # too: leaving it cached makes `from routers import auth` hand back the
-    # previous test's submodule, still bound to the previous test's database.
+    The next import then rebuilds the engine against whatever ``DB_STORAGE``
+    currently names. The `routers` *package* must go too: leaving it cached
+    makes `from routers import auth` hand back the previous test's submodule,
+    still bound to the previous test's database.
+    """
     for name, module in list(sys.modules.items()):
         if name in {"config", "conftest"} or name.startswith("tests"):
             continue
@@ -55,6 +51,16 @@ def client(tmp_path, monkeypatch):
         if not path.is_relative_to(BACKEND_DIR) or path.is_relative_to(VENV_DIR):
             continue
         sys.modules.pop(name, None)
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    """Yield a TestClient backed by a fresh, bootstrapped database."""
+    import config
+
+    monkeypatch.setenv("DB_STORAGE", str(tmp_path / "test.db"))
+    config.get_settings.cache_clear()
+    forget_application_modules()
 
     apply_migrations()
 
@@ -92,11 +98,11 @@ def catalogue_id(client, admin_headers):
 
 @pytest.fixture
 def starter_questions(client, admin_headers, catalogue_id):
-    """Return the three bootstrapped non-system questions."""
+    """Return the bootstrapped questions the user actually answers."""
     detail = client.get(
         f"/api/catalogues/{catalogue_id}", headers=admin_headers
     ).json()
-    return [q for q in detail["questions"] if q["system_key"] is None]
+    return [q for q in detail["questions"] if q["origin"] == "asked"]
 
 
 def make_user(client, admin_headers, username, **flags):

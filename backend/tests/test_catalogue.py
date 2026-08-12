@@ -1,9 +1,12 @@
+import sqlite3
+
 SYSTEM_KEYS = {"weekday", "day_of_year", "month", "year", "first_answer_hour"}
 
 
 def test_bootstrap_creates_starter_catalogue(client, admin_headers, catalogue_id):
     detail = client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers).json()
-    prompts = [q["prompt"] for q in detail["questions"] if q["system_key"] is None]
+    asked = [q for q in detail["questions"] if q["origin"] == "asked"]
+    prompts = [q["prompt"] for q in asked]
     assert prompts == [
         "I have felt cheerful and in good spirits",
         "I have felt calm and relaxed",
@@ -11,11 +14,10 @@ def test_bootstrap_creates_starter_catalogue(client, admin_headers, catalogue_id
         "I woke up feeling fresh and rested",
         "My daily life has been filled with things that interest me",
     ]
-    scaled = [q for q in detail["questions"] if q["system_key"] is None]
-    assert all(q["kind"] == "discrete" for q in scaled)
+    assert all(q["kind"] == "discrete" for q in asked)
     # The WHO-5 response scale runs 0-5, not 1-5.
-    assert all((q["min_value"], q["max_value"]) == (0.0, 5.0) for q in scaled)
-    assert all(q["min_label"] == "At no time" for q in scaled)
+    assert all((q["min_value"], q["max_value"]) == (0.0, 5.0) for q in asked)
+    assert all(q["min_label"] == "At no time" for q in asked)
     assert {q["system_key"] for q in detail["questions"] if q["system_key"]} == SYSTEM_KEYS
 
 
@@ -25,7 +27,7 @@ def test_new_catalogue_gets_its_own_system_questions(client, admin_headers):
     ).json()
     detail = client.get(f"/api/catalogues/{created['id']}", headers=admin_headers).json()
     assert {q["system_key"] for q in detail["questions"] if q["system_key"]} == SYSTEM_KEYS
-    assert [q for q in detail["questions"] if q["system_key"] is None] == []
+    assert [q for q in detail["questions"] if q["origin"] != "auto"] == []
 
 
 def test_duplicate_catalogue_name_is_rejected(client, admin_headers):
@@ -254,7 +256,8 @@ def test_renaming_a_catalogue_keeps_its_questions_and_answers(
     assert [c["name"] for c in listed] == ["Evening check-in"]
 
     detail = client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers).json()
-    assert len(detail["questions"]) == len(starter_questions) + 5
+    # The five auto-tracked variables and the seeded score come along too.
+    assert len(detail["questions"]) == len(starter_questions) + 6
     assert client.get("/api/answers", headers=admin_headers).json() != []
 
 
@@ -310,3 +313,44 @@ def test_a_prompt_longer_than_the_limit_is_refused(client, admin_headers, catalo
         ).status_code
         == 422
     )
+
+
+def test_an_enum_that_lost_its_options_can_be_repaired(
+    client, admin_headers, catalogue_id, tmp_path
+):
+    created = client.post(
+        f"/api/catalogues/{catalogue_id}/questions",
+        headers=admin_headers,
+        json={
+            "kind": "enum",
+            "prompt": "Where did you work?",
+            "options": [{"label": "Home"}, {"label": "Office"}],
+        },
+    ).json()
+
+    # A state the API cannot produce but a bad migration once did. Editing must
+    # not be blocked by an invariant the edit does not touch, or the question is
+    # stuck without its options for good.
+    db = sqlite3.connect(tmp_path / "test.db")
+    db.execute("DELETE FROM question_options WHERE question_id = ?", (created["id"],))
+    db.commit()
+    db.close()
+
+    renamed = client.put(
+        f"/api/questions/{created['id']}",
+        headers=admin_headers,
+        json={"prompt": "Where did you work"},
+    )
+    assert renamed.status_code == 200
+
+    for label in ("At home", "In office"):
+        added = client.post(
+            f"/api/questions/{created['id']}/options",
+            headers=admin_headers,
+            json={"label": label},
+        )
+        assert added.status_code == 201, added.text
+    assert [option["label"] for option in added.json()["options"]] == [
+        "At home",
+        "In office",
+    ]

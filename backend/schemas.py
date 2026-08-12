@@ -230,6 +230,69 @@ class OptionUpdate(BaseModel):
     """Replacement text for the choice."""
 
 
+class ScoreComponentOut(BaseModel):
+    """One question feeding a score."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    source_question_id: int
+    """The question whose answer is taken."""
+
+    weight: float
+    """Multiplier applied before combining."""
+
+
+class ScoreComponentIn(BaseModel):
+    """One question to feed a score."""
+
+    source_question_id: int
+    """The question whose answer is taken."""
+
+    weight: float = 1.0
+    """Multiplier applied before combining."""
+
+
+class ScoreCreate(BaseModel):
+    """Payload for defining a score over other questions."""
+
+    prompt: str = Field(min_length=1, max_length=PROMPT_MAX_LENGTH)
+    """What the score is called."""
+
+    aggregate: str = Field(pattern="^(sum|mean)$")
+    """How the components combine."""
+
+    components: list[ScoreComponentIn] = Field(min_length=1)
+    """The questions that feed it, with their weights."""
+
+    require_all: bool = True
+    """Whether every component must be answered before the day has a score."""
+
+    position: int = 0
+    """Sort order within the catalogue."""
+
+
+class ScoreUpdate(BaseModel):
+    """Payload for changing a score. Omitted fields are left alone."""
+
+    prompt: str | None = Field(default=None, min_length=1, max_length=PROMPT_MAX_LENGTH)
+    """New name for the score."""
+
+    aggregate: str | None = Field(default=None, pattern="^(sum|mean)$")
+    """New way of combining the components."""
+
+    components: list[ScoreComponentIn] | None = Field(default=None, min_length=1)
+    """Replacement set of components, when given."""
+
+    require_all: bool | None = None
+    """New completeness rule."""
+
+    position: int | None = None
+    """New sort order."""
+
+    active: bool | None = None
+    """Whether the score is still reported."""
+
+
 class QuestionOut(BaseModel):
     """A question as exposed by the API, including its bounds and choices."""
 
@@ -253,8 +316,20 @@ class QuestionOut(BaseModel):
     active: bool
     """Whether the question still appears in the questionnaire."""
 
+    origin: str
+    """``asked``, ``auto`` or ``computed``: where this question's answers come from."""
+
     system_key: str | None
-    """Identifier of an auto-tracked question, or null for an ordinary one."""
+    """Which auto-tracked variable this is, for questions of origin ``auto``."""
+
+    aggregate: str | None
+    """``sum`` or ``mean``, for scores."""
+
+    require_all: bool
+    """Whether a score needs every component answered."""
+
+    components: list[ScoreComponentOut] = []
+    """The questions feeding a score, with their weights."""
 
     min_value: float | None
     """Lower bound for discrete and continuous questions."""
@@ -416,6 +491,9 @@ class Variable(BaseModel):
 
     system_key: str | None
     """Set when the variable is auto-tracked."""
+
+    origin: str
+    """``asked``, ``auto`` or ``computed``: where its values come from."""
 
     min_value: float | None
     """Lower bound, for numeric variables."""

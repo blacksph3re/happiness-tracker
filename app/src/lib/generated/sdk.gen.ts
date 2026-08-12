@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, ExportAnswersData, ExportAnswersErrors, ExportAnswersResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UpsertAnswerData, UpsertAnswerErrors, UpsertAnswerResponses } from './types.gen';
+import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, ExportAnswersData, ExportAnswersErrors, ExportAnswersResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UpsertAnswerData, UpsertAnswerErrors, UpsertAnswerResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -304,6 +304,47 @@ export const deleteQuestionOption = <ThrowOnError extends boolean = false>(optio
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/questions/{question_id}/options/{option_id}',
     ...options
+});
+
+/**
+ * Define a score
+ *
+ * Define a value computed from other questions in the same catalogue - a total or an average, optionally weighted. Scores are never answered and never stored: they are computed whenever answers are read, so changing a definition applies to the whole history at once.
+ */
+export const createScore = <ThrowOnError extends boolean = false>(options: Options<CreateScoreData, ThrowOnError>): RequestResult<CreateScoreResponses, CreateScoreErrors, ThrowOnError> => (options.client ?? client).post<CreateScoreResponses, CreateScoreErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/catalogues/{catalogue_id}/scores',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Remove a score
+ *
+ * Remove a score. Nothing recorded is lost, because a score never held anything of its own.
+ */
+export const deleteScore = <ThrowOnError extends boolean = false>(options: Options<DeleteScoreData, ThrowOnError>): RequestResult<DeleteScoreResponses, DeleteScoreErrors, ThrowOnError> => (options.client ?? client).delete<DeleteScoreResponses, DeleteScoreErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/scores/{score_id}',
+    ...options
+});
+
+/**
+ * Change a score
+ *
+ * Change a score's name, aggregate, components or completeness rule. The change applies to every day already recorded, because the score is computed rather than stored.
+ */
+export const updateScore = <ThrowOnError extends boolean = false>(options: Options<UpdateScoreData, ThrowOnError>): RequestResult<UpdateScoreResponses, UpdateScoreErrors, ThrowOnError> => (options.client ?? client).put<UpdateScoreResponses, UpdateScoreErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/scores/{score_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 /**

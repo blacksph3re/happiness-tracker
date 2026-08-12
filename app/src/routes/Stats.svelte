@@ -86,7 +86,7 @@
     const axes = variables.filter((v) => v.roles.includes('axis'))
     scatterX = axes[0]?.key ?? ''
     scatterY = axes[1]?.key ?? axes[0]?.key ?? ''
-    chosen = new Set(axes.filter((v) => !v.system_key).map((v) => v.key))
+    chosen = new Set(axes.filter((v) => v.origin === 'asked').map((v) => v.key))
 
     const stored = (await ensurePreferences()) ?? {}
     if (stored.view) view = stored.view
@@ -460,7 +460,7 @@
                        {chosen.has(variable.key)
                   ? 'border-dusk-lift bg-dusk/30 text-paper'
                   : 'border-white/15 hover:border-white/40'}
-                       {variable.system_key ? 'italic' : ''}"
+                       {variable.origin === 'asked' ? '' : 'italic'}"
                 aria-pressed={chosen.has(variable.key)}
                 onclick={() => toggle(variable.key)}
               >

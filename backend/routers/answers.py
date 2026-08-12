@@ -8,9 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
-from models import Answer, Question, QuestionOption
+from models import Answer, ORIGIN_COMPUTED, Question, QuestionOption
 from schemas import AnswerIn, AnswerOut
-from services import sync_system_answers
+from services import score_for_day, sync_system_answers
 
 router = APIRouter(prefix="/answers", tags=["Answers"])
 
@@ -45,6 +45,11 @@ def _load_answerable_question(db: DbSession, question_id: int) -> Question:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Auto-tracked questions are written by the server",
+        )
+    if question.is_computed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A score is worked out from other answers, not answered itself",
         )
     return question
 
@@ -160,6 +165,73 @@ def upsert_answer(payload: AnswerIn, user: CurrentUser, db: DbSession) -> None:
     db.commit()
 
 
+def _with_scores(db: DbSession, user_id: int, answers: list[Answer]) -> list[dict]:
+    """Return the answers plus a row for every score they add up to.
+
+    Scores are computed here rather than stored, so a definition applies to the
+    whole history the moment it changes and nothing has to be rewritten. They
+    come back looking like any other answer, which is what lets the record
+    table, the export and the stats page show them without knowing they exist.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    user_id : int
+        The user whose answers these are. Unused beyond documenting intent: the
+        answers are already theirs.
+    answers : list of Answer
+        Stored answers, in day order.
+
+    Returns
+    -------
+    list of dict
+        Serialisable rows: the stored answers, then the computed ones.
+    """
+    rows = [
+        {
+            "question_id": answer.question_id,
+            "day": answer.day,
+            "value": answer.value,
+            "option_id": answer.option_id,
+        }
+        for answer in answers
+    ]
+    if not rows:
+        return rows
+
+    scores = (
+        db.execute(
+            select(Question)
+            .options(selectinload(Question.components))
+            .where(Question.origin == ORIGIN_COMPUTED, Question.active.is_(True))
+        )
+        .scalars()
+        .all()
+    )
+    if not scores:
+        return rows
+
+    values_by_day: dict[date, dict[int, float]] = {}
+    for answer in answers:
+        if answer.value is not None:
+            values_by_day.setdefault(answer.day, {})[answer.question_id] = answer.value
+
+    for day, values in values_by_day.items():
+        for score in scores:
+            computed = score_for_day(score, values)
+            if computed is not None:
+                rows.append(
+                    {
+                        "question_id": score.id,
+                        "day": day,
+                        "value": computed,
+                        "option_id": None,
+                    }
+                )
+    return rows
+
+
 def _answers_in_range(
     db: DbSession, user_id: int, start: date | None, end: date | None
 ) -> list[Answer]:
@@ -205,8 +277,8 @@ def list_answers(
     db: DbSession,
     start: date | None = Query(default=None, alias="from"),
     end: date | None = Query(default=None, alias="to"),
-) -> list[Answer]:
-    """Return the authenticated user's answers, auto-tracked values included.
+) -> list[dict]:
+    """Return the authenticated user's answers, with the values derived from them.
 
     Parameters
     ----------
@@ -221,10 +293,11 @@ def list_answers(
 
     Returns
     -------
-    list of Answer
-        Matching answers, never including another user's data.
+    list of dict
+        Matching answers, the auto-tracked values, and a row per score, never
+        including another user's data.
     """
-    return _answers_in_range(db, user.id, start, end)
+    return _with_scores(db, user.id, _answers_in_range(db, user.id, start, end))
 
 
 @router.get(
@@ -272,8 +345,10 @@ def export_answers(
     fastapi.Response
         An ``.xlsx`` attachment.
     """
-    answers = _answers_in_range(db, user.id, start, end)
-    question_ids = {answer.question_id for answer in answers}
+    # The same rows the app reads, so the spreadsheet agrees with the screen -
+    # scores included.
+    answers = _with_scores(db, user.id, _answers_in_range(db, user.id, start, end))
+    question_ids = {answer["question_id"] for answer in answers}
     questions = (
         db.execute(
             select(Question)
@@ -297,19 +372,19 @@ def export_answers(
     sheet.title = "Answers"
     sheet.append(["Day"] + [question.prompt for question in questions])
 
-    by_day: dict[date, dict[int, Answer]] = {}
+    by_day: dict[date, dict[int, dict]] = {}
     for answer in answers:
-        by_day.setdefault(answer.day, {})[answer.question_id] = answer
+        by_day.setdefault(answer["day"], {})[answer["question_id"]] = answer
     for day in sorted(by_day):
         row: list[object] = [day.isoformat()]
         for question in questions:
             answer = by_day[day].get(question.id)
             if answer is None:
                 row.append(None)
-            elif answer.option_id is not None:
-                row.append(option_labels.get(answer.option_id))
+            elif answer["option_id"] is not None:
+                row.append(option_labels.get(answer["option_id"]))
             else:
-                row.append(answer.value)
+                row.append(answer["value"])
         sheet.append(row)
 
     buffer = BytesIO()

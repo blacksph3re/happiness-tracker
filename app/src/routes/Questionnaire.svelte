@@ -36,7 +36,7 @@
   let shownDay = null
 
   const questions = $derived(
-    catalogue ? catalogue.questions.filter((q) => q.active && !q.system_key) : []
+    catalogue ? catalogue.questions.filter((q) => q.active && q.origin === 'asked') : []
   )
   const current = $derived(questions[index] ?? null)
   // One past the last question is the closing card: the day is finished, and

@@ -346,9 +346,25 @@ export type QuestionOut = {
      */
     active: boolean;
     /**
+     * Origin
+     */
+    origin: string;
+    /**
      * System Key
      */
     system_key: string | null;
+    /**
+     * Aggregate
+     */
+    aggregate: string | null;
+    /**
+     * Require All
+     */
+    require_all: boolean;
+    /**
+     * Components
+     */
+    components?: Array<ScoreComponentOut>;
     /**
      * Min Value
      */
@@ -421,6 +437,98 @@ export type RefreshRequest = {
      * Refresh Token
      */
     refresh_token: string;
+};
+
+/**
+ * ScoreComponentIn
+ *
+ * One question to feed a score.
+ */
+export type ScoreComponentIn = {
+    /**
+     * Source Question Id
+     */
+    source_question_id: number;
+    /**
+     * Weight
+     */
+    weight?: number;
+};
+
+/**
+ * ScoreComponentOut
+ *
+ * One question feeding a score.
+ */
+export type ScoreComponentOut = {
+    /**
+     * Source Question Id
+     */
+    source_question_id: number;
+    /**
+     * Weight
+     */
+    weight: number;
+};
+
+/**
+ * ScoreCreate
+ *
+ * Payload for defining a score over other questions.
+ */
+export type ScoreCreate = {
+    /**
+     * Prompt
+     */
+    prompt: string;
+    /**
+     * Aggregate
+     */
+    aggregate: string;
+    /**
+     * Components
+     */
+    components: Array<ScoreComponentIn>;
+    /**
+     * Require All
+     */
+    require_all?: boolean;
+    /**
+     * Position
+     */
+    position?: number;
+};
+
+/**
+ * ScoreUpdate
+ *
+ * Payload for changing a score. Omitted fields are left alone.
+ */
+export type ScoreUpdate = {
+    /**
+     * Prompt
+     */
+    prompt?: string | null;
+    /**
+     * Aggregate
+     */
+    aggregate?: string | null;
+    /**
+     * Components
+     */
+    components?: Array<ScoreComponentIn> | null;
+    /**
+     * Require All
+     */
+    require_all?: boolean | null;
+    /**
+     * Position
+     */
+    position?: number | null;
+    /**
+     * Active
+     */
+    active?: boolean | null;
 };
 
 /**
@@ -576,6 +684,10 @@ export type Variable = {
      * System Key
      */
     system_key: string | null;
+    /**
+     * Origin
+     */
+    origin: string;
     /**
      * Min Value
      */
@@ -1180,6 +1292,96 @@ export type DeleteQuestionOptionResponses = {
 };
 
 export type DeleteQuestionOptionResponse = DeleteQuestionOptionResponses[keyof DeleteQuestionOptionResponses];
+
+export type CreateScoreData = {
+    body: ScoreCreate;
+    path: {
+        /**
+         * Catalogue Id
+         */
+        catalogue_id: number;
+    };
+    query?: never;
+    url: '/api/catalogues/{catalogue_id}/scores';
+};
+
+export type CreateScoreErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateScoreError = CreateScoreErrors[keyof CreateScoreErrors];
+
+export type CreateScoreResponses = {
+    /**
+     * Successful Response
+     */
+    201: QuestionOut;
+};
+
+export type CreateScoreResponse = CreateScoreResponses[keyof CreateScoreResponses];
+
+export type DeleteScoreData = {
+    body?: never;
+    path: {
+        /**
+         * Score Id
+         */
+        score_id: number;
+    };
+    query?: never;
+    url: '/api/scores/{score_id}';
+};
+
+export type DeleteScoreErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteScoreError = DeleteScoreErrors[keyof DeleteScoreErrors];
+
+export type DeleteScoreResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteScoreResponse = DeleteScoreResponses[keyof DeleteScoreResponses];
+
+export type UpdateScoreData = {
+    body: ScoreUpdate;
+    path: {
+        /**
+         * Score Id
+         */
+        score_id: number;
+    };
+    query?: never;
+    url: '/api/scores/{score_id}';
+};
+
+export type UpdateScoreErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateScoreError = UpdateScoreErrors[keyof UpdateScoreErrors];
+
+export type UpdateScoreResponses = {
+    /**
+     * Successful Response
+     */
+    200: QuestionOut;
+};
+
+export type UpdateScoreResponse = UpdateScoreResponses[keyof UpdateScoreResponses];
 
 export type ListAnswersData = {
     body?: never;

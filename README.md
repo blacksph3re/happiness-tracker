@@ -16,6 +16,18 @@ Patterns: line, radar, scatter and box views over a window you choose, with a sm
 
 ![The stats page, plotting several questions over time](docs/screenshots/patterns.png)
 
+## Scores
+
+A catalogue can define a score: a total or an average over the questions you pick,
+each with a weight. It behaves like any other question — it appears in the record,
+the export and the plots — except that nobody answers it. It is worked out from the
+answers every time they are read, so editing a definition applies to everything
+already recorded and no stored answer is ever rewritten. By default a day is scored
+only when every question feeding it was answered.
+
+The starter catalogue ships with the WHO-5 raw score, defined as ordinary catalogue
+data. Scores are edited under **Questions**, below the question list.
+
 ## Installation
 
 To install everything, just build the Dockerfile and run through docker. You may want to set some environment variables:
@@ -65,6 +77,7 @@ Useful extras:
 
 ```bash
 cd backend && uv run pytest    # the API test suite
+cd backend && uv run python scripts/seed_answers.py --days 90   # a history to look at
 cd app && pnpm build           # emit the production bundle into backend/static
 cd app && pnpm api:generate    # regenerate the typed API client after an endpoint changes
 ```
@@ -147,4 +160,4 @@ cd backend
 uv run alembic revision --autogenerate -m "what changed"
 ```
 
-Read the generated file before committing it. Autogenerate detects tables, columns and indexes, but it does not see data: converting a column's meaning, backfilling a new `NOT NULL`, or splitting a table needs those statements written by hand. It also cannot infer a `downgrade()` for a data change. SQLite cannot `ALTER` most things, so `env.py` sets `render_as_batch=True` and Alembic rewrites the table instead — the generated code will show `batch_alter_table` blocks. Apply, then `downgrade` and `upgrade` again to confirm the migration works in both directions before you commit.
+Read the generated file before committing it. Autogenerate detects tables, columns and indexes, but it does not see data: converting a column's meaning, backfilling a new `NOT NULL`, or splitting a table needs those statements written by hand. It also cannot infer a `downgrade()` for a data change. SQLite cannot `ALTER` most things, so `env.py` sets `render_as_batch=True` and Alembic rewrites the table instead — the generated code will show `batch_alter_table` blocks. That rewrite is a `DROP` and a rename, which is why `env.py` also turns foreign key enforcement off while migrating: with it on, dropping `questions` cascades and takes every answer and option with it. `tests/test_migrations.py` migrates a populated database along the whole chain and fails if any revision loses a row. Apply, then `downgrade` and `upgrade` again to confirm the migration works in both directions before you commit.
