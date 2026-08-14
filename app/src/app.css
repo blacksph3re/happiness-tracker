@@ -74,6 +74,22 @@ body {
   --color-ember: var(--color-amber);
 }
 
+/* Hover, app-wide, so a pointer is answered the same way everywhere:
+ *   outlined control   border-white/40
+ *   destructive        border-ember — the only place the accent means "careful"
+ *   filled control     bg-dusk-lift
+ *   card or tile       border-white/30 with bg-dusk/10
+ *   tinted band        brightness-125, because a border cannot show on a control
+ *                      that carries its own colour
+ *
+ * Tailwind v4 leaves buttons on the browser default cursor, which is an arrow.
+ * Everything clickable should say so; a disabled control keeps the arrow. */
+button:not(:disabled),
+[role='button']:not(:disabled),
+summary {
+  cursor: pointer;
+}
+
 /* Metadata, labels and anything tabular reads as instrument output. */
 .meta {
   font-family: var(--font-meta);

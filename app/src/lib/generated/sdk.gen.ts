@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CheckInData, CheckInErrors, CheckInResponses, CheckOutData, CheckOutErrors, CheckOutResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTimeEntryData, CreateTimeEntryErrors, CreateTimeEntryResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteTimeEntryData, DeleteTimeEntryErrors, DeleteTimeEntryResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, ExportAnswersData, ExportAnswersErrors, ExportAnswersResponses, ExportTimeData, ExportTimeErrors, ExportTimeResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListProjectsData, ListProjectsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateTimeEntryData, UpdateTimeEntryErrors, UpdateTimeEntryResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UpsertAnswerData, UpsertAnswerErrors, UpsertAnswerResponses } from './types.gen';
+import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CheckInData, CheckInErrors, CheckInResponses, CheckOutData, CheckOutErrors, CheckOutResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTimeEntryData, CreateTimeEntryErrors, CreateTimeEntryResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteTimeEntryData, DeleteTimeEntryErrors, DeleteTimeEntryResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, ExportAnswersData, ExportAnswersErrors, ExportAnswersResponses, ExportTimeData, ExportTimeErrors, ExportTimeResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListDeductionsData, ListDeductionsErrors, ListDeductionsResponses, ListProjectsData, ListProjectsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, ResumeProjectData, ResumeProjectErrors, ResumeProjectResponses, SetDeductionsData, SetDeductionsErrors, SetDeductionsResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, TrackedRangeData, TrackedRangeResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateTimeEntryData, UpdateTimeEntryErrors, UpdateTimeEntryResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UpsertAnswerData, UpsertAnswerErrors, UpsertAnswerResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -530,6 +530,17 @@ export const checkOut = <ThrowOnError extends boolean = false>(options: Options<
 });
 
 /**
+ * Reopen the last session
+ *
+ * Continue the project's most recent session rather than beginning a new one: its start time is kept, so the gap since it was stopped counts as worked.
+ */
+export const resumeProject = <ThrowOnError extends boolean = false>(options: Options<ResumeProjectData, ThrowOnError>): RequestResult<ResumeProjectResponses, ResumeProjectErrors, ThrowOnError> => (options.client ?? client).post<ResumeProjectResponses, ResumeProjectErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/projects/{project_id}/resume',
+    ...options
+});
+
+/**
  * List sessions
  *
  * Every session of the signed-in account overlapping the range, the running ones included.
@@ -579,6 +590,43 @@ export const updateTimeEntry = <ThrowOnError extends boolean = false>(options: O
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Read a tag's deduction rule
+ *
+ * The bands turning this tag's tracked time into reported time, lowest threshold first. An empty list means no deduction.
+ */
+export const listDeductions = <ThrowOnError extends boolean = false>(options: Options<ListDeductionsData, ThrowOnError>): RequestResult<ListDeductionsResponses, ListDeductionsErrors, ThrowOnError> => (options.client ?? client).get<ListDeductionsResponses, ListDeductionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/tags/{tag_id}/deductions',
+    ...options
+});
+
+/**
+ * Replace a tag's deduction rule
+ *
+ * Send the whole rule. A rule is edited as one thing - the bands only mean anything in relation to each other.
+ */
+export const setDeductions = <ThrowOnError extends boolean = false>(options: Options<SetDeductionsData, ThrowOnError>): RequestResult<SetDeductionsResponses, SetDeductionsErrors, ThrowOnError> => (options.client ?? client).put<SetDeductionsResponses, SetDeductionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/tags/{tag_id}/deductions',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * The days tracking spans
+ *
+ * The first and last local day with a session, so a window control can stop at the edges of the history instead of sliding into empty years.
+ */
+export const trackedRange = <ThrowOnError extends boolean = false>(options?: Options<TrackedRangeData, ThrowOnError>): RequestResult<TrackedRangeResponses, unknown, ThrowOnError> => (options?.client ?? client).get<TrackedRangeResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/time/range',
+    ...options
 });
 
 /**

@@ -8,21 +8,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
-from models import Project, Tag, TimeEntry
-from routers.projects import own_project, running_entry
+from models import DeductionBand, Project, Tag, TimeEntry
+from routers.projects import own_project, own_tag, running_entry
 from schemas import (
     CheckIn,
     CheckOut,
+    DeductionBandIn,
+    DeductionBandOut,
     SummaryRow,
     TimeEntryCreate,
     TimeEntryOut,
     TimeEntryUpdate,
+    TrackedRange,
 )
 from services import (
     TimeRuleError,
     check_entry_shape,
+    check_no_overlap,
     daily_slices,
+    day_offsets,
+    deduction_for,
     group_by_tag,
+    reported,
+    starting_day,
     summarise,
 )
 
@@ -68,8 +76,68 @@ def _enforce(rule) -> None:
         rule()
     except TimeRuleError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from None
+
+
+def _settle_overlaps(
+    db: DbSession, user_id: int, entry: TimeEntry, merge: bool
+) -> None:
+    """Refuse a session that collides with another on the same project.
+
+    Two projects may run at once, but one project running twice over the same
+    minutes reports the same hour twice under the same name. When `merge` is
+    set, the collision is resolved instead of refused: the session grows to
+    cover everything it touched and the sessions it swallowed are removed, so
+    the whole thing is one write.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    user_id : int
+        Whose sessions to compare against.
+    entry : TimeEntry
+        The session being written, already carrying its new times.
+    merge : bool
+        Whether to absorb the collisions rather than refuse them.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 422 when the session overlaps and `merge` is not set.
+    """
+    others = (
+        db.execute(
+            select(TimeEntry).where(
+                TimeEntry.user_id == user_id,
+                TimeEntry.project_id == entry.project_id,
+                TimeEntry.id != (entry.id or -1),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not merge:
+        _enforce(lambda: check_no_overlap(entry, others))
+        return
+
+    finish = entry.ended_at or datetime.max
+
+    def collides(other):
+        return (
+            entry.started_at < (other.ended_at or datetime.max)
+            and other.started_at < finish
+        )
+
+    swallowed = [other for other in others if collides(other)]
+    for other in swallowed:
+        entry.started_at = min(entry.started_at, other.started_at)
+        if entry.ended_at is not None:
+            entry.ended_at = (
+                None if other.ended_at is None else max(entry.ended_at, other.ended_at)
+            )
+        db.delete(other)
 
 
 def _own_entry(db: DbSession, user: CurrentUser, entry_id: int) -> TimeEntry:
@@ -269,6 +337,74 @@ def check_out(
     return entry
 
 
+@router.post(
+    "/projects/{project_id}/resume",
+    response_model=TimeEntryOut,
+    operation_id="resumeProject",
+    summary="Reopen the last session",
+    description=(
+        "Continue the project's most recent session rather than beginning a "
+        "new one: its start time is kept, so the gap since it was stopped "
+        "counts as worked."
+    ),
+)
+def resume(project_id: int, user: CurrentUser, db: DbSession) -> TimeEntry:
+    """Reopen a project's most recent session.
+
+    For the stop that should not have happened. Rather than starting a new
+    session and leaving a hole, the old one loses its end: the time since is
+    absorbed into it, which is what "I never really stopped" means. The row is
+    the same row, so nothing has to be merged or reconciled afterwards.
+
+    Parameters
+    ----------
+    project_id : int
+        Identifier of the project.
+    user : User
+        The authenticated user.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Returns
+    -------
+    TimeEntry
+        The reopened session, now running again.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 409 when the project is already running, or has no
+        finished session to continue.
+    """
+    project = own_project(db, user, project_id)
+    if running_entry(db, user, project.id) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This project is already running",
+        )
+
+    last = db.execute(
+        select(TimeEntry)
+        .where(
+            TimeEntry.user_id == user.id,
+            TimeEntry.project_id == project.id,
+            TimeEntry.ended_at.is_not(None),
+        )
+        .order_by(TimeEntry.ended_at.desc(), TimeEntry.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if last is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This project has no session to continue",
+        )
+
+    last.ended_at = None
+    db.commit()
+    db.refresh(last)
+    return last
+
+
 @router.get(
     "/time/entries",
     response_model=list[TimeEntryOut],
@@ -350,6 +486,7 @@ def create_entry(
         utc_offset=payload.utc_offset,
         note=payload.note,
     )
+    _settle_overlaps(db, user.id, entry, payload.merge_overlapping)
     db.add(entry)
     db.commit()
     db.refresh(entry)
@@ -411,6 +548,7 @@ def update_entry(
     entry.ended_at = ended
     if payload.note is not None:
         entry.note = payload.note
+    _settle_overlaps(db, user.id, entry, payload.merge_overlapping)
 
     db.commit()
     db.refresh(entry)
@@ -470,6 +608,90 @@ def _tags_of(db: DbSession, user_id: int) -> dict[int, list[int]]:
     return {p.id: [tag.id for tag in p.tags] for p in projects}
 
 
+def _local(instant: datetime | None, utc_offset: int) -> str:
+    """Render an instant in the offset it was recorded in.
+
+    Parameters
+    ----------
+    instant : datetime.datetime or None
+        The stored UTC instant, or None for a session still running.
+    utc_offset : int
+        Minutes east of UTC captured at check-in.
+
+    Returns
+    -------
+    str
+        ``YYYY-MM-DD HH:MM`` local, or an empty string when there is nothing to
+        render.
+    """
+    if instant is None:
+        return ""
+    return (instant + timedelta(minutes=utc_offset)).isoformat(
+        sep=" ", timespec="minutes"
+    )
+
+
+def _day_offset(entry, offsets: dict) -> int:
+    """Return the offset the entry's day keeps.
+
+    Parameters
+    ----------
+    entry : TimeEntry
+        The session.
+    offsets : dict
+        ``{day: offset}`` as `day_offsets` returns.
+
+    Returns
+    -------
+    int
+        The day's offset, falling back to the session's own.
+    """
+    return offsets.get(starting_day(entry), entry.utc_offset)
+
+
+def _offset_label(utc_offset: int) -> str:
+    """Render a UTC offset the way a clock reads it, e.g. ``UTC+02:00``.
+
+    Parameters
+    ----------
+    utc_offset : int
+        Minutes east of UTC.
+
+    Returns
+    -------
+    str
+        The offset in hours and minutes, signed.
+    """
+    sign = "+" if utc_offset >= 0 else "-"
+    minutes = abs(utc_offset)
+    return f"UTC{sign}{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _bands_of(db: DbSession, user_id: int) -> dict[int, list]:
+    """Map each of the user's tags to its deduction rule.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    user_id : int
+        Whose tags to read.
+
+    Returns
+    -------
+    dict
+        ``{tag_id: [DeductionBand, ...]}``, absent for a tag with no rule.
+    """
+    tags = (
+        db.execute(
+            select(Tag).options(selectinload(Tag.bands)).where(Tag.user_id == user_id)
+        )
+        .scalars()
+        .all()
+    )
+    return {tag.id: list(tag.bands) for tag in tags if tag.bands}
+
+
 def _summary_rows(
     db: DbSession,
     user_id: int,
@@ -503,10 +725,27 @@ def _summary_rows(
     list of SummaryRow
         One row per day and group, in day order.
     """
-    entries = _entries_in_range(db, user_id, start, end)
+    # Archived projects are retired from the reports the way a deactivated
+    # question is: the sessions stay in the record and in the export, because
+    # they happened, but a project nobody tracks any more is not a pattern.
+    live = {
+        project_id
+        for (project_id,) in db.execute(
+            select(Project.id).where(
+                Project.user_id == user_id, Project.active.is_(True)
+            )
+        )
+    }
+    entries = [
+        entry
+        for entry in _entries_in_range(db, user_id, start, end)
+        if entry.project_id in live
+    ]
     totals = summarise(entries, as_of)
+    bands: dict[int, list] = {}
     if by == "tag":
         totals = group_by_tag(totals, _tags_of(db, user_id))
+        bands = _bands_of(db, user_id)
 
     rows = []
     for day in sorted(totals):
@@ -516,8 +755,162 @@ def _summary_rows(
             continue
         ordered = sorted(totals[day].items(), key=lambda kv: (kv[0] is None, kv[0]))
         for key, seconds in ordered:
-            rows.append(SummaryRow(day=day, key=key, seconds=seconds))
+            rule = bands.get(key, [])
+            rows.append(
+                SummaryRow(
+                    day=day,
+                    key=key,
+                    seconds=seconds,
+                    deduction=deduction_for(seconds, rule),
+                    reported=reported(seconds, rule),
+                )
+            )
     return rows
+
+
+@router.get(
+    "/tags/{tag_id}/deductions",
+    response_model=list[DeductionBandOut],
+    operation_id="listDeductions",
+    summary="Read a tag's deduction rule",
+    description=(
+        "The bands turning this tag's tracked time into reported time, lowest "
+        "threshold first. An empty list means no deduction."
+    ),
+)
+def list_deductions(tag_id: int, user: CurrentUser, db: DbSession) -> list:
+    """Return a tag's deduction bands.
+
+    Parameters
+    ----------
+    tag_id : int
+        Identifier of the tag.
+    user : User
+        The authenticated user.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Returns
+    -------
+    list of DeductionBand
+        The bands, lowest threshold first.
+    """
+    own_tag(db, user, tag_id)
+    return (
+        db.execute(
+            select(DeductionBand)
+            .where(DeductionBand.tag_id == tag_id)
+            .order_by(DeductionBand.from_minutes)
+        )
+        .scalars()
+        .all()
+    )
+
+
+@router.put(
+    "/tags/{tag_id}/deductions",
+    response_model=list[DeductionBandOut],
+    operation_id="setDeductions",
+    summary="Replace a tag's deduction rule",
+    description=(
+        "Send the whole rule. A rule is edited as one thing - the bands only "
+        "mean anything in relation to each other."
+    ),
+)
+def set_deductions(
+    tag_id: int, payload: list[DeductionBandIn], user: CurrentUser, db: DbSession
+) -> list:
+    """Replace a tag's deduction bands.
+
+    The whole set at once rather than row by row: the bands are one rule with
+    an ordering, and validating "no two thresholds the same" is only possible
+    against the complete list.
+
+    Parameters
+    ----------
+    tag_id : int
+        Identifier of the tag.
+    payload : list of DeductionBandIn
+        The rule the tag should have afterwards.
+    user : User
+        The authenticated user.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Returns
+    -------
+    list of DeductionBand
+        The stored rule, lowest threshold first.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 422 when two bands share a threshold.
+    """
+    tag = own_tag(db, user, tag_id)
+    thresholds = [band.from_minutes for band in payload]
+    if len(set(thresholds)) != len(thresholds):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Two bands cannot start at the same number of minutes",
+        )
+
+    for existing in db.execute(
+        select(DeductionBand).where(DeductionBand.tag_id == tag.id)
+    ).scalars():
+        db.delete(existing)
+    db.flush()
+    for band in payload:
+        db.add(
+            DeductionBand(
+                tag_id=tag.id,
+                from_minutes=band.from_minutes,
+                deduct_minutes=band.deduct_minutes,
+            )
+        )
+    db.commit()
+    return list_deductions(tag_id, user, db)
+
+
+@router.get(
+    "/time/range",
+    response_model=TrackedRange,
+    operation_id="trackedRange",
+    summary="The days tracking spans",
+    description=(
+        "The first and last local day with a session, so a window control can "
+        "stop at the edges of the history instead of sliding into empty years."
+    ),
+)
+def tracked_range(user: CurrentUser, db: DbSession) -> TrackedRange:
+    """Return the first and last local day the user has tracked.
+
+    Read in each session's own offset, which is what decides the day it belongs
+    to. Null on both ends when nothing has been tracked at all.
+
+    Parameters
+    ----------
+    user : User
+        The authenticated user.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Returns
+    -------
+    TrackedRange
+        The edges of the history.
+    """
+    entries = (
+        db.execute(
+            select(TimeEntry).where(TimeEntry.user_id == user.id)
+        )
+        .scalars()
+        .all()
+    )
+    if not entries:
+        return TrackedRange(first=None, last=None)
+    days = [starting_day(entry) for entry in entries]
+    return TrackedRange(first=min(days), last=max(days))
 
 
 @router.get(
@@ -626,12 +1019,34 @@ def export_time(
     workbook = Workbook()
     sessions = workbook.active
     sessions.title = "Sessions"
-    sessions.append(["Project", "Started (UTC)", "Ended (UTC)", "Hours", "Note"])
+    # Local first, because that is the reading every other view shows; UTC is
+    # kept beside it so a session is still unambiguous once exported, and the
+    # offset is spelled out rather than left to be inferred from the pair.
+    offsets = day_offsets(entries)
+    sessions.append(
+        [
+            "Project",
+            "Started",
+            "Ended",
+            "Day offset",
+            "Recorded offset",
+            "Started (UTC)",
+            "Ended (UTC)",
+            "Hours",
+            "Note",
+        ]
+    )
     for entry in entries:
-        seconds = sum(seconds for _, seconds in daily_slices(entry, moment))
+        seconds = sum(
+            seconds for _, seconds in daily_slices(entry, moment, offsets)
+        )
         sessions.append(
             [
                 projects[entry.project_id].name if entry.project_id in projects else "",
+                _local(entry.started_at, _day_offset(entry, offsets)),
+                _local(entry.ended_at, _day_offset(entry, offsets)) or "running",
+                _offset_label(_day_offset(entry, offsets)),
+                _offset_label(entry.utc_offset),
                 entry.started_at.isoformat(sep=" ", timespec="minutes"),
                 entry.ended_at.isoformat(sep=" ", timespec="minutes")
                 if entry.ended_at

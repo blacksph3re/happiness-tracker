@@ -1,0 +1,102 @@
+/**
+ * The structural views: what the system is, and how it is divided.
+ *
+ * The zone views are the ones worth keeping honest. The rule they draw is that
+ * imports only ever point *inward* at the shared zone — never across — so a
+ * green box with an edge to an amber one is a bug, not a diagram to update.
+ */
+views {
+
+  // Colours the two halves consistently wherever they appear together.
+  style element.tag == #wellbeing {
+    color green
+  }
+  style element.tag == #time {
+    color amber
+  }
+  style element.tag == #shared {
+    color slate
+  }
+  style element.tag == #security {
+    color red
+  }
+
+  view index {
+    title 'Daily Tracker — landscape'
+    description '
+      One person, one process, one file. Everything below is inside the box in
+      the middle.
+    '
+
+    include
+      owner,
+      tracker,
+      tracker.*
+  }
+
+  view backendZones of tracker.api {
+    title 'Backend — three zones'
+    description '
+      Wellbeing and time never import from each other. Anything both need moves
+      to the shared zone, and the move is the signal it was shared all along.
+      models.py stays one file because SQLAlchemy wants one registry.
+    '
+
+    include
+      *,
+      tracker.api.apiShared.*,
+      tracker.api.apiWellbeing.*,
+      tracker.api.apiTime.*,
+      tracker.db
+
+    // The browser is a different diagram, and main.py registering seven routers
+    // is a fact about start-up, not about the split — both only add crossings.
+    exclude
+      tracker.spa,
+      tracker.api.apiShared.appRoot -> *
+
+    autoLayout TopBottom
+  }
+
+  view frontendZones of tracker.spa {
+    title 'Frontend — three zones'
+    description '
+      The same rule, one layer up: routes/time and routes/wellbeing both reach
+      inward at lib/store.js, lib/api.js, series.js and facets.js, and never at
+      each other. The two halves do not link to each other in the UI either —
+      the landing page is the only bridge.
+    '
+
+    include
+      *,
+      tracker.spa.spaShared.*,
+      tracker.spa.spaWellbeing.*,
+      tracker.spa.spaTime.*
+
+    exclude
+      owner,
+      tracker.api
+
+    autoLayout TopBottom
+  }
+
+  view zonesAcross {
+    title 'Zones, front to back'
+    description '
+      The split runs the whole depth of the stack: a feature lives in one colour
+      from its Svelte route to its service module.
+    '
+
+    include
+      owner,
+      tracker.spa,
+      tracker.spa.spaShared,
+      tracker.spa.spaWellbeing,
+      tracker.spa.spaTime,
+      tracker.api,
+      tracker.api.apiShared,
+      tracker.api.apiWellbeing,
+      tracker.api.apiTime,
+      tracker.db
+  }
+}

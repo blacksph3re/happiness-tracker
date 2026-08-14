@@ -12,6 +12,8 @@ import {
   listTags,
   listTimeEntries,
   setMyPreferences,
+  timeSummary,
+  trackedRange,
 } from './generated/sdk.gen'
 
 /**
@@ -42,6 +44,9 @@ export const projects = writable(null)
 /** The signed-in account's tags. */
 export const tags = writable(null)
 
+/** The first and last day tracking covers, for window controls that must stop. */
+export const trackedDays = writable(null)
+
 /** Tracked sessions, for the days `loadedRange` covers. */
 export const timeEntries = writable([])
 
@@ -54,6 +59,42 @@ export const timeEntries = writable([])
  * would look like a cache hit and silently drop everything outside it.
  */
 let loadedRange = null
+
+/**
+ * Tracked totals, keyed by the range and grouping they were asked for.
+ *
+ * The server does the midnight split and the tag regrouping, so a summary is a
+ * request rather than a derivation — and switching between week, month and
+ * quarter would otherwise show a loading state every time, including on the
+ * way back to a window already seen.
+ */
+const summaries = new Map()
+
+/**
+ * Load a summary, from memory when it has been asked for before.
+ *
+ * @param {{start: string, end: string, by: string, as_of: string}} query
+ * @returns {Promise<Array<object>>} The summary rows.
+ */
+export async function ensureSummary({ start, end, by, as_of }) {
+  // `as_of` deliberately does not key the cache: it only moves a *running*
+  // session's tail, and re-fetching a whole quarter each second to follow it
+  // would be a poor trade. A check-in or check-out clears the cache anyway.
+  const key = `${by}:${start}:${end}`
+  if (summaries.has(key)) return summaries.get(key)
+  return once(`summary:${key}`, async () => {
+    const rows = (await attempt(() => timeSummary({ query: { start, end, by, as_of } }))) ?? []
+    summaries.set(key, rows)
+    return rows
+  })
+}
+
+/** Forget the cached totals, after anything that changes what they count. */
+export function forgetSummaries() {
+  summaries.clear()
+  // A new session can extend the history past what a slider currently allows.
+  trackedDays.set(null)
+}
 
 const inFlight = new Map()
 
@@ -207,6 +248,16 @@ export async function ensureProjects({ force = false } = {}) {
   })
 }
 
+/** Load the edges of the tracked history, unless they are already known. */
+export async function ensureTrackedRange({ force = false } = {}) {
+  if (!force && get(trackedDays)) return get(trackedDays)
+  return once('tracked-range', async () => {
+    const loaded = (await attempt(() => trackedRange())) ?? { first: null, last: null }
+    trackedDays.set(loaded)
+    return loaded
+  })
+}
+
 /** Load the account's tags, unless they are already known. */
 export async function ensureTags({ force = false } = {}) {
   if (!force && get(tags)) return get(tags)
@@ -258,6 +309,7 @@ export async function ensureTimeEntries({ start, end, force = false } = {}) {
  * @param {object} entry The session as the server returned it.
  */
 export function rememberEntry(entry) {
+  forgetSummaries()
   timeEntries.update((all) => [...all.filter((row) => row.id !== entry.id), entry])
 }
 
@@ -267,6 +319,7 @@ export function rememberEntry(entry) {
  * @param {number} id Identifier of the session.
  */
 export function forgetEntry(id) {
+  forgetSummaries()
   timeEntries.update((all) => all.filter((row) => row.id !== id))
 }
 
@@ -280,8 +333,10 @@ export function resetStore() {
   preferences.set(null)
   projects.set(null)
   tags.set(null)
+  trackedDays.set(null)
   timeEntries.set([])
   loadedRange = null
+  summaries.clear()
   persisted = null
   inFlight.clear()
 }

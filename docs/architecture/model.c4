@@ -1,0 +1,280 @@
+/**
+ * What the Daily Tracker is made of.
+ *
+ * One process serves both halves: `pnpm build` writes the SPA into
+ * `backend/static`, which FastAPI mounts *after* every `/api` route, so the
+ * whole thing deploys as a single server.
+ *
+ * The nesting mirrors the file tree deliberately — a `zone` here is a directory
+ * there — so that a diagram going out of date is the same event as a file
+ * moving, and is noticed.
+ */
+model {
+
+  owner = person 'Owner' {
+    description '
+      Records their own days: a questionnaire in the evening, a timer during it.
+      Signs in once; the two halves share the account and nothing else.
+    '
+  }
+
+  tracker = system 'Daily Tracker' {
+    description 'Two trackers sharing a login, shipped as one process.'
+
+    // ---------------------------------------------------------------- frontend
+
+    spa = container 'Browser SPA' {
+      technology 'Svelte 5 · Vite · Tailwind v4'
+      description 'app/src — built into backend/static and served by the API process.'
+
+      spaShared = zone 'Shared' {
+        #shared
+        description 'app/src/lib and app/src/routes — importable by either half.'
+
+        store = component 'Store' {
+          technology 'lib/store.js'
+          description '
+            One copy of the data every page needs. Entries are cached with the
+            range they were loaded for, summaries by (range, grouping); a write
+            updates the cache in place instead of refetching.
+          '
+        }
+
+        resource = component 'resource()' {
+          technology 'lib/resource.svelte.js'
+          description '
+            Loads when reactive state changes. Its effect reads only the query
+            and writes only its own outputs, which is what keeps a component
+            from feeding its own loader — the bug that froze the tab.
+          '
+        }
+
+        apiClient = component 'API client' {
+          #security
+          technology 'lib/api.js'
+          description 'Attaches the bearer token, refreshes once on 401, turns failures into toasts.'
+        }
+
+        sdk = component 'Generated SDK' {
+          technology 'lib/generated — @hey-api/openapi-ts'
+          description 'Typed calls generated from the served OpenAPI document. Never hand-edited.'
+        }
+
+        seriesLib = component 'series / facets' {
+          technology 'lib/series.js · lib/facets.js'
+          description 'Moving averages, five-number summaries, "only days where …". Shared because both halves plot.'
+        }
+
+        routerLib = component 'Router · Landing · Login' {
+          technology 'lib/router.js · routes/Landing.svelte · Login.svelte · Settings.svelte · Users.svelte'
+          description 'The landing page is the only bridge between the halves; neither links to the other.'
+        }
+      }
+
+      spaWellbeing = zone 'Wellbeing' {
+        #wellbeing
+        description 'app/src/routes/wellbeing + app/src/lib/wellbeing'
+
+        questionnaire = component 'Questionnaire' {
+          technology 'routes/wellbeing/Questionnaire.svelte'
+          description 'Asks the next unanswered question of the day and posts the answer.'
+        }
+        wellbeingStats = component 'Stats' {
+          technology 'routes/wellbeing/Stats.svelte'
+          description 'Plots variables over time. Smoothing and facets are applied in the browser.'
+        }
+        wellbeingTable = component 'Table · Catalogue' {
+          technology 'routes/wellbeing/Table.svelte · Catalogue.svelte'
+          description 'The raw answers, and the editor for catalogues, questions and scores.'
+        }
+        wellbeingLib = component 'Question widgets' {
+          technology 'lib/wellbeing — Ladder, QuestionForm, ScoreForm, scale.js'
+        }
+      }
+
+      spaTime = zone 'Time' {
+        #time
+        description 'app/src/routes/time + app/src/lib/time'
+
+        track = component 'Track' {
+          technology 'routes/time/Track.svelte'
+          description 'Check in, check out, resume. Several projects may run at once.'
+        }
+        record = component 'Record' {
+          technology 'routes/time/Record.svelte'
+          description 'The sessions of a day, hand-editable and deletable.'
+        }
+        patterns = component 'Patterns' {
+          technology 'routes/time/Patterns.svelte'
+          description 'Day, week, month, quarter and custom windows over the server-computed summary.'
+        }
+        projectsUi = component 'Projects' {
+          technology 'routes/time/Projects.svelte'
+          description 'Projects, tags, and the deduction bands turning tracked time into reported time.'
+        }
+        timeLib = component 'Time widgets' {
+          technology 'lib/time — DayTimeline, ProjectCard, duration.js, period.js, tick.js, deductions.js'
+          description 'One shared ticker drives every running timer; deductions.js mirrors the server only to preview an unsaved rule.'
+        }
+      }
+    }
+
+    // ----------------------------------------------------------------- backend
+
+    api = container 'API server' {
+      technology 'FastAPI · SQLAlchemy 2 · uv'
+      description 'backend/ — API routes first, then the SPA mount, in one process.'
+
+      apiShared = zone 'Shared' {
+        #shared
+        description 'main.py, deps.py, security.py, models.py, schemas.py, routers/auth.py, routers/users.py'
+
+        appRoot = component 'main.py' {
+          technology 'FastAPI app'
+          description 'Registers every /api router, then mounts the built SPA last so API routes win.'
+        }
+        authRouter = component 'Auth router' {
+          #security
+          technology 'routers/auth.py'
+          description 'Login, refresh, own password, own preferences, own default catalogue.'
+        }
+        usersRouter = component 'Users router' {
+          #security
+          technology 'routers/users.py'
+          description 'Administration of other accounts. Behind require_admin.'
+        }
+        guard = component 'Request guard' {
+          #security
+          technology 'deps.py — CurrentUser, AdminUser, EditorUser'
+          description '
+            Resolves the bearer token to a user on every request, re-reading the
+            row so a deleted account or a changed password takes effect at once.
+          '
+        }
+        securityLib = component 'security.py' {
+          #security
+          technology 'PyJWT · passlib/argon2'
+          description 'Hashes and verifies passwords, mints and decodes the token pair.'
+        }
+        orm = component 'Models · schemas' {
+          technology 'models.py · schemas.py'
+          description 'One SQLAlchemy registry because it must be one, kept visibly sectioned.'
+        }
+      }
+
+      apiWellbeing = zone 'Wellbeing' {
+        #wellbeing
+        description 'routers/catalogues.py, answers.py, stats.py · services/wellbeing.py'
+
+        cataloguesRouter = component 'Catalogues router' {
+          technology 'routers/catalogues.py'
+          description 'Catalogues, questions, options and scores. Editing is behind require_editor.'
+        }
+        answersRouter = component 'Answers router' {
+          technology 'routers/answers.py'
+          description 'Records answers and exports them. There is no delete: an answer is never rewritten.'
+        }
+        statsRouter = component 'Stats router' {
+          technology 'routers/stats.py'
+          description 'Lists the variables worth plotting, derived from what has actually been answered.'
+        }
+        wellbeingService = component 'wellbeing service' {
+          technology 'services/wellbeing.py'
+          description 'Question and score validation, score_for_day, the system answers kept in sync.'
+        }
+      }
+
+      apiTime = zone 'Time' {
+        #time
+        description 'routers/projects.py, time.py · services/timetrack.py'
+
+        projectsRouter = component 'Projects router' {
+          technology 'routers/projects.py'
+          description 'Projects and tags, per user. Sharing is a later feature.'
+        }
+        timeRouter = component 'Time router' {
+          technology 'routers/time.py'
+          description 'Check in and out, edit sessions, deduction rules, summary and .xlsx export.'
+        }
+        timetrackService = component 'timetrack service' {
+          technology 'services/timetrack.py'
+          description '
+            The whole derivation: overlap checks, per-day offsets, the midnight
+            split, grouping by tag, and the deduction bands. Computed on read —
+            none of it is stored.
+          '
+        }
+      }
+    }
+
+    db = datastore 'SQLite' {
+      technology 'SQLite · Alembic'
+      description '
+        answers and time_entries hold what happened; everything else is a view.
+        The server never creates tables — an unmigrated database fails loudly.
+      '
+    }
+  }
+
+  // ------------------------------------------------------------- relationships
+
+  owner -> spa 'uses'
+  owner -> routerLib 'signs in, then picks a half'
+
+  spa -> api 'HTTPS · JSON over /api, bearer token on every call'
+
+  // Frontend: the halves reach inward at the shared zone, and never across.
+  questionnaire -> store 'reads catalogues and answers'
+  questionnaire -> sdk 'createAnswer'
+  wellbeingStats -> store 'reads variables, answers, preferences'
+  wellbeingStats -> seriesLib 'smooths and facets in the browser'
+  wellbeingTable -> store 'reads answers and catalogues'
+  wellbeingStats -> wellbeingLib 'renders'
+  questionnaire -> wellbeingLib 'renders'
+
+  track -> store 'reads projects and open sessions'
+  track -> sdk 'checkIn · checkOut · resumeProject'
+  record -> store 'reads and edits the day'
+  patterns -> resource 'holds one query'
+  patterns -> seriesLib 'smooths and facets in the browser'
+  patterns -> timeLib 'renders'
+  track -> timeLib 'renders'
+  projectsUi -> store 'reads projects and tags'
+
+  resource -> store 'calls a loader, untracked'
+  store -> sdk 'on a cache miss only'
+  sdk -> apiClient 'every call'
+  apiClient -> api 'fetch'
+
+  // Backend: routers own the HTTP shape, services own the rules, ORM the rows.
+  appRoot -> authRouter 'mounts /api'
+  appRoot -> usersRouter 'mounts /api'
+  appRoot -> cataloguesRouter 'mounts /api'
+  appRoot -> answersRouter 'mounts /api'
+  appRoot -> statsRouter 'mounts /api'
+  appRoot -> projectsRouter 'mounts /api'
+  appRoot -> timeRouter 'mounts /api'
+  appRoot -> spa 'serves the built bundle, mounted last'
+
+  cataloguesRouter -> guard 'CurrentUser · EditorUser'
+  answersRouter -> guard 'CurrentUser'
+  statsRouter -> guard 'CurrentUser'
+  projectsRouter -> guard 'CurrentUser'
+  timeRouter -> guard 'CurrentUser'
+  usersRouter -> guard 'AdminUser'
+  guard -> securityLib 'decode_token'
+  guard -> orm 'reloads the user'
+  authRouter -> securityLib 'verify_password · issue_tokens'
+
+  cataloguesRouter -> wellbeingService 'validates'
+  answersRouter -> wellbeingService 'score_for_day · sync_system_answers'
+  statsRouter -> wellbeingService 'score bounds'
+  projectsRouter -> orm 'reads and writes'
+  timeRouter -> timetrackService 'splits, groups, deducts'
+
+  cataloguesRouter -> orm 'reads and writes'
+  answersRouter -> orm 'appends'
+  statsRouter -> orm 'reads'
+  timeRouter -> orm 'reads and writes'
+  orm -> db 'SQLAlchemy session'
+}

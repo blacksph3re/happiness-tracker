@@ -1,8 +1,19 @@
 <script>
   import ProjectCard from '../../lib/time/ProjectCard.svelte'
   import { attempt } from '../../lib/api.js'
-  import { checkIn, checkOut, createProject } from '../../lib/generated/sdk.gen'
-  import { elapsed, formatShort, nowUtc, utcOffset } from '../../lib/time/duration.js'
+  import {
+    checkIn,
+    checkOut,
+    createProject,
+    resumeProject,
+  } from '../../lib/generated/sdk.gen'
+  import {
+    elapsed,
+    formatShort,
+    localDay,
+    nowUtc,
+    utcOffset,
+  } from '../../lib/time/duration.js'
   import { today } from '../../lib/day.js'
   import { nextColour } from '../../lib/time/palette.js'
   import { now } from '../../lib/time/tick.js'
@@ -18,7 +29,11 @@
 
   let loading = $state(true)
   let newName = $state('')
-  let busy = $state(null)
+  // Per project, not one lock for the page. A single flag disabled every other
+  // card for the length of the request, which flashed them all on a tap that
+  // had nothing to do with them - and it swallowed a quick second check-in,
+  // which is exactly the thing this view is built to allow.
+  let busy = $state([])
 
   const active = $derived(($projectStore ?? []).filter((project) => project.active))
 
@@ -28,6 +43,32 @@
       $timeEntries.filter((entry) => entry.ended_at === null).map((e) => [e.project_id, e])
     )
   )
+
+  /**
+   * The projects whose last session can be taken back.
+   *
+   * Only while the project is idle and that session ended today: resuming
+   * absorbs everything since it stopped, and absorbing a week is not a mistake
+   * anyone means to make.
+   */
+  const resumableProjects = $derived.by(() => {
+    const latest = new Map()
+    for (const entry of $timeEntries) {
+      if (entry.ended_at === null) continue
+      const held = latest.get(entry.project_id)
+      if (!held || entry.ended_at > held.ended_at) latest.set(entry.project_id, entry)
+    }
+    return new Map(
+      [...latest.entries()].filter(
+        ([id, entry]) => !runningByProject.has(id) && endedToday(entry)
+      )
+    )
+  })
+
+  /** Whether a session finished on the local day now in progress. */
+  function endedToday(entry) {
+    return localDay(entry.ended_at, entry.utc_offset) === today()
+  }
 
   const anyRunning = $derived(
     active
@@ -48,7 +89,7 @@
   // from any other tab rather than after three accidental hours. Restored on
   // teardown, or every other page inherits a stale timer in its title.
   $effect(() => {
-    const original = 'Happiness tracker'
+    const original = 'Daily Tracker'
     const leader = anyRunning.toSorted((a, b) => b.seconds - a.seconds)[0]
     document.title = leader
       ? `▶ ${formatShort(leader.seconds)} · ${leader.project.name}`
@@ -73,8 +114,8 @@
 
   /** Start or stop one project, leaving every other timer alone. */
   async function toggle(project, running) {
-    if (busy) return
-    busy = project.id
+    if (busy.includes(project.id)) return
+    busy = [...busy, project.id]
     try {
       if (running) {
         const closed = await attempt(() =>
@@ -91,7 +132,21 @@
         if (opened) rememberEntry(opened)
       }
     } finally {
-      busy = null
+      busy = busy.filter((id) => id !== project.id)
+    }
+  }
+
+  /** Take back a stop: the old session reopens and swallows the gap. */
+  async function resume(project) {
+    if (busy.includes(project.id)) return
+    busy = [...busy, project.id]
+    try {
+      const reopened = await attempt(() =>
+        resumeProject({ path: { project_id: project.id } })
+      )
+      if (reopened) rememberEntry(reopened)
+    } finally {
+      busy = busy.filter((id) => id !== project.id)
     }
   }
 
@@ -147,8 +202,10 @@
           {project}
           {running}
           seconds={running ? elapsed(running, $now) : 0}
-          disabled={busy !== null && busy !== project.id}
+          resumable={resumableProjects.get(project.id) ?? null}
+          disabled={busy.includes(project.id)}
           ontoggle={toggle}
+          onresume={resume}
         />
       {/each}
     </div>

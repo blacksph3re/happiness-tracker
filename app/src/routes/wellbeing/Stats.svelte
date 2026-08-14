@@ -8,7 +8,7 @@
     radarOptions,
     scatterOptions,
   } from '../../lib/chart-options.js'
-  import { fiveNumberSummary, movingAverage, tallyPairs } from '../../lib/wellbeing/series.js'
+  import { fiveNumberSummary, movingAverage, tallyPairs } from '../../lib/series.js'
   import {
     ensureAnswers,
     ensurePreferences,

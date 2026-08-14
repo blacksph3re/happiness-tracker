@@ -1,7 +1,8 @@
 <script>
   import { dayLabel, shiftDay, today } from '../day.js'
-  import { clockOfSeconds, formatDuration, slices } from './duration.js'
+  import { clockOfSeconds, dayOffsets, formatDuration, slices } from './duration.js'
   import { now } from './tick.js'
+  import { resource } from '../resource.svelte.js'
   import {
     ensureProjects,
     ensureTags,
@@ -20,7 +21,22 @@
    * stretch of afternoon, rather than as two numbers that happen to add past the
    * length of a day.
    */
-  let { by = 'project' } = $props()
+  let {
+    by = 'project',
+    day = $bindable(today()),
+    fullDay = $bindable(false),
+    days = null,
+  } = $props()
+
+  /**
+   * Whether the strip shows a run of days rather than one.
+   *
+   * A week has too little to say per project per day to give each project its
+   * own lane seven times over; a lane per *day*, with the blocks coloured by
+   * project, is the same picture at the scale that fits.
+   */
+  const byDay = $derived(Array.isArray(days) && days.length > 1)
+  const shown = $derived(byDay ? days : [day])
 
   const DAY_SECONDS = 86_400
   const HOUR = 3600
@@ -28,9 +44,21 @@
   /** Days either side of the one shown that are fetched with it, so stepping is free. */
   const NEIGHBOURS = 3
 
-  let day = $state(today())
-  let loading = $state(true)
-  let fullDay = $state(false)
+
+  const SWIPE_THRESHOLD = 48
+  let touchStartX = 0
+
+  function onTouchStart(event) {
+    touchStartX = event.changedTouches[0].clientX
+  }
+
+  /** Treat a horizontal drag as a day change, the way a photo viewer would. */
+  function onTouchEnd(event) {
+    const travelled = event.changedTouches[0].clientX - touchStartX
+    if (Math.abs(travelled) < SWIPE_THRESHOLD) return
+    if (travelled < 0 && day >= today()) return
+    day = shiftDay(day, travelled < 0 ? 1 : -1)
+  }
 
   const projects = $derived(new Map(($projectStore ?? []).map((p) => [p.id, p])))
 
@@ -42,10 +70,13 @@
    * grouping by tag loses no information here the way a summed bar would.
    */
   const lanes = $derived.by(() => {
+    const offsets = dayOffsets($timeEntries)
     const byGroup = new Map()
     for (const entry of $timeEntries) {
       const project = projects.get(entry.project_id)
-      if (!project) continue
+      // Archived projects leave the patterns page, as they do the totals; the
+      // record and the export still hold their sessions.
+      if (!project || !project.active) continue
       const keys =
         by === 'tag'
           ? project.tags.length
@@ -53,9 +84,10 @@
             : [null]
           : [project.id]
 
-      for (const slice of slices(entry, $now)) {
-        if (slice.day !== day || slice.to <= slice.from) continue
-        for (const key of keys) {
+      for (const slice of slices(entry, $now, offsets)) {
+        if (!shown.includes(slice.day) || slice.to <= slice.from) continue
+        // A lane is a day when several are shown, and a group when one is.
+        for (const key of byDay ? [slice.day] : keys) {
           if (!byGroup.has(key)) byGroup.set(key, [])
           byGroup.get(key).push({ ...slice, entry, project })
         }
@@ -63,21 +95,30 @@
     }
 
     const named = new Map(($tagStore ?? []).map((tag) => [tag.id, tag]))
-    return [...byGroup.entries()]
-      .map(([key, spans]) => ({
-        key,
-        label:
-          by === 'tag'
-            ? (named.get(key)?.name ?? 'Untagged')
-            : (projects.get(key)?.name ?? ''),
-        colour:
-          by === 'tag'
-            ? (named.get(key)?.colour ?? 'haze')
-            : (projects.get(key)?.colour ?? 'haze'),
-        spans: spans.toSorted((a, b) => a.from - b.from),
-        total: spans.reduce((sum, span) => sum + span.seconds, 0),
-      }))
-      .sort((a, b) => a.spans[0].from - b.spans[0].from)
+    const describe = (key) => {
+      if (byDay) return { label: dayLabel(key), colour: null }
+      if (by === 'tag') {
+        return {
+          label: named.get(key)?.name ?? 'Untagged',
+          colour: named.get(key)?.colour ?? 'haze',
+        }
+      }
+      return {
+        label: projects.get(key)?.name ?? '',
+        colour: projects.get(key)?.colour ?? 'haze',
+      }
+    }
+
+    const lanes = [...byGroup.entries()].map(([key, spans]) => ({
+      key,
+      ...describe(key),
+      spans: spans.toSorted((a, b) => a.from - b.from),
+      total: spans.reduce((sum, span) => sum + span.seconds, 0),
+    }))
+    // Days read in calendar order; groups read in the order the day happened.
+    return byDay
+      ? lanes.toSorted((a, b) => String(a.key).localeCompare(String(b.key)))
+      : lanes.toSorted((a, b) => a.spans[0].from - b.spans[0].from)
   })
 
   const tracked = $derived(lanes.reduce((sum, lane) => sum + lane.total, 0))
@@ -126,7 +167,7 @@
     return ((seconds - window.from) / span) * 100
   }
 
-  const isToday = $derived(day === today())
+  const isToday = $derived(!byDay && day === today())
 
   /** Seconds since local midnight, for the "now" marker. */
   const nowSeconds = $derived.by(() => {
@@ -134,57 +175,26 @@
     return at.getHours() * HOUR + at.getMinutes() * 60 + at.getSeconds()
   })
 
-  $effect(() => {
-    load(day)
-  })
-
-  async function load(shown) {
-    try {
-      await Promise.all([
+  // Read, never owned: see `lib/resource.svelte.js` for why a component that
+  // cannot assign its own loading state cannot loop.
+  const loaded = resource(
+    () => ({ from: shown[0], to: shown.at(-1) }),
+    ({ from, to }) =>
+      Promise.all([
         ensureProjects(),
         ensureTags(),
         ensureTimeEntries({
-          start: shiftDay(shown, -NEIGHBOURS),
-          end: shiftDay(shown, NEIGHBOURS),
+          start: shiftDay(from, -NEIGHBOURS),
+          end: shiftDay(to, NEIGHBOURS),
         }),
-      ])
-    } finally {
-      loading = false
-    }
-  }
+      ]),
+    { name: 'timeline' }
+  )
+
+  const loading = $derived(loaded.loading && lanes.length === 0)
 </script>
 
-<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-  <p class="meta">
-    {dayLabel(day)} · {formatDuration(tracked)} tracked
-  </p>
-  <div class="flex flex-wrap gap-2">
-    <button
-      class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-      onclick={() => (day = shiftDay(day, -1))}
-    >
-      ← Previous
-    </button>
-    <button
-      class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-             disabled:cursor-not-allowed disabled:opacity-30"
-      disabled={isToday}
-      onclick={() => (day = shiftDay(day, 1))}
-    >
-      Next →
-    </button>
-    <button
-      class="meta rounded-md border px-3 py-2 transition
-             {fullDay
-        ? 'border-ember bg-ember/10 text-paper'
-        : 'border-white/15 hover:border-white/40'}"
-      aria-pressed={fullDay}
-      onclick={() => (fullDay = !fullDay)}
-    >
-      Full day
-    </button>
-  </div>
-</div>
+<p class="meta mb-3 normal-case">{formatDuration(tracked)} tracked</p>
 
 {#if loading}
   <p class="meta">Loading…</p>
@@ -193,7 +203,13 @@
     Nothing tracked on this day.
   </p>
 {:else}
-  <div class="rounded-xl border border-white/10 bg-ink-soft p-4" data-timeline={day}>
+  <!-- Swipe changes the day, as it does in the records. -->
+  <div
+    class="rounded-xl border border-white/10 bg-ink-soft p-4"
+    data-timeline={day}
+    ontouchstart={onTouchStart}
+    ontouchend={onTouchEnd}
+  >
     <!-- The axis and every lane share one grid, so a bar and its hour line up
          whatever the label column ends up measuring. -->
     <div class="grid grid-cols-[5rem_1fr] items-center gap-y-1 sm:grid-cols-[10rem_1fr]">
@@ -212,16 +228,21 @@
       {#each lanes as lane (lane.key ?? 'untagged')}
         <span class="min-w-0 pr-3">
           <span class="flex items-center gap-2">
-            <span
-              class="size-2.5 shrink-0 rounded-full"
-              style:background="var(--color-{lane.colour}, var(--color-dusk-lift))"
-            ></span>
+            {#if lane.colour}
+              <span
+                class="size-2.5 shrink-0 rounded-full"
+                style:background="var(--color-{lane.colour}, var(--color-dusk-lift))"
+              ></span>
+            {/if}
             <span class="truncate text-sm font-medium">{lane.label}</span>
           </span>
           <span class="meta numeral ml-4.5 block">{formatDuration(lane.total)}</span>
         </span>
 
-        <div class="relative h-10 rounded-md border border-white/5 bg-ink" data-lane={lane.key}>
+        <div
+          class="relative h-10 overflow-hidden rounded-md border border-white/5 bg-ink"
+          data-lane={lane.key}
+        >
           {#each ticks as tick (tick)}
             <span
               class="absolute inset-y-0 w-px bg-white/5"
@@ -232,17 +253,21 @@
           {#each lane.spans as span_ (span_.entry.id + span_.from)}
             <!-- A quarter-hour session is a sliver at day scale, so every bar
                  keeps a floor width: a session that happened must be visible. -->
+            {@const drawnTo = Math.min(span_.to, window.to)}
+            {@const clipped = span_.to > window.to}
             <span
-              class="absolute inset-y-1 rounded-sm"
+              class="absolute inset-y-1 rounded-sm {clipped ? 'rounded-r-none' : ''}"
               style:left="{position(span_.from)}%"
-              style:width="{Math.max(0, position(span_.to) - position(span_.from))}%"
+              style:width="{Math.max(0, position(drawnTo) - position(span_.from))}%"
               style:min-width="3px"
               style:background="var(--color-{span_.project
                 .colour}, var(--color-dusk-lift))"
               style:opacity={span_.entry.ended_at ? 0.85 : 1}
               title="{span_.project.name} · {clockOfSeconds(span_.from)}–{span_.entry.ended_at
                 ? clockOfSeconds(span_.to)
-                : 'running'} · {formatDuration(span_.seconds)}"
+                : 'running'} · {formatDuration(span_.seconds)}{clipped
+                ? ' · runs past the end of this day'
+                : ''}"
             ></span>
           {/each}
 
@@ -258,6 +283,7 @@
   </div>
 
   <p class="meta mt-3 normal-case">
+    <span class="sm:hidden">Swipe to change day. </span>
     {#if !fullDay}
       {clockOfSeconds(window.from)}–{clockOfSeconds(window.to === DAY_SECONDS ? 0 : window.to)}.
     {/if}

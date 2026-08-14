@@ -1,4 +1,4 @@
-# Happiness Tracker frontend
+# Daily Tracker frontend
 
 Svelte 5 SPA built with Vite, styled with Tailwind CSS v4 + Flowbite, managed with
 `pnpm`.

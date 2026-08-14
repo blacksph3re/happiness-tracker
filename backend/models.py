@@ -398,9 +398,7 @@ class Project(Base):
     )
     """The owner. Projects are personal; sharing is not modelled yet."""
 
-    name: Mapped[str] = mapped_column(
-        String(TRACK_NAME_MAX_LENGTH), nullable=False
-    )
+    name: Mapped[str] = mapped_column(String(TRACK_NAME_MAX_LENGTH), nullable=False)
     """Display name, unique among that user's projects."""
 
     colour: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -442,9 +440,7 @@ class Tag(Base):
     )
     """The owner, as for projects."""
 
-    name: Mapped[str] = mapped_column(
-        String(TRACK_NAME_MAX_LENGTH), nullable=False
-    )
+    name: Mapped[str] = mapped_column(String(TRACK_NAME_MAX_LENGTH), nullable=False)
     """Display name, unique among that user's tags."""
 
     colour: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -458,6 +454,11 @@ class Tag(Base):
     )
     """Projects this tag covers."""
 
+    bands: Mapped[list["DeductionBand"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=True
+    )
+    """The rule turning this tag's tracked time into reported time."""
+
 
 class ProjectTag(Base):
     """Which projects a tag covers.
@@ -468,9 +469,7 @@ class ProjectTag(Base):
     """
 
     __tablename__ = "project_tags"
-    __table_args__ = (
-        UniqueConstraint("project_id", "tag_id", name="uq_project_tag"),
-    )
+    __table_args__ = (UniqueConstraint("project_id", "tag_id", name="uq_project_tag"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     """Surrogate primary key."""
@@ -484,6 +483,42 @@ class ProjectTag(Base):
         ForeignKey("tags.id", ondelete="CASCADE"), nullable=False, index=True
     )
     """The tag applied."""
+
+
+class DeductionBand(Base):
+    """One step of a tag's rule for turning tracked time into reported time.
+
+    The rule lives on a tag rather than on the account: "work days lose a lunch
+    break" is a statement about work, and a day of reading owes nobody one.
+    """
+
+    __tablename__ = "deduction_bands"
+    __table_args__ = (
+        UniqueConstraint("tag_id", "from_minutes", name="uq_band_threshold"),
+        CheckConstraint("from_minutes >= 0", name="ck_band_threshold_positive"),
+        CheckConstraint(
+            "deduct_minutes is null or deduct_minutes >= 0",
+            name="ck_band_deduction_positive",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("tags.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The tag this band belongs to. Deleting the tag deletes its rule."""
+
+    from_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    """Tracked minutes at which this band starts applying."""
+
+    deduct_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Minutes it removes from the day, or None to cap the day at the threshold.
+
+    A cap is the open-ended case of a deduction: it takes off however much the
+    day ran past `from_minutes`, so the day reports the threshold and no more.
+    """
 
 
 class TimeEntry(Base):

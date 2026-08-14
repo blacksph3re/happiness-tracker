@@ -5,6 +5,8 @@
     createTag,
     deleteProject,
     deleteTag,
+    listDeductions,
+    setDeductions,
     updateProject,
     updateTag,
   } from '../../lib/generated/sdk.gen'
@@ -12,9 +14,12 @@
     ensureProjects,
     ensureTags,
     ensureTimeEntries,
+    forgetSummaries,
     projects as projectStore,
     tags as tagStore,
   } from '../../lib/store.js'
+  import { deductionFor, previewPoints } from '../../lib/time/deductions.js'
+  import { formatDuration } from '../../lib/time/duration.js'
   import { nextColour, PROJECT_COLOURS as COLOURS } from '../../lib/time/palette.js'
   import { pushToast } from '../../lib/toasts.js'
 
@@ -28,6 +33,8 @@
   let newProject = $state('')
   let newTag = $state('')
   let editing = $state(null)
+  let editingBands = $state(null)
+  let bands = $state([])
 
   const projects = $derived($projectStore ?? [])
   const tags = $derived($tagStore ?? [])
@@ -105,6 +112,35 @@
     }
     await refresh()
     pushToast(`Removed ${tag.name}`, 'ok')
+  }
+
+  /**
+   * Open a tag's deduction rule for editing.
+   *
+   * Loaded on demand: most tags have no rule, and the summary already carries
+   * the numbers it produces, so the bands themselves are only wanted here.
+   */
+  async function openBands(tag) {
+    editingBands = tag.id
+    bands = (await attempt(() => listDeductions({ path: { tag_id: tag.id } }))) ?? []
+  }
+
+  async function saveBands(tag) {
+    const body = bands
+      .map((band) => ({
+        from_minutes: Number(band.from_minutes) || 0,
+        // null is not "zero minutes" but "as much as it takes": a cap.
+        deduct_minutes:
+          band.deduct_minutes === null ? null : Number(band.deduct_minutes) || 0,
+      }))
+      .sort((a, b) => a.from_minutes - b.from_minutes)
+    const saved = await attempt(() => setDeductions({ path: { tag_id: tag.id }, body }))
+    if (!saved) return
+    // The rule changes what every day of this tag reports, including the ones
+    // already on screen elsewhere.
+    forgetSummaries()
+    editingBands = null
+    pushToast(`Saved the rule for ${tag.name}`, 'ok')
   }
 
   /** Add or remove one tag from a project, keeping the rest. */
@@ -335,12 +371,141 @@
                 ></button>
               {/each}
               <button
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                onclick={() => (editingBands === tag.id ? (editingBands = null) : openBands(tag))}
+              >
+                Rule
+              </button>
+              <button
                 class="meta rounded-md border border-white/15 px-3 py-2 hover:border-ember"
                 onclick={() => removeTag(tag)}
               >
                 Remove
               </button>
             </div>
+
+            {#if editingBands === tag.id}
+              <div class="mt-4 w-full border-t border-white/10 pt-4" data-bands={tag.id}>
+                <p class="meta normal-case">
+                  Turns tracked time into reported time on this tag's days.
+                </p>
+
+                <div class="mt-3 flex flex-col gap-2">
+                  {#each bands as band, index (index)}
+                    <div class="flex flex-wrap items-end gap-3">
+                      <label class="flex flex-col gap-1.5">
+                        <span class="meta">From (minutes)</span>
+                        <input
+                          type="number"
+                          min="0"
+                          bind:value={band.from_minutes}
+                          aria-label="Band {index + 1} threshold"
+                          class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
+                                 py-2 text-sm"
+                        />
+                      </label>
+                      <label class="flex flex-col gap-1.5">
+                        <span class="meta">Deduct (minutes)</span>
+                        <input
+                          type="number"
+                          min="0"
+                          disabled={band.deduct_minutes === null}
+                          value={band.deduct_minutes ?? ''}
+                          oninput={(event) =>
+                            (band.deduct_minutes = Number(event.currentTarget.value))}
+                          placeholder="the rest"
+                          aria-label="Band {index + 1} deduction"
+                          class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
+                                 py-2 text-sm disabled:opacity-40"
+                        />
+                      </label>
+                      <label class="flex items-center gap-2 py-2">
+                        <input
+                          type="checkbox"
+                          checked={band.deduct_minutes === null}
+                          onchange={(event) =>
+                            (band.deduct_minutes = event.currentTarget.checked ? null : 30)}
+                          aria-label="Band {index + 1} caps the day"
+                          class="h-4 w-4 rounded border-white/25 bg-ink accent-ember"
+                        />
+                        <span class="meta">Cap here</span>
+                      </label>
+                      <button
+                        class="meta rounded-md border border-white/15 px-3 py-2
+                               hover:border-ember"
+                        aria-label="Remove band {index + 1}"
+                        onclick={() => (bands = bands.filter((_, at) => at !== index))}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  {:else}
+                    <p class="text-sm text-haze">
+                      No rule: this tag reports exactly what it tracked.
+                    </p>
+                  {/each}
+                </div>
+
+                {#if bands.length}
+                  <!-- Shown rather than described: bands replace each other, so
+                       two of ten minutes do not make twenty on a long day, and
+                       a sentence saying so is easy to read past. -->
+                  <div class="mt-4 rounded-lg border border-white/10 p-3">
+                    <p class="meta">What this rule does</p>
+                    <table class="mt-2 w-full">
+                      <thead>
+                        <tr class="text-left">
+                          <th class="meta py-1">A day of</th>
+                          <th class="meta py-1 text-right">Loses</th>
+                          <th class="meta py-1 text-right">Reports</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {#each previewPoints(bands) as minutes (minutes)}
+                          {@const lost = deductionFor(minutes, bands)}
+                          <tr class="border-t border-white/5">
+                            <td class="numeral py-1 tabular-nums">
+                              {formatDuration(minutes * 60)}
+                            </td>
+                            <td class="numeral py-1 text-right tabular-nums
+                                       {lost ? 'text-ember' : 'text-haze'}">
+                              {formatDuration(lost * 60)}
+                            </td>
+                            <td class="numeral py-1 text-right tabular-nums">
+                              {formatDuration((minutes - lost) * 60)}
+                            </td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                    <p class="meta mt-2 normal-case">
+                      Only the highest band a day reaches applies — they replace each
+                      other rather than adding up. A day with nothing tracked loses
+                      nothing. A capped band reports its threshold however long the day
+                      ran.
+                    </p>
+                  </div>
+                {/if}
+
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button
+                    class="meta rounded-md border border-white/15 px-3 py-2
+                           hover:border-white/40"
+                    onclick={() =>
+                      (bands = [...bands, { from_minutes: 0, deduct_minutes: 30 }])}
+                  >
+                    Add a band
+                  </button>
+                  <button
+                    class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
+                           hover:bg-dusk-lift"
+                    onclick={() => saveBands(tag)}
+                  >
+                    Save rule
+                  </button>
+                </div>
+              </div>
+            {/if}
           </li>
         {/each}
       </ul>

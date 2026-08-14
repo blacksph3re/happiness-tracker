@@ -231,3 +231,38 @@ export async function recordSession(account, projectId, startedAt, endedAt) {
   expect(response.status(), 'recording a session').toBe(201)
   return response.json()
 }
+
+/**
+ * Assert a page settles instead of re-triggering itself.
+ *
+ * The freeze this guards against had no error and no failing assertion — the
+ * tab simply stopped painting while an effect re-ran forever. Two symptoms are
+ * cheap to check from outside: an endpoint fetched over and over, and a main
+ * thread too busy to answer. Both are what a loop looks like from here.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {string} path Where to go.
+ * @param {RegExp} settled A locator-free readiness check is not enough, so pass
+ *   a selector that appears once the view has rendered.
+ * @param {{api?: RegExp, limit?: number}} options `api` matches the requests
+ *   worth counting; `limit` is how many times one of them may repeat.
+ */
+export async function expectSettled(page, path, settled, { api = /\/api\//, limit = 3 } = {}) {
+  // Repeats of one URL, not the total: a first load legitimately fetches five
+  // different things, while a loop asks for the same thing over and over. The
+  // second is the signature worth failing on.
+  const seen = new Map()
+  page.on('request', (request) => {
+    const url = request.url()
+    if (api.test(url)) seen.set(url, (seen.get(url) ?? 0) + 1)
+  })
+
+  await page.goto(path)
+  await expect(page.locator(settled)).toBeVisible()
+  await page.waitForTimeout(1500)
+
+  const worst = [...seen.entries()].sort((a, b) => b[1] - a[1])[0] ?? ['none', 0]
+  expect(worst[1], `${path} refetched ${worst[0]} ${worst[1]} times`).toBeLessThan(limit)
+  // A spinning effect starves the event loop long before it starves the network.
+  expect(await page.evaluate(() => 1 + 1), `${path} stopped responding`).toBe(2)
+}

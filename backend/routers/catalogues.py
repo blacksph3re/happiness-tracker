@@ -62,7 +62,7 @@ def _enforce(rule) -> None:
         rule()
     except QuestionRuleError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from None
 
 
@@ -527,7 +527,7 @@ def add_option(
     question = _get_question(db, question_id)
     if question.kind != "enum":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Only enum questions have options",
         )
     if question_is_answered(db, question.id):
@@ -612,7 +612,7 @@ def _enforce_score(rule) -> None:
         rule()
     except ScoreRuleError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from None
 
 
@@ -645,7 +645,7 @@ def _load_components(
         question = db.get(Question, component.source_question_id)
         if question is None or question.catalogue_id != catalogue_id:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="A score can only combine questions from its own catalogue",
             )
         loaded.append(question)

@@ -1,0 +1,158 @@
+/**
+ * The dynamic views — read these as sequence diagrams.
+ *
+ * Open one in `likec4 start` and switch the layout to *Sequence* to see the
+ * lifelines; the same steps also render as a numbered graph.
+ *
+ * Two habits of this codebase show up in every one of them, and they are the
+ * reason the diagrams are worth having:
+ *
+ *   - a page reads the store, and the store fetches only on a miss, so the
+ *     second visit to a view has no arrow leaving the browser at all;
+ *   - anything derived is derived on the server at read time, so the numbers on
+ *     the screen and the numbers in the .xlsx cannot drift apart.
+ */
+views {
+
+  dynamic view answering {
+    title 'Wellbeing — answering a question'
+    description '
+      First visit only. Returning to the questionnaire replays this from
+      `store` downwards, with nothing crossing the network.
+    '
+
+    owner -> tracker.spa.spaWellbeing.questionnaire 'opens the questionnaire'
+    tracker.spa.spaWellbeing.questionnaire -> tracker.spa.spaShared.store 'ensureMe · ensureCatalogues · ensureCatalogue(id) · ensureAnswers'
+    tracker.spa.spaShared.store -> tracker.spa.spaShared.sdk 'cache miss: getCatalogue, listAnswers'
+    tracker.spa.spaShared.sdk -> tracker.spa.spaShared.apiClient 'adds Authorization: Bearer …'
+    tracker.spa.spaShared.apiClient -> tracker.api.apiShared.guard 'GET /api/catalogues/{id}'
+    tracker.api.apiShared.guard -> tracker.api.apiWellbeing.cataloguesRouter 'CurrentUser'
+    tracker.api.apiWellbeing.cataloguesRouter -> tracker.api.apiWellbeing.wellbeingService 'question shape and bounds'
+    tracker.api.apiWellbeing.cataloguesRouter -> tracker.api.apiShared.orm 'questions, options, scores'
+    tracker.api.apiShared.orm -> tracker.db 'SELECT'
+    tracker.api.apiWellbeing.cataloguesRouter -> tracker.spa.spaShared.store '200 CatalogueOut'
+    tracker.spa.spaShared.apiClient -> tracker.api.apiWellbeing.answersRouter 'GET /api/answers'
+    tracker.api.apiWellbeing.answersRouter -> tracker.api.apiWellbeing.wellbeingService 'score_for_day — scores are computed on read, never stored'
+    tracker.api.apiWellbeing.answersRouter -> tracker.spa.spaShared.store '200: answers, each with its scores'
+    tracker.spa.spaShared.store -> tracker.spa.spaWellbeing.questionnaire 'catalogue + answers'
+    tracker.spa.spaWellbeing.questionnaire -> tracker.spa.spaWellbeing.wellbeingLib 'renders the next unanswered question'
+    tracker.spa.spaWellbeing.wellbeingLib -> owner 'a ladder, a scale or a set of options'
+
+    owner -> tracker.spa.spaWellbeing.questionnaire 'answers'
+    tracker.spa.spaWellbeing.questionnaire -> tracker.spa.spaShared.sdk 'createAnswer({ day, local_hour, value })'
+    tracker.spa.spaShared.sdk -> tracker.api.apiWellbeing.answersRouter 'POST /api/answers'
+    tracker.api.apiWellbeing.answersRouter -> tracker.api.apiWellbeing.wellbeingService 'sync_system_answers'
+    tracker.api.apiWellbeing.answersRouter -> tracker.api.apiShared.orm 'INSERT — appended, never rewritten or deleted'
+    tracker.api.apiShared.orm -> tracker.db 'INSERT'
+    tracker.api.apiWellbeing.answersRouter -> tracker.spa.spaWellbeing.questionnaire '201 AnswerOut'
+    tracker.spa.spaWellbeing.questionnaire -> tracker.spa.spaShared.store 'rememberAnswer — the cache is updated in place, not refetched'
+  }
+
+  dynamic view wellbeingStatsFlow {
+    title 'Wellbeing — viewing the stats'
+    description '
+      The server says which variables exist and what each day scored; the shape
+      of the chart — smoothing, facets, the window — is decided in the browser
+      and saved back as a preference.
+    '
+
+    owner -> tracker.spa.spaWellbeing.wellbeingStats 'opens Stats'
+    tracker.spa.spaWellbeing.wellbeingStats -> tracker.spa.spaShared.store 'ensureVariables · ensureAnswers · ensurePreferences'
+    tracker.spa.spaShared.store -> tracker.spa.spaShared.sdk 'cache miss only'
+    tracker.spa.spaShared.sdk -> tracker.api.apiShared.guard 'GET /api/stats/variables · /api/answers · /api/auth/preferences'
+    tracker.api.apiShared.guard -> tracker.api.apiWellbeing.statsRouter 'CurrentUser'
+    tracker.api.apiWellbeing.statsRouter -> tracker.api.apiWellbeing.wellbeingService 'which questions and scores are answered, and their bounds'
+    tracker.api.apiWellbeing.wellbeingService -> tracker.api.apiShared.orm 'reads'
+    tracker.api.apiShared.orm -> tracker.db 'SELECT'
+    tracker.api.apiWellbeing.statsRouter -> tracker.spa.spaShared.store '200: plottable variables'
+    tracker.spa.spaShared.store -> tracker.spa.spaWellbeing.wellbeingStats 'variables, answers, saved view state'
+
+    tracker.spa.spaWellbeing.wellbeingStats -> tracker.spa.spaShared.seriesLib 'facets: only days where … · movingAverage · fiveNumberSummary'
+    tracker.spa.spaShared.seriesLib -> tracker.spa.spaWellbeing.wellbeingStats 'series ready to plot'
+    tracker.spa.spaWellbeing.wellbeingStats -> owner 'charts'
+
+    owner -> tracker.spa.spaWellbeing.wellbeingStats 'changes the window or the smoothing'
+    tracker.spa.spaWellbeing.wellbeingStats -> tracker.spa.spaShared.store 'persistPreferences'
+    tracker.spa.spaShared.store -> tracker.api.apiShared.authRouter 'PUT /api/auth/preferences — view state only, debounced'
+  }
+
+  dynamic view timeTracking {
+    title 'Time — checking in, and reading the week'
+    description '
+      Check-in stores an instant plus the UTC offset in force at the time.
+      Everything else — the midnight split, the grouping by tag, the deduction
+      bands — is worked out on read by the service, so the screen and the
+      spreadsheet cannot disagree.
+    '
+
+    owner -> tracker.spa.spaTime.track 'taps a project'
+    tracker.spa.spaTime.track -> tracker.spa.spaShared.sdk 'checkIn({ project_id, started_at, utc_offset })'
+    tracker.spa.spaShared.sdk -> tracker.spa.spaShared.apiClient 'adds the bearer token'
+    tracker.spa.spaShared.apiClient -> tracker.api.apiShared.guard 'POST /api/projects/{id}/check-in'
+    tracker.api.apiShared.guard -> tracker.api.apiTime.timeRouter 'CurrentUser'
+    tracker.api.apiTime.timeRouter -> tracker.api.apiTime.timetrackService 'check_entry_shape · check_no_overlap'
+    tracker.api.apiTime.timeRouter -> tracker.api.apiShared.orm 'INSERT TimeEntry'
+    tracker.api.apiShared.orm -> tracker.db 'INSERT — a partial unique index allows one running entry per project'
+    tracker.api.apiTime.timeRouter -> tracker.spa.spaTime.track '201 TimeEntryOut'
+    tracker.spa.spaTime.track -> tracker.spa.spaShared.store 'rememberEntry — no refetch'
+    tracker.spa.spaTime.track -> tracker.spa.spaTime.timeLib 'one shared ticker drives every running timer'
+    tracker.spa.spaTime.timeLib -> owner 'the seconds move'
+
+    owner -> tracker.spa.spaTime.track 'taps stop'
+    tracker.spa.spaTime.track -> tracker.api.apiTime.timeRouter 'POST /api/projects/{id}/check-out'
+    tracker.api.apiTime.timeRouter -> tracker.spa.spaShared.store 'the closed session'
+
+    owner -> tracker.spa.spaTime.patterns 'opens Patterns, picks a week'
+    tracker.spa.spaTime.patterns -> tracker.spa.spaShared.resource 'query = { start, end, by }'
+    tracker.spa.spaShared.resource -> tracker.spa.spaShared.store 'ensureSummary(query), called untracked'
+    tracker.spa.spaShared.store -> tracker.api.apiTime.timeRouter 'GET /api/time/summary — cached by (range, grouping)'
+    tracker.api.apiTime.timeRouter -> tracker.api.apiTime.timetrackService 'day_offsets → daily_slices → summarise → group_by_tag → deduction_for'
+    tracker.api.apiTime.timetrackService -> tracker.api.apiShared.orm 'reads the sessions and the tags’ bands'
+    tracker.api.apiShared.orm -> tracker.db 'SELECT'
+    tracker.api.apiTime.timeRouter -> tracker.spa.spaShared.store 'rows: tracked, deduction, reported'
+    tracker.spa.spaShared.store -> tracker.spa.spaShared.resource 'data'
+    tracker.spa.spaShared.resource -> tracker.spa.spaTime.patterns 'summary.data'
+    tracker.spa.spaTime.patterns -> tracker.spa.spaTime.timeLib 'draws the timeline; slices() is mirrored to draw, never to report'
+    tracker.spa.spaTime.timeLib -> owner 'the week'
+  }
+
+  dynamic view authentication {
+    title 'Auth — signing in and staying in'
+    description '
+      Bearer tokens in localStorage, checked on every request. The reverse proxy
+      in front of the deployment adds its own layer and is deliberately not
+      drawn here — this is what the app asserts on its own.
+
+      What holds it up: passwords are argon2 hashes; both tokens are HS256 over
+      JWT_SECRET, which has no default and crashes the server when missing; the
+      user row is re-read on every request, so deleting an account or changing a
+      password takes effect at once; and every query is filtered by user_id, so
+      a valid token still reaches only its own rows.
+    '
+
+    owner -> tracker.spa.spaShared.routerLib 'email and password'
+    tracker.spa.spaShared.routerLib -> tracker.api.apiShared.authRouter 'POST /api/auth/login — the one call with no token'
+    tracker.api.apiShared.authRouter -> tracker.api.apiShared.orm 'SELECT user by email'
+    tracker.api.apiShared.authRouter -> tracker.api.apiShared.securityLib 'verify_password — argon2'
+    tracker.api.apiShared.securityLib -> tracker.api.apiShared.authRouter 'ok, or 401 with the same message either way'
+    tracker.api.apiShared.authRouter -> tracker.api.apiShared.securityLib 'issue_tokens(user.id, token_version)'
+    tracker.api.apiShared.securityLib -> tracker.api.apiShared.authRouter 'short-lived access + long-lived refresh, HS256 over JWT_SECRET'
+    tracker.api.apiShared.authRouter -> tracker.spa.spaShared.apiClient '200 TokenPair'
+    tracker.spa.spaShared.apiClient -> tracker.spa.spaShared.routerLib 'storeTokens → localStorage; signedIn = true'
+    tracker.spa.spaShared.routerLib -> owner 'the landing page — the only bridge between the halves'
+
+    tracker.spa.spaShared.store -> tracker.spa.spaShared.sdk 'any later call'
+    tracker.spa.spaShared.sdk -> tracker.spa.spaShared.apiClient 'auth: () => accessToken()'
+    tracker.spa.spaShared.apiClient -> tracker.api.apiShared.guard 'Authorization: Bearer …'
+    tracker.api.apiShared.guard -> tracker.api.apiShared.securityLib 'decode_token(token, "access")'
+    tracker.api.apiShared.guard -> tracker.api.apiShared.orm 'db.get(User, sub) — re-read every request'
+    tracker.api.apiShared.guard -> tracker.api.apiShared.guard 'claims.ver == user.token_version, else 401'
+    tracker.api.apiShared.guard -> tracker.api.apiTime.timeRouter 'CurrentUser — and AdminUser or EditorUser where the route says so'
+    tracker.api.apiTime.timeRouter -> tracker.api.apiShared.orm 'every query filtered by user_id'
+
+    tracker.api.apiShared.guard -> tracker.spa.spaShared.apiClient '401: the access token expired'
+    tracker.spa.spaShared.apiClient -> tracker.api.apiShared.authRouter 'POST /api/auth/refresh — once, however many calls raced'
+    tracker.api.apiShared.authRouter -> tracker.spa.spaShared.apiClient 'a fresh pair, or 401 if the refresh token is spent too'
+    tracker.spa.spaShared.apiClient -> tracker.spa.spaShared.routerLib 'retry once; on a second 401 clear the tokens and replace the page with /login'
+  }
+}

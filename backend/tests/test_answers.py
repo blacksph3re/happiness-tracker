@@ -337,3 +337,32 @@ def test_a_second_catalogue_adds_no_second_set_of_system_rows(
 
     rows = client.get("/api/answers", headers=admin_headers).json()
     assert len(rows) == 7, "two real answers plus one set of five auto-tracked rows"
+
+
+def test_a_deactivated_question_leaves_the_variables(
+    client, admin_headers, catalogue_id, starter_questions
+):
+    kept, retired = starter_questions[0], starter_questions[1]
+    answer(client, admin_headers, kept["id"], 4)
+    answer(client, admin_headers, retired["id"], 2)
+
+    variables = client.get("/api/stats/variables", headers=admin_headers).json()
+    assert f"q{retired['id']}" in {v["key"] for v in variables}
+
+    client.put(
+        f"/api/questions/{retired['id']}", headers=admin_headers, json={"active": False}
+    )
+
+    # Off the plots, because nobody records it any more...
+    variables = client.get("/api/stats/variables", headers=admin_headers).json()
+    keys = {v["key"] for v in variables}
+    assert f"q{kept['id']}" in keys
+    assert f"q{retired['id']}" not in keys
+
+    # ...but the answer it already holds is still recorded and still exported.
+    rows = client.get("/api/answers", headers=admin_headers).json()
+    assert any(row["question_id"] == retired["id"] for row in rows)
+    book = load_workbook(
+        BytesIO(client.get("/api/answers/export.xlsx", headers=admin_headers).content)
+    )
+    assert retired["prompt"] in [cell.value for cell in book["Answers"][1]]

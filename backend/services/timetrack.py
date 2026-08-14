@@ -94,7 +94,55 @@ def duration_seconds(entry, as_of: datetime) -> int:
     return int((_ends_at(entry, as_of) - entry.started_at).total_seconds())
 
 
-def daily_slices(entry, as_of: datetime) -> list[tuple[date, int]]:
+def starting_day(entry) -> date:
+    """Return the local day a session belongs to.
+
+    Read with the session's *own* offset, never the day's. The day's offset
+    comes from its first session, so asking the day first would be circular;
+    this uses only what the session itself carries.
+
+    Parameters
+    ----------
+    entry : models.TimeEntry
+        The session.
+
+    Returns
+    -------
+    datetime.date
+        The local day the session began in.
+    """
+    return (entry.started_at + timedelta(minutes=entry.utc_offset)).date()
+
+
+def day_offsets(entries: list) -> dict[date, int]:
+    """Decide each local day's offset from the session that opened it.
+
+    A day is supposed to be a fixed 24-hour window. Letting every session carry
+    its own offset made a day mean two things at once after a flight - two
+    sessions both reading 09:00, an hour apart, with different midnights. One
+    offset per day gives the window back.
+
+    Parameters
+    ----------
+    entries : list of models.TimeEntry
+        The sessions to consider, in any order.
+
+    Returns
+    -------
+    dict
+        ``{day: offset in minutes}``, taken from the earliest-starting session
+        of each day. Days absent from the sessions are absent here too.
+    """
+    opener: dict[date, object] = {}
+    for entry in entries:
+        day = starting_day(entry)
+        held = opener.get(day)
+        if held is None or entry.started_at < held.started_at:
+            opener[day] = entry
+    return {day: entry.utc_offset for day, entry in opener.items()}
+
+
+def daily_slices(entry, as_of: datetime, offsets: dict | None = None):
     """Divide a session across the local days it touches.
 
     A session from 22:00 to 02:00 yields two hours on each of two days. The
@@ -102,10 +150,12 @@ def daily_slices(entry, as_of: datetime) -> list[tuple[date, int]]:
     the split, and the session itself stays one row - correcting a check-out
     time remains a single-row edit.
 
-    Local time is the stored instant plus the offset captured at check-in. A
-    session spanning a daylight-saving change therefore carries one offset, so
-    its boundaries can sit an hour out on the far side of the change; the total
-    stays exact.
+    A session is read in the offset of the day it belongs to, not its own, so
+    every session on a day is told by the same clock. The one exception is a
+    session that would spill into a day on a *different* offset: it is kept
+    whole on the day it started. The two days' midnights are not the same
+    instant, so splitting there would either count an hour twice or lose it,
+    depending on which way the traveller went.
 
     Parameters
     ----------
@@ -113,6 +163,10 @@ def daily_slices(entry, as_of: datetime) -> list[tuple[date, int]]:
         The session.
     as_of : datetime.datetime
         Now, in UTC. Only consulted for a running session.
+    offsets : dict, optional
+        ``{day: offset}`` as `day_offsets` returns. Without it every session is
+        read in its own offset, which is the behaviour of a single-timezone
+        history and keeps this callable with one session in hand.
 
     Returns
     -------
@@ -120,7 +174,10 @@ def daily_slices(entry, as_of: datetime) -> list[tuple[date, int]]:
         One pair per local day the session covers, in order, with the seconds
         falling in that day. Empty when the session has no duration yet.
     """
-    offset = timedelta(minutes=entry.utc_offset)
+    offsets = offsets or {}
+    home = starting_day(entry)
+    minutes = offsets.get(home, entry.utc_offset)
+    offset = timedelta(minutes=minutes)
     cursor = entry.started_at + offset
     finish = _ends_at(entry, as_of) + offset
 
@@ -129,9 +186,103 @@ def daily_slices(entry, as_of: datetime) -> list[tuple[date, int]]:
         day = cursor.date()
         midnight = datetime.combine(day + timedelta(days=1), time.min)
         boundary = min(finish, midnight)
+
+        # Spilling into a day that keeps a different clock: hand the rest back
+        # to the day that started it rather than divide at a midnight the two
+        # days disagree about.
+        spills_into = day + timedelta(days=1)
+        if boundary < finish and offsets.get(spills_into, minutes) != minutes:
+            slices.append((day, int((finish - cursor).total_seconds())))
+            break
+
         slices.append((day, int((boundary - cursor).total_seconds())))
         cursor = boundary
     return slices
+
+
+def check_no_overlap(entry, others: list) -> None:
+    """Check that a session does not overlap another on the same project.
+
+    Two projects may run at once - that is the point of the tracker - but one
+    project running twice over the same minutes is a double count, not a fact:
+    the same hour would be reported twice under the same name.
+
+    Parameters
+    ----------
+    entry : models.TimeEntry
+        The session being written. A running session, with no end, is treated
+        as reaching to the end of time.
+    others : list of models.TimeEntry
+        The user's other sessions, of which only the same project's matter.
+
+    Raises
+    ------
+    TimeRuleError
+        If the session covers any minute another already covers.
+    """
+    start = entry.started_at
+    finish = entry.ended_at or datetime.max
+
+    for other in others:
+        if other.id is not None and other.id == getattr(entry, "id", None):
+            continue
+        if other.project_id != entry.project_id:
+            continue
+        if start < (other.ended_at or datetime.max) and other.started_at < finish:
+            raise TimeRuleError("This overlaps another session on the same project")
+
+
+def deduction_for(tracked_seconds: int, bands: list) -> int:
+    """Return the deduction a day of this length attracts, in seconds.
+
+    The highest threshold the day reaches is the one that applies, and the
+    deduction never takes the day below zero - ten minutes tracked minus a
+    thirty minute break is nothing, not minus twenty.
+
+    A band with no `deduct_minutes` caps instead of deducting: it removes
+    whatever the day ran past its threshold, so a ten hour cap reports ten
+    hours however long the day actually was.
+
+    Parameters
+    ----------
+    tracked_seconds : int
+        What was tracked on the day, for one tag.
+    bands : list of models.DeductionBand
+        The tag's rule, in any order.
+
+    Returns
+    -------
+    int
+        Seconds to remove. Zero when nothing was tracked: a day off owes no
+        lunch break.
+    """
+    if tracked_seconds <= 0 or not bands:
+        return 0
+    reached = [band for band in bands if band.from_minutes * 60 <= tracked_seconds]
+    if not reached:
+        return 0
+    band = max(reached, key=lambda held: held.from_minutes)
+    if band.deduct_minutes is None:
+        return tracked_seconds - band.from_minutes * 60
+    return min(tracked_seconds, band.deduct_minutes * 60)
+
+
+def reported(tracked_seconds: int, bands: list) -> int:
+    """Return what a day reports after its deduction.
+
+    Parameters
+    ----------
+    tracked_seconds : int
+        What was tracked on the day, for one tag.
+    bands : list of models.DeductionBand
+        The tag's rule.
+
+    Returns
+    -------
+    int
+        Tracked seconds less the deduction, never below zero.
+    """
+    return tracked_seconds - deduction_for(tracked_seconds, bands)
 
 
 def summarise(entries: list, as_of: datetime) -> dict[date, dict[int, int]]:
@@ -151,9 +302,10 @@ def summarise(entries: list, as_of: datetime) -> dict[date, dict[int, int]]:
         a day's total across projects can exceed 24 hours - that is what a sum
         over projects means, and nothing here pretends otherwise.
     """
+    offsets = day_offsets(entries)
     totals: dict[date, dict[int, int]] = {}
     for entry in entries:
-        for day, seconds in daily_slices(entry, as_of):
+        for day, seconds in daily_slices(entry, as_of, offsets):
             if seconds:
                 by_project = totals.setdefault(day, {})
                 by_project[entry.project_id] = (

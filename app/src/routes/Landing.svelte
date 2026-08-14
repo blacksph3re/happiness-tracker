@@ -89,7 +89,7 @@
       use:link
       data-card="wellbeing"
       class="flex min-h-52 flex-col justify-between rounded-xl border border-white/10
-             bg-ink-soft p-6 transition hover:border-dusk-lift hover:brightness-110"
+             bg-ink-soft p-6 transition hover:border-white/30 hover:bg-dusk/10"
     >
       <div>
         <p class="meta">Wellbeing</p>
@@ -120,8 +120,8 @@
       use:link
       data-card="time"
       class="section-time flex min-h-52 flex-col justify-between rounded-xl border
-             border-white/10 bg-ink-soft p-6 transition hover:border-dusk-lift
-             hover:brightness-110"
+             border-white/10 bg-ink-soft p-6 transition hover:border-white/30
+             hover:bg-dusk/10"
     >
       <div>
         <p class="meta">Time</p>

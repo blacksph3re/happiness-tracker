@@ -27,6 +27,27 @@ from sqlalchemy import select  # noqa: E402
 from database import SessionLocal  # noqa: E402
 from models import Project, ProjectTag, Tag, TimeEntry, User  # noqa: E402
 
+
+def local_offset(moment: datetime) -> int:
+    """Return this machine's UTC offset at an instant, in minutes.
+
+    Seeded sessions carry the offset actually in force on the day they land on,
+    so a summer day reads +02:00 and a winter one +01:00 in Germany. A fixed
+    zero made every seeded day look like it was recorded in Iceland, and the
+    record's clock indicator dutifully said so.
+
+    Parameters
+    ----------
+    moment : datetime.datetime
+        A naive local instant.
+
+    Returns
+    -------
+    int
+        Minutes east of UTC.
+    """
+    return int(moment.astimezone().utcoffset().total_seconds() // 60)
+
 STARTER_TAGS = (("Work", "tide"), ("Deep", "iris"))
 """Tags to seed, with their palette tokens."""
 
@@ -135,13 +156,14 @@ def seed(days: int, username: str | None, seed_value: int) -> int:
                     hours=hour + rng.uniform(-0.5, 0.5)
                 )
                 ran = timedelta(hours=max(0.1, length + rng.uniform(-0.5, 0.9)))
+                offset = local_offset(began)
                 db.add(
                     TimeEntry(
                         user_id=user.id,
                         project_id=project.id,
-                        started_at=began,
-                        ended_at=began + ran,
-                        utc_offset=0,
+                        started_at=began - timedelta(minutes=offset),
+                        ended_at=began + ran - timedelta(minutes=offset),
+                        utc_offset=offset,
                     )
                 )
                 written += 1
@@ -152,13 +174,15 @@ def seed(days: int, username: str | None, seed_value: int) -> int:
         overnight = projects["The rewrite"]
         if (overnight.id, overnight_day) not in existing:
             began = datetime.combine(overnight_day, time(22, 15))
+            offset = local_offset(began)
             db.add(
                 TimeEntry(
                     user_id=user.id,
                     project_id=overnight.id,
-                    started_at=began,
-                    ended_at=began + timedelta(hours=3, minutes=40),
-                    utc_offset=0,
+                    started_at=began - timedelta(minutes=offset),
+                    ended_at=began + timedelta(hours=3, minutes=40)
+                    - timedelta(minutes=offset),
+                    utc_offset=offset,
                 )
             )
             written += 1

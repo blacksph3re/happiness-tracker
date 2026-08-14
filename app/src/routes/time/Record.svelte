@@ -1,23 +1,26 @@
 <script>
   import { attempt, unwrap } from '../../lib/api.js'
   import {
-    checkIn,
     createTimeEntry,
     deleteTimeEntry,
     exportTime,
     updateTimeEntry,
   } from '../../lib/generated/sdk.gen'
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
+  import { wide } from '../../lib/media.js'
+  import { offsetLabel } from '../../lib/time/duration.js'
+  import { resource } from '../../lib/resource.svelte.js'
   import {
     clockLabel,
+    dayOffsets,
     clockOfSeconds,
     formatDuration,
-    localDay,
     fromLocal,
-    nowUtc,
+    localDay,
     slices,
     utcOffset,
   } from '../../lib/time/duration.js'
+  import TimeField from '../../lib/time/TimeField.svelte'
   import { now } from '../../lib/time/tick.js'
   import {
     ensureProjects,
@@ -38,22 +41,58 @@
    */
 
   const DAYS_SHOWN = 7
+  const SWIPE_THRESHOLD = 48
+
+  /** Days loaded either side of what is shown, so stepping rarely refetches. */
+  const PADDING = 3
 
   const DAY_SECONDS = 86_400
 
   let anchor = $state(today())
-  let loading = $state(true)
   let editing = $state(null)
   let adding = $state(null)
   let merged = $state(false)
 
+  /**
+   * A write the server refused because it overlaps, held for the answer.
+   *
+   * The overlap is not a failure to report and forget: the two likely
+   * intentions — "these are one session" and "I mistyped" — are both one tap
+   * away, and the merge is a single atomic write rather than a delete and an
+   * edit that could half-happen.
+   */
+  let clash = $state(null)
+
   const projects = $derived(new Map(($projectStore ?? []).map((p) => [p.id, p])))
 
+  // A phone reads one day at a time, the way the wellbeing record does: seven
+  // day-cards stacked is a page nobody scrolls to the bottom of, and the
+  // buttons that widen a table are the buttons that turn a page here.
   const days = $derived(
-    Array.from({ length: DAYS_SHOWN }, (_, index) =>
-      shiftDay(anchor, index - (DAYS_SHOWN - 1))
-    )
+    $wide
+      ? Array.from({ length: DAYS_SHOWN }, (_, index) =>
+          shiftDay(anchor, index - (DAYS_SHOWN - 1))
+        )
+      : [anchor]
   )
+
+  /** Move by a page: a week on a wide screen, a day on a narrow one. */
+  function step(delta) {
+    anchor = shiftDay(anchor, $wide ? delta * DAYS_SHOWN : delta)
+  }
+
+  let touchStartX = 0
+
+  function onTouchStart(event) {
+    touchStartX = event.changedTouches[0].clientX
+  }
+
+  /** Treat a horizontal drag as a day change, the way a photo viewer would. */
+  function onTouchEnd(event) {
+    const travelled = event.changedTouches[0].clientX - touchStartX
+    if (Math.abs(travelled) < SWIPE_THRESHOLD) return
+    step(travelled < 0 ? 1 : -1)
+  }
 
   /**
    * Every session's part of every day, as the rows a day lists.
@@ -67,9 +106,12 @@
    */
   const byDay = $derived.by(() => {
     const map = new Map(days.map((day) => [day, []]))
+    // One clock per day, taken from the session that opened it.
+    const offsets = dayOffsets($timeEntries)
     for (const entry of $timeEntries) {
-      const crosses = slices(entry, $now).length > 1
-      for (const slice of slices(entry, $now)) {
+      const parts = slices(entry, $now, offsets)
+      const crosses = parts.length > 1 || parts.some((part) => part.whole)
+      for (const slice of parts) {
         if (map.has(slice.day)) {
           map.get(slice.day).push({ ...slice, entry, crosses })
         }
@@ -93,6 +135,7 @@
       seconds: slice.seconds,
       entries: [slice.entry],
       crosses: slice.crosses,
+      whole: slice.whole ?? false,
       running: slice.entry.ended_at === null,
     }
   }
@@ -116,6 +159,7 @@
       found.seconds += slice.seconds
       found.entries.push(slice.entry)
       found.crosses = found.crosses || slice.crosses
+      found.whole = found.whole || (slice.whole ?? false)
       found.running = found.running || slice.entry.ended_at === null
     }
     return [...byProject.values()]
@@ -130,16 +174,24 @@
     )
   )
 
-  $effect(() => {
-    load(days[0], days.at(-1))
-  })
+  const loaded = resource(
+    () => ({ start: shiftDay(days[0], -PADDING), end: shiftDay(days.at(-1), PADDING) }),
+    (range) => Promise.all([ensureProjects(), ensureTimeEntries(range)]),
+    { name: 'time record' }
+  )
 
-  async function load(start, end) {
-    try {
-      await Promise.all([ensureProjects(), ensureTimeEntries({ start, end })])
-    } finally {
-      loading = false
-    }
+  const loading = $derived(loaded.loading && $timeEntries.length === 0)
+
+  /**
+   * The clock a day is on, when it differs from the browser's own.
+   *
+   * Null the rest of the time, which is nearly always: an offset on every day
+   * heading would be noise everywhere except the week you travelled.
+   */
+  function dayClock(day) {
+    const held = dayOffsets($timeEntries)[day]
+    if (held === undefined || held === utcOffset()) return null
+    return offsetLabel(held)
   }
 
   function startEditing(entry) {
@@ -166,37 +218,67 @@
     }
   }
 
-  async function saveEdit() {
+  async function saveEdit(merge = false) {
     const body = {
       project_id: editing.project_id,
       started_at: fromLocal(editing.startDay, editing.startClock, editing.offset),
+      merge_overlapping: merge,
     }
     if (!editing.running) {
       body.ended_at = fromLocal(editing.endDay, editing.endClock, editing.offset)
     }
-    const saved = await attempt(() =>
-      updateTimeEntry({ path: { entry_id: editing.id }, body })
+    const saved = await write(
+      () => updateTimeEntry({ path: { entry_id: editing.id }, body }),
+      () => saveEdit(true)
     )
     if (!saved) return
     rememberEntry(saved)
+    // A merge removes the sessions it swallowed, and the store cannot know
+    // which from the one row it gets back.
+    if (merge) await ensureTimeEntries({ force: true })
     editing = null
+    clash = null
   }
 
-  async function saveNew() {
+  async function saveNew(merge = false) {
     const offset = utcOffset()
-    const created = await attempt(() =>
-      createTimeEntry({
-        body: {
-          project_id: adding.project_id,
-          started_at: fromLocal(adding.day, adding.startClock, offset),
-          ended_at: fromLocal(adding.day, adding.endClock, offset),
-          utc_offset: offset,
-        },
-      })
+    const created = await write(
+      () =>
+        createTimeEntry({
+          body: {
+            project_id: adding.project_id,
+            started_at: fromLocal(adding.day, adding.startClock, offset),
+            ended_at: fromLocal(adding.day, adding.endClock, offset),
+            utc_offset: offset,
+            merge_overlapping: merge,
+          },
+        }),
+      () => saveNew(true)
     )
     if (!created) return
     rememberEntry(created)
+    if (merge) await ensureTimeEntries({ force: true })
     adding = null
+    clash = null
+  }
+
+  /**
+   * Run a write, catching the one refusal that has a good second answer.
+   *
+   * @param {() => Promise<unknown>} call The write.
+   * @param {() => Promise<unknown>} retry The same write, merging.
+   */
+  async function write(call, retry) {
+    try {
+      return await unwrap(call)
+    } catch (error) {
+      if (error.message.includes('overlaps')) {
+        clash = { retry }
+        return null
+      }
+      pushToast(error.message)
+      return null
+    }
   }
 
   async function remove(entry) {
@@ -212,31 +294,23 @@
     editing = null
   }
 
-  /** Start a fresh session on the same project: yesterday predicts today. */
-  async function restart(entry) {
-    const opened = await attempt(() =>
-      checkIn({
-        path: { project_id: entry.project_id },
-        body: { at: nowUtc(), utc_offset: utcOffset() },
-      })
-    )
-    if (!opened) return
-    rememberEntry(opened)
-    pushToast(`${projects.get(entry.project_id)?.name ?? 'Project'} running`, 'ok')
-  }
-
   async function download() {
-    const file = await attempt(() =>
-      exportTime({ query: { start: days[0], end: days.at(-1) } })
-    )
+    // Everything, not the days on screen: the button reads "download", and on a
+    // phone - which now shows a single day - a range would quietly export one.
+    // The wellbeing export behaves the same way.
+    const file = await attempt(() => exportTime({ parseAs: 'blob' }))
     if (!file) return
     const url = URL.createObjectURL(file)
-    const anchorElement = Object.assign(document.createElement('a'), {
+    const link = Object.assign(document.createElement('a'), {
       href: url,
       download: 'tracked-time.xlsx',
     })
-    anchorElement.click()
-    URL.revokeObjectURL(url)
+    // Attached and revoked a tick later: revoking synchronously can cancel the
+    // download before the browser has read the blob.
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 </script>
 
@@ -249,13 +323,13 @@
     <div class="flex flex-wrap gap-2">
       <button
         class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-        onclick={() => (anchor = shiftDay(anchor, -DAYS_SHOWN))}
+        onclick={() => step(-1)}
       >
         ← Earlier
       </button>
       <button
         class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-        onclick={() => (anchor = shiftDay(anchor, DAYS_SHOWN))}
+        onclick={() => step(1)}
       >
         Later →
       </button>
@@ -278,6 +352,36 @@
     </div>
   </div>
 
+  {#if clash}
+    <!-- Asked rather than reported: an overlap on one project is either two
+         halves of the same session or a slip, and both answers are one tap. -->
+    <div
+      data-overlap
+      class="mb-4 rounded-xl border border-ember/50 bg-dusk/20 px-5 py-4"
+    >
+      <p class="font-medium">That overlaps another session on the same project.</p>
+      <p class="mt-1 mb-3 text-sm text-haze">
+        Merging keeps the earliest start and the latest end, and removes what it
+        swallowed. One project cannot run twice over the same minutes — the hour
+        would be counted twice under the same name.
+      </p>
+      <div class="flex flex-wrap gap-2">
+        <button
+          class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift"
+          onclick={() => clash.retry()}
+        >
+          Merge into one
+        </button>
+        <button
+          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+          onclick={() => (clash = null)}
+        >
+          Discard the change
+        </button>
+      </div>
+    </div>
+  {/if}
+
   {#if loading}
     <p class="meta">Loading…</p>
   {:else}
@@ -287,12 +391,25 @@
         between sessions do not add up.
       </p>
     {/if}
-    <div class="flex flex-col gap-3">
+    <div
+      class="flex flex-col gap-3"
+      ontouchstart={$wide ? undefined : onTouchStart}
+      ontouchend={$wide ? undefined : onTouchEnd}
+    >
       {#each [...days].reverse() as day (day)}
         {@const entries = byDay.get(day) ?? []}
         <div data-day={day} class="rounded-xl border border-white/10 bg-ink-soft">
           <div class="flex items-center justify-between gap-3 px-5 py-3">
-            <p class="meta">{dayLabel(day)}</p>
+            <p class="meta">
+              {day === today() ? 'Today' : dayLabel(day)}
+              <!-- Shown only when the day keeps a different clock from the one
+                   you are in now: at home it would be noise, and after a flight
+                   it is the difference between 09:00 and 09:00. -->
+              {#if dayClock(day) !== null}
+                <span class="ml-2 text-ember">{dayClock(day)}</span>
+              {/if}
+              {#if !$wide}<span class="ml-2 text-haze">swipe to change day</span>{/if}
+            </p>
             <p class="numeral tabular-nums" data-day-total={day}>
               {formatDuration(dayTotals.get(day) ?? 0)}
             </p>
@@ -303,7 +420,15 @@
               {#each entries as row (row.key)}
                 {@const project = projects.get(row.project_id)}
                 {@const only = row.entries.length === 1 ? row.entries[0] : null}
-                <li class="px-5 py-3" data-row={row.key} data-sessions={row.entries.length}>
+                <!-- A running row is the one thing on this page that is still
+                     changing, so it is marked rather than left to be spotted by
+                     reading every end time. -->
+                <li
+                  class="px-5 py-3 {row.running ? 'border-l-2 border-ember bg-dusk/15' : ''}"
+                  data-row={row.key}
+                  data-sessions={row.entries.length}
+                  data-live={row.running ? 'yes' : 'no'}
+                >
                   <div class="flex flex-wrap items-center justify-between gap-3">
                     <div class="flex min-w-0 items-center gap-3">
                       <span
@@ -321,7 +446,9 @@
                           {clockOfSeconds(row.from)}
                           –
                           {row.running ? 'running' : clockOfSeconds(row.to)}
-                          {#if row.crosses}
+                          {#if row.whole}
+                            <span class="text-haze">· kept whole, next day is on a different clock</span>
+                          {:else if row.crosses}
                             <span class="text-haze">
                               · {row.from === 0 ? 'from earlier' : 'continues'}
                             </span>
@@ -334,7 +461,11 @@
                     </div>
                     <div class="ml-auto flex shrink-0 items-center gap-2">
                       <span class="numeral tabular-nums">{formatDuration(row.seconds)}</span>
-                      {#if only}
+                      <!-- Merged is a reading, not a working, view: a row there
+                           can stand for several sessions, and offering to edit
+                           or delete "it" would be offering something the row
+                           cannot honestly do. Turn merging off to work. -->
+                      {#if !merged}
                         <button
                           class="meta rounded-md border border-white/15 px-3 py-2
                                  hover:border-white/40"
@@ -342,26 +473,15 @@
                         >
                           Edit
                         </button>
-                      {:else}
-                        <!-- A merged row stands for several sessions, and there
-                             is no honest single edit of it. Unmerging is one tap
-                             away, and that is where the times can be corrected. -->
                         <button
                           class="meta rounded-md border border-white/15 px-3 py-2
-                                 hover:border-white/40"
-                          onclick={() => (merged = false)}
+                                 hover:border-ember"
+                          aria-label="Delete {project?.name ?? 'session'} session"
+                          onclick={() => remove(only)}
                         >
-                          Split
+                          Delete
                         </button>
                       {/if}
-                      <button
-                        class="meta rounded-md border border-white/15 px-3 py-2
-                               hover:border-white/40"
-                        aria-label="Restart {project?.name ?? 'project'}"
-                        onclick={() => restart(row.entries[0])}
-                      >
-                        Restart
-                      </button>
                     </div>
                   </div>
 
@@ -387,12 +507,7 @@
                             bind:value={editing.startDay}
                             class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
                           />
-                          <input
-                            type="time"
-                            aria-label="Started time"
-                            bind:value={editing.startClock}
-                            class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
-                          />
+                          <TimeField label="Started time" bind:value={editing.startClock} />
                         </span>
                       </div>
                       {#if !editing.running}
@@ -405,12 +520,7 @@
                               bind:value={editing.endDay}
                               class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
                             />
-                            <input
-                              type="time"
-                              aria-label="Ended time"
-                              bind:value={editing.endClock}
-                              class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
-                            />
+                            <TimeField label="Ended time" bind:value={editing.endClock} />
                           </span>
                         </div>
                       {:else}
@@ -419,7 +529,7 @@
                       <button
                         class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
                                hover:bg-dusk-lift"
-                        onclick={saveEdit}
+                        onclick={() => saveEdit()}
                       >
                         Save
                       </button>
@@ -429,12 +539,6 @@
                         onclick={() => (editing = null)}
                       >
                         Cancel
-                      </button>
-                      <button
-                        class="meta rounded-md border border-white/15 px-3 py-2 hover:border-ember"
-                        onclick={() => remove(only)}
-                      >
-                        Delete
                       </button>
                     </div>
                   {/if}
@@ -457,27 +561,19 @@
                     {/each}
                   </select>
                 </label>
-                <label class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5">
                   <span class="meta">From</span>
-                  <input
-                    type="time"
-                    bind:value={adding.startClock}
-                    class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
-                  />
-                </label>
-                <label class="flex flex-col gap-1.5">
+                  <TimeField label="From" bind:value={adding.startClock} />
+                </div>
+                <div class="flex flex-col gap-1.5">
                   <span class="meta">To</span>
-                  <input
-                    type="time"
-                    bind:value={adding.endClock}
-                    class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
-                  />
-                </label>
+                  <TimeField label="To" bind:value={adding.endClock} />
+                </div>
                 <button
                   class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift
                          disabled:opacity-30"
                   disabled={!adding.project_id}
-                  onclick={saveNew}
+                  onclick={() => saveNew()}
                 >
                   Add session
                 </button>

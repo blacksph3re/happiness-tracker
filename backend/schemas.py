@@ -384,9 +384,7 @@ class QuestionUpdate(BaseModel):
     renames what was recorded rather than rescaling it.
     """
 
-    prompt: str | None = Field(
-        default=None, min_length=1, max_length=PROMPT_MAX_LENGTH
-    )
+    prompt: str | None = Field(default=None, min_length=1, max_length=PROMPT_MAX_LENGTH)
     """New question text."""
 
     position: int | None = None
@@ -681,6 +679,13 @@ class CheckOut(BaseModel):
 class TimeEntryCreate(BaseModel):
     """Payload for recording a session that was never tracked live."""
 
+    merge_overlapping: bool = False
+    """Absorb any session on the same project this one collides with.
+
+    Off by default: an overlap is refused, and the caller decides whether it
+    meant to extend what is already there. Merging keeps the earliest start and
+    the latest end, and removes the sessions it swallowed."""
+
     project_id: int
     """The project it counts towards."""
 
@@ -699,6 +704,9 @@ class TimeEntryCreate(BaseModel):
 
 class TimeEntryUpdate(BaseModel):
     """Payload for correcting a session. Omitted fields are left alone."""
+
+    merge_overlapping: bool = False
+    """Absorb any session on the same project this edit collides with."""
 
     project_id: int | None = None
     """Move the session to another project."""
@@ -726,3 +734,36 @@ class SummaryRow(BaseModel):
     seconds: int
     """Tracked seconds. Parallel sessions are added, so a day's rows can sum to
     more than 24 hours."""
+
+    deduction: int = 0
+    """Seconds the group's rule removes from this day. Always zero when
+    grouping by project: a deduction belongs to a tag, not to a project."""
+
+    reported: int = 0
+    """Tracked seconds less the deduction."""
+
+
+class DeductionBandIn(BaseModel):
+    """One step of a tag's tracked-to-reported rule."""
+
+    from_minutes: int = Field(ge=0, le=24 * 60)
+    """Tracked minutes at which this band starts applying."""
+
+    deduct_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
+    """Minutes it removes from the day, or null to cap the day at the threshold."""
+
+
+class DeductionBandOut(DeductionBandIn):
+    """A band as exposed by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TrackedRange(BaseModel):
+    """The first and last local day a user has any session on."""
+
+    first: date | None
+    """Earliest tracked day, or None when nothing has been tracked."""
+
+    last: date | None
+    """Latest tracked day, or None when nothing has been tracked."""

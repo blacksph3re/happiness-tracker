@@ -1,0 +1,57 @@
+/**
+ * The vocabulary the rest of the model is written in.
+ *
+ * `zone` is the one kind that is not a C4 staple: it is the three-way split
+ * this codebase is organised around — wellbeing, time, and the shared middle
+ * both may import from — and it exists so the split is a thing the diagram can
+ * draw rather than a convention only the file tree records.
+ */
+specification {
+
+  element person {
+    style {
+      shape person
+      color secondary
+    }
+  }
+
+  element system {
+    style {
+      color primary
+    }
+  }
+
+  element container {
+    style {
+      shape rectangle
+    }
+  }
+
+  element zone {
+    style {
+      shape rectangle
+      opacity 20%
+      border dashed
+    }
+  }
+
+  element component {
+    style {
+      shape rectangle
+    }
+  }
+
+  element datastore {
+    style {
+      shape cylinder
+    }
+  }
+
+  // Which half of the app a thing belongs to. Nothing tagged `wellbeing` may
+  // import anything tagged `time`, or the other way round. Colours for these
+  // are set per view, because a tag carries no style of its own.
+  tag wellbeing
+  tag time
+  tag shared
+  tag security
+}

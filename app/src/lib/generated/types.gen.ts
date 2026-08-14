@@ -159,6 +159,38 @@ export type CheckOut = {
 };
 
 /**
+ * DeductionBandIn
+ *
+ * One step of a tag's tracked-to-reported rule.
+ */
+export type DeductionBandIn = {
+    /**
+     * From Minutes
+     */
+    from_minutes: number;
+    /**
+     * Deduct Minutes
+     */
+    deduct_minutes?: number | null;
+};
+
+/**
+ * DeductionBandOut
+ *
+ * A band as exposed by the API.
+ */
+export type DeductionBandOut = {
+    /**
+     * From Minutes
+     */
+    from_minutes: number;
+    /**
+     * Deduct Minutes
+     */
+    deduct_minutes?: number | null;
+};
+
+/**
  * DefaultCatalogueChange
  *
  * Payload for a user choosing their own default catalogue.
@@ -665,6 +697,14 @@ export type SummaryRow = {
      * Seconds
      */
     seconds: number;
+    /**
+     * Deduction
+     */
+    deduction?: number;
+    /**
+     * Reported
+     */
+    reported?: number;
 };
 
 /**
@@ -738,6 +778,10 @@ export type TagUpdate = {
  */
 export type TimeEntryCreate = {
     /**
+     * Merge Overlapping
+     */
+    merge_overlapping?: boolean;
+    /**
      * Project Id
      */
     project_id: number;
@@ -798,6 +842,10 @@ export type TimeEntryOut = {
  */
 export type TimeEntryUpdate = {
     /**
+     * Merge Overlapping
+     */
+    merge_overlapping?: boolean;
+    /**
      * Project Id
      */
     project_id?: number | null;
@@ -837,6 +885,22 @@ export type TokenPair = {
      * Expires In
      */
     expires_in: number;
+};
+
+/**
+ * TrackedRange
+ *
+ * The first and last local day a user has any session on.
+ */
+export type TrackedRange = {
+    /**
+     * First
+     */
+    first: string | null;
+    /**
+     * Last
+     */
+    last: string | null;
 };
 
 /**
@@ -2044,6 +2108,36 @@ export type CheckOutResponses = {
 
 export type CheckOutResponse = CheckOutResponses[keyof CheckOutResponses];
 
+export type ResumeProjectData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         */
+        project_id: number;
+    };
+    query?: never;
+    url: '/api/projects/{project_id}/resume';
+};
+
+export type ResumeProjectErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ResumeProjectError = ResumeProjectErrors[keyof ResumeProjectErrors];
+
+export type ResumeProjectResponses = {
+    /**
+     * Successful Response
+     */
+    200: TimeEntryOut;
+};
+
+export type ResumeProjectResponse = ResumeProjectResponses[keyof ResumeProjectResponses];
+
 export type ListTimeEntriesData = {
     body?: never;
     path?: never;
@@ -2164,6 +2258,89 @@ export type UpdateTimeEntryResponses = {
 };
 
 export type UpdateTimeEntryResponse = UpdateTimeEntryResponses[keyof UpdateTimeEntryResponses];
+
+export type ListDeductionsData = {
+    body?: never;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: number;
+    };
+    query?: never;
+    url: '/api/tags/{tag_id}/deductions';
+};
+
+export type ListDeductionsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListDeductionsError = ListDeductionsErrors[keyof ListDeductionsErrors];
+
+export type ListDeductionsResponses = {
+    /**
+     * Response Listdeductions
+     *
+     * Successful Response
+     */
+    200: Array<DeductionBandOut>;
+};
+
+export type ListDeductionsResponse = ListDeductionsResponses[keyof ListDeductionsResponses];
+
+export type SetDeductionsData = {
+    /**
+     * Payload
+     */
+    body: Array<DeductionBandIn>;
+    path: {
+        /**
+         * Tag Id
+         */
+        tag_id: number;
+    };
+    query?: never;
+    url: '/api/tags/{tag_id}/deductions';
+};
+
+export type SetDeductionsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SetDeductionsError = SetDeductionsErrors[keyof SetDeductionsErrors];
+
+export type SetDeductionsResponses = {
+    /**
+     * Response Setdeductions
+     *
+     * Successful Response
+     */
+    200: Array<DeductionBandOut>;
+};
+
+export type SetDeductionsResponse = SetDeductionsResponses[keyof SetDeductionsResponses];
+
+export type TrackedRangeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/time/range';
+};
+
+export type TrackedRangeResponses = {
+    /**
+     * Successful Response
+     */
+    200: TrackedRange;
+};
+
+export type TrackedRangeResponse = TrackedRangeResponses[keyof TrackedRangeResponses];
 
 export type TimeSummaryData = {
     body?: never;

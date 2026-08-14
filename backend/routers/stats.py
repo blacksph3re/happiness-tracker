@@ -62,7 +62,7 @@ def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
             select(Question)
             .options(selectinload(Question.options))
             .join(Answer, Answer.question_id == Question.id)
-            .where(Answer.user_id == user.id)
+            .where(Answer.user_id == user.id, Question.active.is_(True))
             .distinct()
             .order_by(Question.position, Question.id)
         )

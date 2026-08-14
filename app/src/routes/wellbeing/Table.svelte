@@ -4,6 +4,7 @@
   import { ensureAllCatalogues, ensureAnswers } from '../../lib/store.js'
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
   import { navigate } from '../../lib/router.js'
+  import { wide } from '../../lib/media.js'
   import { pushToast } from '../../lib/toasts.js'
   import { fly } from 'svelte/transition'
 
@@ -23,21 +24,6 @@
   let past = $state(WINDOW_STEP)
   let future = $state(7)
   let scroller = $state(null)
-
-  // Which view to build, rather than building both and hiding one. The wide
-  // table is a row per question times a column per day; on a phone that is a
-  // lot of DOM for something nobody will see, and hidden text still answers to
-  // anything searching the page.
-  const WIDE = '(min-width: 48rem)'
-  let wide = $state(typeof matchMedia === 'function' ? matchMedia(WIDE).matches : true)
-
-  $effect(() => {
-    if (typeof matchMedia !== 'function') return
-    const query = matchMedia(WIDE)
-    const sync = (event) => (wide = event.matches)
-    query.addEventListener('change', sync)
-    return () => query.removeEventListener('change', sync)
-  })
 
   // Mobile shows one day at a time; the day being read, and which way the last
   // move went, so the change animates in the direction of travel.
@@ -192,7 +178,7 @@
   {:else}
     <!-- Narrow screens read one day at a time. Twenty columns of numbers in a
          320 px viewport is not a table anyone can read. -->
-    {#if !wide}
+    {#if !$wide}
     <div
       data-day-view
       ontouchstart={onTouchStart}

@@ -76,42 +76,42 @@ def _validate_response(db: DbSession, question: Question, payload: AnswerIn) -> 
     if question.kind == "enum":
         if payload.option_id is None or payload.value is not None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="An enum question is answered with an option",
             )
         option = db.get(QuestionOption, payload.option_id)
         if option is None or option.question_id != question.id:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Option does not belong to this question",
             )
         return
 
     if payload.value is None or payload.option_id is not None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A scaled question is answered with a value",
         )
     # NaN compares false against every bound, so it would slip past the range
     # checks below and only fail at insert time as a 500.
     if not math.isfinite(payload.value):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Value must be a finite number",
         )
     if question.min_value is not None and payload.value < question.min_value:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Value is below the question's lower bound",
         )
     if question.max_value is not None and payload.value > question.max_value:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Value is above the question's upper bound",
         )
     if question.kind == "discrete" and payload.value != int(payload.value):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A discrete question takes whole numbers",
         )
 

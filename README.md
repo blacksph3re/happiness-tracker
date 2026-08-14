@@ -1,6 +1,8 @@
-# Happiness tracker
+# Daily tracker
 
-Track your satisfaction with work/life/whatever in regular questionaries, then get automated statistics. Alongside it, track where your hours go: check in to a project, check out when you stop, and read the week back.
+Two things worth recording every day, in one place.
+
+**Wellbeing** — track your satisfaction with work/life/whatever in regular questionaries, then get automated statistics. **Time** — track where your hours go: check in to a project, check out when you stop, and read the week back.
 
 Two halves, one login. A landing page puts each of them one tap away; inside either, the navigation is only about that half.
 
@@ -58,21 +60,57 @@ shared list.
 - **Instants are stored in UTC** with the offset captured at check-in. Durations are
   therefore exact across a daylight-saving change, where local arithmetic would report
   an eight-hour day as seven.
+- **A day keeps one clock**, taken from the session that opened it, so every session on
+  a day is read and split by the same midnight. Travelling used to leave a day meaning
+  two things at once — two sessions both reading 09:00, an hour apart. A session that
+  would spill into a day on a *different* clock is kept whole on the day it started and
+  marked as such: the two midnights are not the same instant, so dividing there would
+  either count an hour twice or lose one.
 - **Nothing is auto-closed.** A session running for three days shows up as exactly that
   in the record, where it can be corrected; the app does not invent an end it cannot
   know.
+- **A stop can be taken back.** While a project is idle and its last session ended
+  today, **Track** offers `Resume`: the old session reopens with its original start, so
+  the time it spent stopped counts as worked rather than leaving a hole beside a new
+  one. It is deliberately not offered for older sessions — absorbing a day and a half
+  is not a mistake anyone means to make.
+- **Archiving retires a project from the reports.** Its sessions stay in the record
+  and in the export — they happened — but a project nobody tracks any more is not a
+  pattern. Deactivating a question does the same on the wellbeing side.
+- **One project cannot run twice over the same minutes.** Two projects at once is the
+  point of the tracker; the same project twice would report one hour twice under one
+  name. An edit that would overlap is refused, and the record offers to merge the two
+  into one session — earliest start, latest end — or to discard the change.
 - **Tags group projects** on the patterns page. A project can carry several, so tag
   totals overlap rather than partition — they are a way of reading the time, not a
   filing of it. Projects with no tag are reported as *Untagged*, so nothing is hidden.
 
-On **Patterns**, the shortest window — `Day` — is drawn along a clock rather than as
-totals: a lane per project, showing *when* rather than how much. It is the only view
+A tag can carry a **deduction rule**: bands of *from this many tracked minutes, remove
+this many*. The highest threshold a day reaches applies, a day with nothing tracked is
+never deducted from, and no day goes below zero. It is worked out on read, so changing
+the rule fixes last month too. Rules belong to a tag rather than to the account, because
+"work days lose a lunch break" is a statement about work — a day of reading owes nobody
+one. Edit them under **Projects → Rule**.
+
+**Patterns** steps through named periods — a week, a month, a quarter — rather than a
+rolling count of days back from today, so each has a name on the page and a previous to
+go to. A month or a quarter is drawn as a line with a smoothing control, because a
+quarter of grouped bars is a picket fence.
+
+It also filters: *only days where* narrows the hours by weekday, or by anything the
+questionnaire recorded — so "what did the hours look like on days I slept badly" is a
+question the two halves answer together. A day with nothing tracked breaks the line
+rather than reading as zero hours, which is a toggle.
+
+The shortest window — `Day` — is drawn along a clock rather than as totals: a lane per project, showing *when* rather than how much. It is the only view
 where overlap reads as overlap instead of as two numbers that happen to add past 24
 hours. The axis fits the hours actually used, with a `Full day` toggle for the whole
 24, and the project/tag switch regroups the lanes while each block keeps its own
 project's colour.
 
-Sessions are edited, added by hand and deleted in **Record**, which also has a
+Sessions are edited, added by hand and deleted in **Record** — a session has `Delete`
+on its own row, because the one most often removed is an accidental tap on Track, which
+has no times worth correcting. Record also has a
 `Merge sessions` toggle: one row per project per day, from the first start to the last
 end, showing the time *tracked* rather than the distance between them — so a lunch
 break shortens the duration without moving the clock. Projects, colours and tags live
@@ -95,7 +133,19 @@ To install everything, just build the Dockerfile and run through docker. You may
 
 After installation, you want to define the questions that will be answering regularly. Questions are grouped in catalogues and every user has a default catalogue that will be automatically opened when he/she logs in.
 
+## Architecture
+
+`docs/architecture` holds a [LikeC4](https://likec4.dev) model — the three-zone
+split of both halves of the codebase, and sequence diagrams for answering a
+question, viewing the stats, tracking time and signing in.
+
+```bash
+pnpm dlx likec4 start docs/architecture
+```
+
 ## Development
+
+.. nobody is going to read this far, this section is more for me to remember how to develop in this repository ..
 
 In production one FastAPI process serves both the API and the compiled frontend. For development you run two processes instead, so that each half reloads on its own: the backend on `:8000` and the Vite dev server on `:5173`. **Use `http://localhost:5173` in the browser** — it proxies `/api` to the backend, so there is no CORS setup and no rebuild step between edits.
 

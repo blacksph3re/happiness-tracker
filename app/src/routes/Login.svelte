@@ -27,7 +27,7 @@
 </script>
 
 <section class="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6">
-  <p class="meta">Happiness tracker</p>
+  <p class="meta">Daily tracker</p>
   <h1 class="mt-2 text-4xl font-bold tracking-tight">Sign in</h1>
   <p class="mt-2 text-haze">Ten taps, once a day.</p>
 

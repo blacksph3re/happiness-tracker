@@ -261,7 +261,7 @@
           <a
             href="/stats"
             use:link
-            class="meta rounded-md border border-white/20 px-3 py-2 hover:border-white/50"
+            class="meta rounded-md border border-white/20 px-3 py-2 hover:border-white/40"
           >
             See patterns →
           </a>

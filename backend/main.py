@@ -73,7 +73,7 @@ API_TAGS = [
 """Tag descriptions, in the order the documentation should present them."""
 
 app = FastAPI(
-    title="Happiness Tracker API",
+    title="Daily Tracker API",
     version=auth.APP_VERSION,
     summary="Track satisfaction with work, life or whatever in regular questionnaires.",
     description=(

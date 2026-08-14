@@ -40,10 +40,19 @@
     else resetStore()
   })
 
+  /** Pages that belong to the account rather than to either half. */
+  const ACCOUNT_PATHS = ['/', '/settings', '/people']
+
   // The two halves are separate places: inside one, the nav is only about that
   // one, and the logo is the way back to the chooser. That is also what makes
   // "Record" and "Patterns" unambiguous again — there is one of each in view.
-  const section = $derived($path.startsWith('/time') ? 'time' : $path === '/' ? null : 'wellbeing')
+  //
+  // Settings and People sit in neither. Treating them as wellbeing meant
+  // opening Settings from a running timer quietly moved you into the other
+  // half; from here the way on is the chooser, whichever half you came from.
+  const section = $derived(
+    $path.startsWith('/time') ? 'time' : ACCOUNT_PATHS.includes($path) ? null : 'wellbeing'
+  )
 
   // The editor and admin entries are hidden without the matching flag; the API
   // enforces it regardless, this only keeps the menu honest.
@@ -65,8 +74,6 @@
         : []
   )
 
-  // Account pages belong to neither half: changing a password should not mean
-  // remembering which section owns it.
   const ACCOUNT = $derived([
     ...($me?.is_admin ? [['/people', 'People']] : []),
     ['/settings', 'Settings'],
@@ -92,7 +99,7 @@
     <header class="border-b border-white/8">
       <nav class="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-5 py-4">
         <a href="/" use:link class="flex items-baseline gap-2">
-          <span class="numeral text-xl">HT</span>
+          <span class="numeral text-xl">DT</span>
           <span class="meta hidden sm:inline">
             {section === 'time' ? 'Time' : section === 'wellbeing' ? 'Wellbeing' : 'Tracker'}
           </span>

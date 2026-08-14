@@ -59,8 +59,11 @@ def own_project(db: DbSession, user: CurrentUser, project_id: int) -> Project:
     return project
 
 
-def _own_tag(db: DbSession, user: CurrentUser, tag_id: int) -> Tag:
+def own_tag(db: DbSession, user: CurrentUser, tag_id: int) -> Tag:
     """Load one of the signed-in user's tags.
+
+    Public because `routers.time` needs it too: a tag carries the rule that
+    turns its tracked time into reported time.
 
     Parameters
     ----------
@@ -110,7 +113,7 @@ def _apply_tags(db: DbSession, user: CurrentUser, project: Project, tag_ids: lis
     fastapi.HTTPException
         With status 404 when one of the tags belongs to someone else.
     """
-    wanted = {tag_id: _own_tag(db, user, tag_id) for tag_id in set(tag_ids)}
+    wanted = {tag_id: own_tag(db, user, tag_id) for tag_id in set(tag_ids)}
     existing = db.execute(
         select(ProjectTag).where(ProjectTag.project_id == project.id)
     ).scalars()
@@ -472,7 +475,7 @@ def update_tag(
     fastapi.HTTPException
         With status 409 when the name is taken.
     """
-    tag = _own_tag(db, user, tag_id)
+    tag = own_tag(db, user, tag_id)
     for field in ("name", "colour", "position"):
         value = getattr(payload, field)
         if value is not None:
@@ -510,5 +513,5 @@ def delete_tag(tag_id: int, user: CurrentUser, db: DbSession) -> None:
     db : sqlalchemy.orm.Session
         Active database session.
     """
-    db.delete(_own_tag(db, user, tag_id))
+    db.delete(own_tag(db, user, tag_id))
     db.commit()
