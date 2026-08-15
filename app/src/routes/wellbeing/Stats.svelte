@@ -151,10 +151,20 @@
 
   // Clamp both sliders to the data actually present.
   const maxWindow = $derived(Math.max(allDays.length, 1))
-  const maxOffset = $derived(Math.max(allDays.length - windowDays, 0))
+  /**
+   * The window actually in force, never longer than there are days to fill it.
+   *
+   * Derived rather than clamped back into `windowDays`, for two reasons: a
+   * `$effect` that writes the state it reads is the loop this app has already
+   * shipped once, and the stored preference is worth keeping intact — a saved
+   * 30 means "a month" and should widen back out on its own as days arrive,
+   * rather than being permanently rewritten to 1 by a first visit.
+   */
+  const windowLength = $derived(Math.min(windowDays, maxWindow))
+  const maxOffset = $derived(Math.max(allDays.length - windowLength, 0))
   // Averaging over more than a third of the window flattens it to a straight
   // line, which tells the reader nothing.
-  const maxSmoothing = $derived(Math.max(Math.floor(windowDays / 3), 1))
+  const maxSmoothing = $derived(Math.max(Math.floor(windowLength / 3), 1))
 
   /** Values for plotting `variable`, mapping enum options onto their position. */
   function axisValues(variable) {
@@ -224,7 +234,7 @@
   const days = $derived.by(() => {
     if (allDays.length === 0) return []
     const end = allDays.length - Math.min(offset, maxOffset)
-    const window = allDays.slice(Math.max(end - windowDays, 0), end)
+    const window = allDays.slice(Math.max(end - windowLength, 0), end)
     if (activeFilters.length === 0) return window
     // Every active dimension has to admit the day, so narrowing one never
     // widens the result.
@@ -393,7 +403,7 @@
 
 <section class="mx-auto w-full max-w-5xl px-5 py-8">
   <header class="mb-6">
-    <p class="meta">{allDays.length} days recorded</p>
+    <p class="meta">{allDays.length} {allDays.length === 1 ? 'day' : 'days'} recorded</p>
     <h1 class="mt-1 text-3xl font-bold tracking-tight">Patterns</h1>
   </header>
 
@@ -536,12 +546,15 @@
 
       <div class="mt-4 grid gap-4 {view === 'line' ? 'sm:grid-cols-2' : ''}">
         <label class="flex flex-col gap-2">
-          <span class="meta">Length · {windowDays} {windowDays === 1 ? 'day' : 'days'}</span>
+          <span class="meta">
+            Length · {windowLength} {windowLength === 1 ? 'day' : 'days'}
+          </span>
           <input
             type="range"
             min="1"
             max={maxWindow}
-            bind:value={windowDays}
+            value={windowLength}
+            oninput={(event) => (windowDays = Number(event.currentTarget.value))}
             class="h-2 w-full cursor-pointer appearance-none rounded-full bg-dusk-deep accent-ember"
           />
         </label>

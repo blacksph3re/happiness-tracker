@@ -1,28 +1,41 @@
 <script>
   import { attempt, unwrap } from '../lib/api.js'
+  import { resource } from '../lib/resource.svelte.js'
   import { createUser as createUserCall, deleteUser, listUsers, resetUserPassword, updateUser } from '../lib/generated/sdk.gen'
   import { ensureCatalogues, ensureMe } from '../lib/store.js'
   import { pushToast } from '../lib/toasts.js'
 
-  let users = $state([])
-  let catalogues = $state([])
-  let me = $state(null)
-  let loading = $state(true)
   let draft = $state({ username: '', password: '', is_admin: false, is_editor: false })
 
-  $effect(() => {
-    load()
-  })
+  /**
+   * Bumped by every write, so the list re-reads after it.
+   *
+   * The account list is not in the store — it belongs to whoever is
+   * administering rather than to the session — so there is nothing to update in
+   * place, and a counter in the query is how a write asks for the read again.
+   */
+  let revision = $state(0)
 
-  async function load() {
-    try {
-      me = await ensureMe()
-      users = (await attempt(() => listUsers())) ?? []
-      catalogues = (await ensureCatalogues()) ?? []
-    } finally {
-      loading = false
-    }
-  }
+  // Through `resource` rather than an effect that assigns what this component
+  // reads: the effect was safe only because nothing it read ever changed, which
+  // stopped being true the moment a write wanted to reload the list.
+  const loaded = resource(
+    () => revision,
+    async () => {
+      const [account, list, sets] = await Promise.all([
+        ensureMe(),
+        attempt(() => listUsers()),
+        ensureCatalogues(),
+      ])
+      return { me: account, users: list ?? [], catalogues: sets ?? [] }
+    },
+    { name: 'people', initial: { me: null, users: [], catalogues: [] } }
+  )
+
+  const loading = $derived(loaded.loading && loaded.data.users.length === 0)
+  const me = $derived(loaded.data.me)
+  const users = $derived(loaded.data.users)
+  const catalogues = $derived(loaded.data.catalogues)
 
   async function createUser(event) {
     event.preventDefault()
@@ -34,7 +47,7 @@
       )
       pushToast(`Created ${draft.username}`, 'ok')
       draft = { username: '', password: '', is_admin: false, is_editor: false }
-      users = (await attempt(() => listUsers())) ?? []
+      revision += 1
     } catch (error) {
       pushToast(error.message)
     }
@@ -45,7 +58,7 @@
       await unwrap(() =>
         updateUser({ path: { user_id: user.id }, body: { [field]: !user[field] } })
       )
-      users = (await attempt(() => listUsers())) ?? []
+      revision += 1
     } catch (error) {
       // The server refuses to let the last admin demote themselves.
       pushToast(error.message)
@@ -55,8 +68,8 @@
   async function remove(user) {
     if (!confirm(`Delete ${user.username} and every answer they recorded?`)) return
     try {
-      await api(`/users/${user.id}`, { method: 'DELETE' })
-      users = (await attempt(() => listUsers())) ?? []
+      await unwrap(() => deleteUser({ path: { user_id: user.id } }))
+      revision += 1
       pushToast(`Deleted ${user.username}`, 'ok')
     } catch (error) {
       pushToast(error.message)
@@ -67,7 +80,9 @@
     const new_password = prompt(`New password for ${user.username}`)
     if (!new_password) return
     try {
-      await api(`/users/${user.id}/password`, { method: 'PUT', body: { new_password } })
+      await unwrap(() =>
+        resetUserPassword({ path: { user_id: user.id }, body: { new_password } })
+      )
       pushToast(`Password reset for ${user.username}`, 'ok')
     } catch (error) {
       pushToast(error.message)
@@ -85,6 +100,7 @@
     <ul class="flex flex-col gap-2">
       {#each users as user (user.id)}
         <li
+          data-user={user.id}
           class="flex flex-wrap items-center justify-between gap-3 rounded-lg border
                  border-white/10 bg-ink-soft px-5 py-4"
         >

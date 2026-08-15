@@ -86,3 +86,40 @@ test('the password rule is shown, enforced, and applied', async ({ page, account
   })
   expect(fresh.status()).toBe(200)
 })
+
+test('an administrator can delete an account and reset a password', async ({
+  page,
+  account,
+  admin,
+}) => {
+  // Both of these went through a helper that does not exist, so each threw a
+  // ReferenceError into its own catch and reported it as a failed request. The
+  // account stayed, the password did not change, and the page said so in a way
+  // that looked like the server's fault.
+  await grant(admin, account, { is_admin: true })
+  const victim = `e2e-doomed-${Date.now()}`
+  const created = await admin.post('/api/users', {
+    data: { username: victim, password: 'e2e-user-password', is_admin: false, is_editor: false },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { id } = await created.json()
+
+  await page.goto('/people')
+  const row = page.locator(`[data-user="${id}"]`)
+  await expect(row).toBeVisible()
+
+  // The reset prompts for the new password rather than taking one inline.
+  page.once('dialog', (dialog) => dialog.accept('a-new-password-1'))
+  await row.getByRole('button', { name: 'Reset password' }).click()
+  await expect(page.getByText(`Password reset for ${victim}`)).toBeVisible()
+  const signedIn = await admin.post('/api/login', {
+    data: { username: victim, password: 'a-new-password-1' },
+  })
+  expect(signedIn.ok(), 'the new password does not work').toBeTruthy()
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await row.getByRole('button', { name: 'Delete' }).click()
+  await expect(row).toHaveCount(0)
+  const remaining = await (await admin.get('/api/users')).json()
+  expect(remaining.some((user) => user.id === id), 'the account was not deleted').toBe(false)
+})

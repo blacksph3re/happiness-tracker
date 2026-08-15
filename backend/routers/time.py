@@ -1,13 +1,14 @@
 from datetime import UTC, date, datetime, timedelta
 from io import BytesIO
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
-from openpyxl import Workbook
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
+from exports import as_csv
 from models import DeductionBand, Project, Tag, TimeEntry
 from routers.projects import own_project, own_tag, running_entry
 from schemas import (
@@ -125,6 +126,18 @@ def _settle_overlaps(
     finish = entry.ended_at or datetime.max
 
     def collides(other):
+        """Whether `other` overlaps the session being written.
+
+        Parameters
+        ----------
+        other : TimeEntry
+            A session on the same project.
+
+        Returns
+        -------
+        bool
+            True when the two share any minute.
+        """
         return (
             entry.started_at < (other.ended_at or datetime.max)
             and other.started_at < finish
@@ -960,19 +973,19 @@ def summary(
 
 
 @router.get(
-    "/time/export.xlsx",
+    "/time/export.zip",
     operation_id="exportTime",
-    summary="Download sessions as a spreadsheet",
+    summary="Download sessions as CSV",
     description=(
-        "Every session on one sheet, with the daily totals per project and per "
-        "tag on two more, worked out the same way the app shows them."
+        "Every session in one CSV, with the daily totals per project and per "
+        "tag in two more, worked out the same way the app shows them. Three "
+        "files because a CSV holds one table, zipped because a click gives one "
+        "download."
     ),
     responses={
         200: {
-            "content": {
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
-            },
-            "description": "An .xlsx workbook.",
+            "content": {"application/zip": {}},
+            "description": "A .zip of three .csv files.",
         }
     },
 )
@@ -983,7 +996,7 @@ def export_time(
     end: date | None = Query(default=None),
     as_of: datetime | None = Query(default=None),
 ) -> Response:
-    """Build a spreadsheet of the signed-in user's sessions.
+    """Bundle the signed-in user's sessions and totals as CSV files.
 
     Parameters
     ----------
@@ -1001,7 +1014,8 @@ def export_time(
     Returns
     -------
     fastapi.Response
-        An ``.xlsx`` attachment.
+        A ``.zip`` attachment holding ``sessions.csv``, ``by-project.csv`` and
+        ``by-tag.csv``.
     """
     moment = as_of or _server_now()
     entries = _entries_in_range(db, user.id, start, end)
@@ -1016,14 +1030,11 @@ def export_time(
         for t in db.execute(select(Tag).where(Tag.user_id == user.id)).scalars().all()
     }
 
-    workbook = Workbook()
-    sessions = workbook.active
-    sessions.title = "Sessions"
+    offsets = day_offsets(entries)
     # Local first, because that is the reading every other view shows; UTC is
     # kept beside it so a session is still unambiguous once exported, and the
     # offset is spelled out rather than left to be inferred from the pair.
-    offsets = day_offsets(entries)
-    sessions.append(
+    sessions: list[list[object]] = [
         [
             "Project",
             "Started",
@@ -1035,7 +1046,7 @@ def export_time(
             "Hours",
             "Note",
         ]
-    )
+    ]
     for entry in entries:
         seconds = sum(
             seconds for _, seconds in daily_slices(entry, moment, offsets)
@@ -1056,27 +1067,31 @@ def export_time(
             ]
         )
 
-    for title, grouping, names in (
-        ("By project", "project", lambda key: projects[key].name),
-        (
-            "By tag",
-            "tag",
-            lambda key: tags[key].name if key is not None else "Untagged",
-        ),
-    ):
-        sheet = workbook.create_sheet(title)
-        sheet.append(["Day", title.removeprefix("By ").capitalize(), "Hours"])
-        for row in _summary_rows(db, user.id, start, end, moment, grouping):
-            sheet.append(
-                [row.day.isoformat(), names(row.key), round(row.seconds / 3600, 2)]
-            )
+    archive = BytesIO()
+    with ZipFile(archive, "w", ZIP_DEFLATED) as bundle:
+        bundle.writestr("sessions.csv", as_csv(sessions))
+        for name, grouping, label in (
+            ("by-project.csv", "project", lambda key: projects[key].name),
+            (
+                "by-tag.csv",
+                "tag",
+                lambda key: tags[key].name if key is not None else "Untagged",
+            ),
+        ):
+            rows: list[list[object]] = [
+                ["Day", "Project" if grouping == "project" else "Tag", "Hours"]
+            ]
+            # `reported`, not `seconds`: a tag with a lunch rule reports the
+            # hours it reports, and the export is the one place a second,
+            # un-deducted figure would be hardest to notice was the wrong one.
+            for row in _summary_rows(db, user.id, start, end, moment, grouping):
+                rows.append(
+                    [row.day.isoformat(), label(row.key), round(row.reported / 3600, 2)]
+                )
+            bundle.writestr(name, as_csv(rows))
 
-    buffer = BytesIO()
-    workbook.save(buffer)
     return Response(
-        content=buffer.getvalue(),
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ),
-        headers={"Content-Disposition": 'attachment; filename="tracked-time.xlsx"'},
+        content=archive.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="tracked-time.zip"'},
     )

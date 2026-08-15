@@ -94,13 +94,27 @@ function refreshOnce() {
  * Takes a function rather than a promise so the call can simply be made again
  * after a refresh, with no need to reconstruct its arguments.
  *
+ * The thrown Error carries the response status as `.status`, so a caller that
+ * needs to tell one failure from another - a rate-limited login from a wrong
+ * password - can do so without matching on the message text.
+ *
  * @param {() => Promise<{data?: unknown, error?: unknown, response: Response}>} call
  * @returns {Promise<unknown>} The response body, or null for a 204.
  */
 export async function unwrap(call) {
+  // A 401 means "your session ended" only if there was a session. Signing in
+  // with the wrong password is also a 401, and treating that as an expiry
+  // redirected the login page to itself - reloading away the very message
+  // that was meant to explain the failure.
+  const hadSession = Boolean(localStorage.getItem(REFRESH_KEY) || accessToken())
   let { data, error, response } = await call()
 
-  if (response.status === 401) {
+  // A request that never reached a server - the process stopped, the network
+  // dropped - resolves with no response at all. Every check below reads one, so
+  // this has to be answered first, and answered as the connection failure it is.
+  if (!response) throw new Error('Could not reach the server. Check your connection.')
+
+  if (response.status === 401 && hadSession) {
     if (await refreshOnce()) {
       ;({ data, error, response } = await call())
     }
@@ -113,7 +127,11 @@ export async function unwrap(call) {
     }
   }
 
-  if (!response.ok) throw new Error(describeFailure(error, response.status))
+  if (!response.ok) {
+    const failure = new Error(describeFailure(error, response.status))
+    failure.status = response.status
+    throw failure
+  }
   return response.status === 204 ? null : data
 }
 

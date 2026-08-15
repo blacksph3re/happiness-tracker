@@ -136,6 +136,83 @@ def test_login_rejects_wrong_password_indistinguishably(client):
     assert unknown.json() == wrong.json()
 
 
+def test_login_hashes_even_for_an_unknown_username(client, monkeypatch):
+    """Pins the code path rather than a wall-clock budget.
+
+    The old code skipped hashing entirely when the username did not exist,
+    which is what made a nonexistent username measurably faster to reject
+    than a real one with a wrong password. A timing assertion in CI would be
+    flaky, so this checks that `verify_password` still ran instead.
+    """
+    calls = []
+    real_verify = __import__("security").verify_password
+
+    def spy(password, password_hash):
+        calls.append(password_hash)
+        return real_verify(password, password_hash)
+
+    monkeypatch.setattr("routers.auth.verify_password", spy)
+
+    client.post("/api/login", json={"username": "nobody-at-all", "password": "x"})
+    assert calls == [None]
+
+
+def test_repeated_failures_lock_out_the_username(client):
+    for _ in range(5):
+        response = client.post(
+            "/api/login", json={"username": "admin", "password": "wrong"}
+        )
+        assert response.status_code == 401
+    locked = client.post(
+        "/api/login", json={"username": "admin", "password": "admin-password"}
+    )
+    assert locked.status_code == 429
+
+
+def test_a_successful_login_resets_the_failure_count(client):
+    for _ in range(4):
+        client.post("/api/login", json={"username": "admin", "password": "wrong"})
+    ok = client.post(
+        "/api/login", json={"username": "admin", "password": "admin-password"}
+    )
+    assert ok.status_code == 200
+
+    for _ in range(4):
+        response = client.post(
+            "/api/login", json={"username": "admin", "password": "wrong"}
+        )
+        assert response.status_code == 401
+    still_ok = client.post(
+        "/api/login", json={"username": "admin", "password": "admin-password"}
+    )
+    assert still_ok.status_code == 200
+
+
+def test_lockout_applies_to_unknown_usernames_too(client):
+    """Keyed on the submitted username, not on whether an account exists."""
+    for _ in range(5):
+        client.post("/api/login", json={"username": "nobody", "password": "x"})
+    locked = client.post("/api/login", json={"username": "nobody", "password": "x"})
+    assert locked.status_code == 429
+
+
+def test_lockout_response_does_not_reveal_account_existence(client):
+    for _ in range(5):
+        client.post("/api/login", json={"username": "admin", "password": "wrong"})
+    real_locked = client.post(
+        "/api/login", json={"username": "admin", "password": "wrong"}
+    )
+
+    for _ in range(5):
+        client.post("/api/login", json={"username": "nobody", "password": "wrong"})
+    fake_locked = client.post(
+        "/api/login", json={"username": "nobody", "password": "wrong"}
+    )
+
+    assert real_locked.status_code == fake_locked.status_code == 429
+    assert real_locked.json() == fake_locked.json()
+
+
 def test_password_never_appears_in_logs(client, caplog):
     secret = "extremely-secret-password"
     with caplog.at_level(logging.DEBUG):

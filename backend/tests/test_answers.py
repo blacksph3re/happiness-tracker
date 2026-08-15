@@ -1,7 +1,5 @@
+import csv
 from datetime import date
-from io import BytesIO
-
-from openpyxl import load_workbook
 
 from tests.conftest import make_user
 
@@ -199,19 +197,19 @@ def test_export_has_one_row_per_day(client, admin_headers, starter_questions):
     answer(client, admin_headers, starter_questions[0]["id"], 4, day="2026-03-04")
     answer(client, admin_headers, starter_questions[0]["id"], 2, day="2026-03-05")
 
-    response = client.get("/api/answers/export.xlsx", headers=admin_headers)
+    response = client.get("/api/answers/export.csv", headers=admin_headers)
     assert response.status_code == 200
-    assert "spreadsheetml" in response.headers["content-type"]
+    assert response.headers["content-type"].startswith("text/csv")
 
-    sheet = load_workbook(BytesIO(response.content)).active
-    rows = list(sheet.values)
-    header, *body = rows
+    # Decoded through utf-8-sig: the file opens with a byte-order mark so Excel
+    # reads it as UTF-8, and that mark must not become part of the first header.
+    header, *body = list(csv.reader(response.content.decode("utf-8-sig").splitlines()))
     assert header[0] == "Day"
     assert starter_questions[0]["prompt"] in header
     assert [row[0] for row in body] == ["2026-03-04", "2026-03-05"]
 
     column = header.index(starter_questions[0]["prompt"])
-    assert [row[column] for row in body] == [4, 2]
+    assert [row[column] for row in body] == ["4", "2"]
 
 
 def test_stats_variables_report_roles(
@@ -362,7 +360,6 @@ def test_a_deactivated_question_leaves_the_variables(
     # ...but the answer it already holds is still recorded and still exported.
     rows = client.get("/api/answers", headers=admin_headers).json()
     assert any(row["question_id"] == retired["id"] for row in rows)
-    book = load_workbook(
-        BytesIO(client.get("/api/answers/export.xlsx", headers=admin_headers).content)
-    )
-    assert retired["prompt"] in [cell.value for cell in book["Answers"][1]]
+    exported = client.get("/api/answers/export.csv", headers=admin_headers)
+    header = next(csv.reader(exported.content.decode("utf-8-sig").splitlines()))
+    assert retired["prompt"] in header

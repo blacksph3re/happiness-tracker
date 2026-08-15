@@ -92,6 +92,12 @@ the rule fixes last month too. Rules belong to a tag rather than to the account,
 "work days lose a lunch break" is a statement about work — a day of reading owes nobody
 one. Edit them under **Projects → Rule**.
 
+A tag with a rule shows **what it reports** — in the charts, the captions, the record
+and the export. The one exception is the group table under Patterns, which keeps
+`Tracked` and `Reported` side by side, because reading them together is what says how
+much the rule took; everywhere else a second number for the same hours only raises the
+question of which one counts.
+
 **Patterns** steps through named periods — a week, a month, a quarter — rather than a
 rolling count of days back from today, so each has a name on the page and a previous to
 go to. A month or a quarter is drawn as a line with a smoothing control, because a
@@ -102,20 +108,41 @@ questionnaire recorded — so "what did the hours look like on days I slept badl
 question the two halves answer together. A day with nothing tracked breaks the line
 rather than reading as zero hours, which is a toggle.
 
-The shortest window — `Day` — is drawn along a clock rather than as totals: a lane per project, showing *when* rather than how much. It is the only view
-where overlap reads as overlap instead of as two numbers that happen to add past 24
-hours. The axis fits the hours actually used, with a `Full day` toggle for the whole
-24, and the project/tag switch regroups the lanes while each block keeps its own
-project's colour.
+The shortest windows — `Day` and `Week` — are drawn along a clock rather than as
+totals: a lane per project on a day, a lane per day across a week, showing *when* rather
+than how much. It is the only view where overlap reads as overlap instead of as two
+numbers that happen to add past 24 hours. The axis fits the hours actually used, with a
+`Full day` toggle for the whole 24. There is no strip under `By tag`: a lane says when
+something ran, and a tag does not run — its projects do, several at once, and the lane
+was the same blocks with the labels taken away.
 
-Sessions are edited, added by hand and deleted in **Record** — a session has `Delete`
-on its own row, because the one most often removed is an accidental tap on Track, which
-has no times worth correcting. Record also has a
-`Merge sessions` toggle: one row per project per day, from the first start to the last
-end, showing the time *tracked* rather than the distance between them — so a lunch
-break shortens the duration without moving the clock. Projects, colours and tags live
-in **Projects**. `Download .xlsx` gives every session on one sheet and the
-daily totals per project and per tag on two more.
+Pointing at a block names it, instantly and in the same shape the charts use. A tap does
+the same and holds it open until something else is tapped, because a finger has no
+hover.
+
+A group with nothing in the window — a tag every day of which the filters left out —
+is dropped from the legend, the charts and the table rather than drawn as a slice of
+nothing.
+
+Sessions are edited, added by hand and deleted in **Record**, which is one list of every
+tracked day: newest at the top, week dividers carrying the week's total, and more weeks
+loading as it is scrolled until it reaches the first day tracked. Days with nothing on
+them are left out; an untracked week keeps its divider, so the timeline stays continuous
+across a fortnight away. A session has `Delete` on its own row, because the one most
+often removed is an accidental tap on Track, which has no times worth correcting. Adding
+one is a form at the top with the day as a field, since with every day on one scroll
+there is no "current" day for it to belong to.
+
+Record reads `By project` or `By tag`. By project, a row is a session, and a
+`Merge sessions` toggle collapses them to one row per project per day — from the first
+start to the last end, showing the time *tracked* rather than the distance between them,
+so a lunch break shortens the duration without moving the clock. By tag, a row is a
+whole day of that tag, after its rule: a deduction belongs to a day rather than to any
+one session, and sessions belong to projects. There is no merge toggle there, because
+that is what those rows already are. Projects, colours and tags live
+in **Projects**. `Download CSVs` gives a zip of three: every session in
+`sessions.csv`, and the daily totals per project and per tag in the other two. A
+CSV holds one table, and one click should still be one download.
 
 ## Installation
 
@@ -130,6 +157,8 @@ To install everything, just build the Dockerfile and run through docker. You may
 - `ACCESS_TOKEN_TTL` - How long a session token stays valid before it has to be refreshed, by default 1h
 - `REFRESH_TOKEN_TTL` - How long a user stays logged in without re-entering their password, by default 30d
 - `PASSWORD_MIN_LENGTH` - Minimum length of a user password, by default 8
+- `LOGIN_MAX_ATTEMPTS` - Failed logins allowed for one username within `LOGIN_LOCKOUT_WINDOW` before further attempts are refused with `429`, by default 5
+- `LOGIN_LOCKOUT_WINDOW` - How long a failed login counts against a username, by default 15m. The counter lives in process memory, so a restart clears it
 
 After installation, you want to define the questions that will be answering regularly. Questions are grouped in catalogues and every user has a default catalogue that will be automatically opened when he/she logs in.
 

@@ -16,8 +16,13 @@
       storeTokens(
         await unwrap(() => loginCall({ body: { username, password }, auth: false }))
       )
-    } catch {
-      error = 'That username and password do not match.'
+    } catch (failure) {
+      // A lockout has to say so. Told "that password is wrong" instead, someone
+      // who typed the right one just keeps trying and stays locked out.
+      error =
+        failure?.status === 429
+          ? failure.message
+          : 'That username and password do not match.'
       return
     } finally {
       busy = false

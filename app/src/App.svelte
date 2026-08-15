@@ -1,5 +1,7 @@
 <script>
-  import { link, navigate, path } from './lib/router.js'
+  // `path` is aliased because this file also draws an SVG `<path>`, and Svelte
+  // reads a lowercase tag that matches something in scope as ambiguous.
+  import { link, navigate, path as route } from './lib/router.js'
   import Landing from './routes/Landing.svelte'
   import Questionnaire from './routes/wellbeing/Questionnaire.svelte'
   import Table from './routes/wellbeing/Table.svelte'
@@ -31,7 +33,7 @@
     '/login': Login,
   }
 
-  const Page = $derived(ROUTES[$path] ?? Landing)
+  const Page = $derived(ROUTES[$route] ?? Landing)
 
   let menuOpen = $state(false)
 
@@ -51,7 +53,7 @@
   // opening Settings from a running timer quietly moved you into the other
   // half; from here the way on is the chooser, whichever half you came from.
   const section = $derived(
-    $path.startsWith('/time') ? 'time' : ACCOUNT_PATHS.includes($path) ? null : 'wellbeing'
+    $route.startsWith('/time') ? 'time' : ACCOUNT_PATHS.includes($route) ? null : 'wellbeing'
   )
 
   // The editor and admin entries are hidden without the matching flag; the API
@@ -111,7 +113,7 @@
               {href}
               use:link
               class="meta rounded-md px-3 py-2 transition
-                     {$path === href ? 'bg-white/8 text-paper' : 'hover:text-paper'}"
+                     {$route === href ? 'bg-white/8 text-paper' : 'hover:text-paper'}"
             >
               {label}
             </a>

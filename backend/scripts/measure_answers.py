@@ -164,7 +164,7 @@ def main_() -> None:
         )
         time_call(client, "GET /api/stats/variables", "/api/stats/variables", headers)
         time_call(
-            client, "GET /api/answers/export.xlsx", "/api/answers/export.xlsx", headers
+            client, "GET /api/answers/export.csv", "/api/answers/export.csv", headers
         )
 
 

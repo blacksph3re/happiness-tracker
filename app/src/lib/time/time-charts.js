@@ -72,10 +72,17 @@ export function lineOptions({ days, series, smoothed }) {
 export function barOptions({ days, series }) {
   return {
     ...baseOptions(),
+    // Per bar, like the donut beside it, rather than per day: pointing at a
+    // colour and being told what it is should not mean reading a list of every
+    // group that day to find the one under the cursor. The axis variant also
+    // only appears once the pointer is near the axis, which on a short bar felt
+    // like the native tooltip it is not.
     tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-      valueFormatter: (value) => `${value.toFixed(2)} h`,
+      trigger: 'item',
+      // Through `dayLabel`, so the tooltip names the day the way the axis under
+      // it does rather than in the raw key the category happens to be.
+      formatter: ({ name, seriesName, value }) =>
+        `${seriesName}<br>${dayLabel(name)} · ${(value ?? 0).toFixed(2)} h`,
     },
     xAxis: {
       type: 'category',

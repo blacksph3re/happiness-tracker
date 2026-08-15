@@ -42,6 +42,40 @@ export function isoWeek(day) {
   }
 }
 
+/** A `YYYY-MM-DD` key as a Date in the browser's own zone, for formatting. */
+function localDate(key) {
+  const [year, month, day] = key.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+/**
+ * Name a week and the days it covers, e.g. `Week 24 · Jun 8 – 14`.
+ *
+ * The span is spelled out because a week number alone cannot be placed without
+ * a calendar to hand, and the record is scrolled through rather than stepped:
+ * there is no "current" week to read the neighbours against. The year appears
+ * only once the week leaves the current one, where a month alone is ambiguous —
+ * scrolling back far enough eventually meets last December.
+ *
+ * `formatRange` rather than two formatted dates and a dash: it is what decides
+ * per locale that a span inside one month says the month once, and *where* —
+ * `Jun 8 – 14` here, `8.–14. Juni` in German. Concatenating by hand put the
+ * month between the two days on the first attempt.
+ *
+ * @param {string} anchor A `YYYY-MM-DD` key inside the week.
+ * @returns {string}
+ */
+export function weekHeading(anchor) {
+  const { start, end } = period('week', anchor)
+  const to = localDate(end)
+  const format = new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(to.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
+  })
+  return `Week ${isoWeek(anchor).week} · ${format.formatRange(localDate(start), to)}`
+}
+
 const MONTHS = [
   'January',
   'February',

@@ -108,6 +108,25 @@
       {/if}
       {#if live && project.tags.length}·{/if}
       {#if project.tags.length}
+        <!-- The icon is what separates "Client work" the tag from "since 09:00"
+             the clause: joined by dots alone, the line read as one sentence
+             whose second half happened to be nouns. -->
+        <svg
+          viewBox="0 0 16 16"
+          width="11"
+          height="11"
+          fill="none"
+          aria-hidden="true"
+          class="mr-0.5 inline-block align-baseline"
+        >
+          <path
+            d="M2.2 2.2h5L14 9l-5 5-6.8-6.8V2.2Z"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+          />
+          <circle cx="5" cy="5" r="1.1" fill="currentColor" />
+        </svg>
         {project.tags.map((tag) => tag.name).join(' · ')}
       {/if}
     </span>
@@ -166,14 +185,18 @@
       {:else}
         {#if resumable}
           <!-- The only control on the card that is not the card: a stop by
-               mistake is undone here, and the pause since counts as worked. -->
+               mistake is undone here, and the pause since counts as worked.
+               Hovers white like every other outlined control — it opens a
+               confirmation rather than doing anything, and the ember hover is
+               how the app says "careful", which belongs on the button that
+               actually rewrites the session. -->
           <button
             type="button"
             data-resume
             {disabled}
             onclick={() => (confirming = true)}
             class="meta pointer-events-auto rounded-md border border-white/20 px-3 py-2
-                   hover:border-ember"
+                   hover:border-white/40"
           >
             Resume
           </button>

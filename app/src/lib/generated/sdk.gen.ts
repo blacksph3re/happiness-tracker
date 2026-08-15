@@ -28,7 +28,7 @@ export const getVersion = <ThrowOnError extends boolean = false>(options?: Optio
 /**
  * Sign in
  *
- * Exchange a username and password for an access and a refresh token. Unknown usernames and wrong passwords are answered identically.
+ * Exchange a username and password for an access and a refresh token. Unknown usernames and wrong passwords are answered identically, and take the same time to answer. Too many failures for one username within the lockout window are refused with `429` until it passes.
  */
 export const login = <ThrowOnError extends boolean = false>(options: Options<LoginData, ThrowOnError>): RequestResult<LoginResponses, LoginErrors, ThrowOnError> => (options.client ?? client).post<LoginResponses, LoginErrors, ThrowOnError>({
     url: '/api/login',
@@ -374,13 +374,13 @@ export const upsertAnswer = <ThrowOnError extends boolean = false>(options: Opti
 });
 
 /**
- * Download my answers as a spreadsheet
+ * Download my answers as CSV
  *
- * Render the answers as an .xlsx workbook: one row per day, one column per question ever answered.
+ * Render the answers as a CSV: one row per day, one column per question ever answered.
  */
 export const exportAnswers = <ThrowOnError extends boolean = false>(options?: Options<ExportAnswersData, ThrowOnError>): RequestResult<ExportAnswersResponses, ExportAnswersErrors, ThrowOnError> => (options?.client ?? client).get<ExportAnswersResponses, ExportAnswersErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/answers/export.xlsx',
+    url: '/api/answers/export.csv',
     ...options
 });
 
@@ -641,12 +641,12 @@ export const timeSummary = <ThrowOnError extends boolean = false>(options?: Opti
 });
 
 /**
- * Download sessions as a spreadsheet
+ * Download sessions as CSV
  *
- * Every session on one sheet, with the daily totals per project and per tag on two more, worked out the same way the app shows them.
+ * Every session in one CSV, with the daily totals per project and per tag in two more, worked out the same way the app shows them. Three files because a CSV holds one table, zipped because a click gives one download.
  */
 export const exportTime = <ThrowOnError extends boolean = false>(options?: Options<ExportTimeData, ThrowOnError>): RequestResult<ExportTimeResponses, ExportTimeErrors, ThrowOnError> => (options?.client ?? client).get<ExportTimeResponses, ExportTimeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/time/export.xlsx',
+    url: '/api/time/export.zip',
     ...options
 });

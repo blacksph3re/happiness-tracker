@@ -1,11 +1,13 @@
 <script>
+  import { tick } from 'svelte'
+
+  import { swipe } from '../../lib/swipe.js'
   import { attempt } from '../../lib/api.js'
   import { exportAnswers } from '../../lib/generated/sdk.gen'
   import { ensureAllCatalogues, ensureAnswers } from '../../lib/store.js'
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
   import { navigate } from '../../lib/router.js'
   import { wide } from '../../lib/media.js'
-  import { pushToast } from '../../lib/toasts.js'
   import { fly } from 'svelte/transition'
 
   const WINDOW_STEP = 14
@@ -16,7 +18,6 @@
   // re-find each answer when one day says "Home" and the next says something
   // three times as long.
   const ROW_HEIGHT = 'min-h-14'
-  const SWIPE_THRESHOLD = 48
 
   let rows = $state([])
   let questions = $state([])
@@ -29,7 +30,6 @@
   // move went, so the change animates in the direction of travel.
   let selectedDay = $state(today())
   let direction = $state(1)
-  let touchStartX = 0
 
   // Open on today at the right-hand edge rather than on the far end: the days
   // past today are empty by definition, so scrolling to them shows nothing.
@@ -47,6 +47,53 @@
   $effect(() => {
     load()
   })
+
+  /**
+   * Move a fortnight through the record, widening it first if there is room.
+   *
+   * Two things were wrong with these buttons. On a short history they added
+   * columns off to the left and left the view where it was, so nothing appeared
+   * to happen. On a long one they could add nothing at all — the window already
+   * reaches the first day answered — so they did nothing *and* nothing appeared
+   * to happen.
+   *
+   * Defining the move by what is on screen rather than by the window answers
+   * both: the column at one edge is carried to the other, which lands on the
+   * days just added when there were any, and pages through the ones already
+   * there when there were not.
+   *
+   * @param {'past' | 'future'} side Which way to go.
+   */
+  async function widen(side) {
+    const edge = visibleEdge(side)
+    if (side === 'past') past += WINDOW_STEP
+    else future += WINDOW_STEP
+
+    await tick()
+    const cell = edge && scroller?.querySelector(`[data-column="${edge}"]`)
+    if (!cell) return
+    const box = scroller.getBoundingClientRect()
+    const at = cell.getBoundingClientRect()
+    // Carried across: the leftmost column becomes the rightmost, and back.
+    scroller.scrollLeft += side === 'past' ? at.right - box.right : at.left - box.left
+  }
+
+  /**
+   * The day at one edge of what is currently on screen.
+   *
+   * @param {'past' | 'future'} side
+   * @returns {string | undefined} A `YYYY-MM-DD` key, or nothing when the table
+   *   has not been drawn yet.
+   */
+  function visibleEdge(side) {
+    if (!scroller) return undefined
+    const box = scroller.getBoundingClientRect()
+    const columns = [...scroller.querySelectorAll('[data-column]')].filter((cell) => {
+      const at = cell.getBoundingClientRect()
+      return at.right > box.left && at.left < box.right
+    })
+    return (side === 'past' ? columns[0] : columns.at(-1))?.dataset.column
+  }
 
   async function load() {
     try {
@@ -74,17 +121,6 @@
   function stepDay(delta) {
     direction = delta
     selectedDay = shiftDay(selectedDay, delta)
-  }
-
-  function onTouchStart(event) {
-    touchStartX = event.changedTouches[0].clientX
-  }
-
-  /** Treat a horizontal drag as a day change, the way a photo viewer would. */
-  function onTouchEnd(event) {
-    const travelled = event.changedTouches[0].clientX - touchStartX
-    if (Math.abs(travelled) < SWIPE_THRESHOLD) return
-    stepDay(travelled < 0 ? 1 : -1)
   }
 
   // The columns are a continuous stretch of calendar days, not only the days
@@ -123,7 +159,7 @@
     const url = URL.createObjectURL(file)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = 'happiness-answers.xlsx'
+    anchor.download = 'happiness-answers.csv'
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()
@@ -154,13 +190,13 @@
       </button>
       <button
         class="meta hidden rounded-md border border-white/15 px-4 py-2 hover:border-white/40 md:inline-block"
-        onclick={() => (past += WINDOW_STEP)}
+        onclick={() => widen('past')}
       >
         ← Earlier days
       </button>
       <button
         class="meta hidden rounded-md border border-white/15 px-4 py-2 hover:border-white/40 md:inline-block"
-        onclick={() => (future += WINDOW_STEP)}
+        onclick={() => widen('future')}
       >
         Later days →
       </button>
@@ -168,7 +204,7 @@
         class="meta rounded-md border border-white/15 px-4 py-2 hover:border-white/40"
         onclick={download}
       >
-        Download .xlsx
+        Download .csv
       </button>
     </div>
   </header>
@@ -179,11 +215,10 @@
     <!-- Narrow screens read one day at a time. Twenty columns of numbers in a
          320 px viewport is not a table anyone can read. -->
     {#if !$wide}
-    <div
-      data-day-view
-      ontouchstart={onTouchStart}
-      ontouchend={onTouchEnd}
-    >
+    <!-- The swipe repeats Earlier and Later, which are real buttons; see
+         `swipe` for why this is ignored rather than given a role. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div data-day-view use:swipe={{ onswipe: stepDay }}>
       <div class="mb-4 flex items-baseline justify-between">
         <p class="text-lg font-semibold">
           {selectedDay === today() ? 'Today' : dayLabel(selectedDay)}
@@ -275,6 +310,7 @@
                 class="meta truncate px-4 py-3 text-left
                        {day === today() ? 'text-ember' : ''}"
                 scope="col"
+                data-column={day}
                 data-today={day === today() ? '' : undefined}
               >
                 {day === today() ? 'Today' : dayLabel(day)}

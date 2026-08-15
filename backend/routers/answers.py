@@ -1,13 +1,12 @@
 import math
 from datetime import date
-from io import BytesIO
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
-from openpyxl import Workbook
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
+from exports import as_csv
 from models import ORIGIN_COMPUTED, Answer, Question, QuestionOption
 from schemas import AnswerIn, AnswerOut
 from services import score_for_day, sync_system_answers
@@ -301,21 +300,15 @@ def list_answers(
 
 
 @router.get(
-    "/export.xlsx",
+    "/export.csv",
     operation_id="exportAnswers",
-    summary="Download my answers as a spreadsheet",
+    summary="Download my answers as CSV",
     description=(
-        "Render the answers as an .xlsx workbook: one row per day, one column "
-        "per question ever answered."
+        "Render the answers as a CSV: one row per day, one column per question "
+        "ever answered."
     ),
-    response_description="An .xlsx attachment.",
-    responses={
-        200: {
-            "content": {
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
-            }
-        }
-    },
+    response_description="A .csv attachment.",
+    responses={200: {"content": {"text/csv": {}}}},
 )
 def export_answers(
     user: CurrentUser,
@@ -343,7 +336,7 @@ def export_answers(
     Returns
     -------
     fastapi.Response
-        An ``.xlsx`` attachment.
+        A ``.csv`` attachment.
     """
     # The same rows the app reads, so the spreadsheet agrees with the screen -
     # scores included.
@@ -367,10 +360,7 @@ def export_answers(
         for option in question.options
     }
 
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Answers"
-    sheet.append(["Day"] + [question.prompt for question in questions])
+    rows: list[list[object]] = [["Day"] + [question.prompt for question in questions]]
 
     by_day: dict[date, dict[int, dict]] = {}
     for answer in answers:
@@ -384,17 +374,35 @@ def export_answers(
             elif answer["option_id"] is not None:
                 row.append(option_labels.get(answer["option_id"]))
             else:
-                row.append(answer["value"])
-        sheet.append(row)
+                row.append(_number(answer["value"]))
+        rows.append(row)
 
-    buffer = BytesIO()
-    workbook.save(buffer)
     return Response(
-        content=buffer.getvalue(),
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ),
+        content=as_csv(rows),
+        media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": 'attachment; filename="happiness-answers.xlsx"'
+            "Content-Disposition": 'attachment; filename="happiness-answers.csv"'
         },
     )
+
+
+def _number(value: float | None) -> float | int | None:
+    """Write a whole number as one.
+
+    A rating of 4 is an integer everywhere it is shown, and only became ``4.0``
+    on the way out. Computed scores can be fractional, so the decimals stay
+    wherever they carry anything.
+
+    Parameters
+    ----------
+    value : float or None
+        The stored answer.
+
+    Returns
+    -------
+    float or int or None
+        `value` as an int where it is integral, unchanged otherwise.
+    """
+    if value is None:
+        return None
+    return int(value) if float(value).is_integer() else value

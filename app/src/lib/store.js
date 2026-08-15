@@ -166,6 +166,27 @@ export async function ensureAnswers({ force = false } = {}) {
   })
 }
 
+/**
+ * Re-read one day's answers from the server and fold them into the cache.
+ *
+ * The auto-tracked values — weekday, month, year, day-of-year, hour — are
+ * written by the *server*, with the day's first answer, so they are in no
+ * response the client sees and `rememberAnswer` cannot know about them. The
+ * record builds its columns from the rows it holds, which is why they were
+ * missing from it until something forced a full reload.
+ *
+ * One day rather than everything, and merged rather than replaced: answering is
+ * a run of quick writes, and swapping the whole array underneath them would
+ * drop any answer whose own write had not landed yet.
+ *
+ * @param {string} day The `YYYY-MM-DD` key to re-read.
+ */
+export async function refreshDay(day) {
+  const rows = await attempt(() => listAnswers({ query: { from: day, to: day } }))
+  if (!rows) return
+  answers.update((all) => [...all.filter((row) => row.day !== day), ...rows])
+}
+
 /** Load the plottable variables, unless they are already known. */
 export async function ensureVariables({ force = false } = {}) {
   if (!force && get(variables)) return get(variables)

@@ -370,3 +370,20 @@ test('a long question does not shift the answer scale down the page', async ({
     expect(withLong, `the scale moved at ${width}px`).toBe(withShort)
   }
 })
+
+test('the auto-tracked rows reach the record without a reload', async ({
+  page,
+  account,
+}) => {
+  await page.goto('/answer')
+  await answerBand(page, 3)
+
+  // Through the navigation, not a fresh load: the store answers the record from
+  // memory, and what it held was only the answer this page sent. Weekday, month
+  // and the rest are written by the *server* alongside the day's first answer,
+  // so they existed and the record simply could not see them.
+  await page.getByRole('link', { name: 'Record' }).click()
+  const table = page.getByRole('table')
+  await expect(table.getByRole('rowheader', { name: 'Weekday' })).toBeVisible()
+  await expect(table.getByRole('rowheader', { name: 'Month' })).toBeVisible()
+})

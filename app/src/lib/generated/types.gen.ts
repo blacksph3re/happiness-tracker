@@ -1805,7 +1805,7 @@ export type ExportAnswersData = {
          */
         to?: string | null;
     };
-    url: '/api/answers/export.xlsx';
+    url: '/api/answers/export.csv';
 };
 
 export type ExportAnswersErrors = {
@@ -1819,7 +1819,7 @@ export type ExportAnswersError = ExportAnswersErrors[keyof ExportAnswersErrors];
 
 export type ExportAnswersResponses = {
     /**
-     * An .xlsx attachment.
+     * A .csv attachment.
      */
     200: unknown;
 };
@@ -2403,7 +2403,7 @@ export type ExportTimeData = {
          */
         as_of?: string | null;
     };
-    url: '/api/time/export.xlsx';
+    url: '/api/time/export.zip';
 };
 
 export type ExportTimeErrors = {
@@ -2417,7 +2417,7 @@ export type ExportTimeError = ExportTimeErrors[keyof ExportTimeErrors];
 
 export type ExportTimeResponses = {
     /**
-     * An .xlsx workbook.
+     * A .zip of three .csv files.
      */
     200: unknown;
 };

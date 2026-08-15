@@ -38,15 +38,96 @@ test('the record shows the history and opens a day for answering', async ({
   await expect(page.getByRole('group')).toBeVisible()
 })
 
-test('the export downloads a spreadsheet', async ({ page, account }) => {
+/** What the table is showing: how many columns, and the days at each edge. */
+async function viewport(page) {
+  return page.evaluate(() => {
+    const node = document.querySelector('div.overflow-x-auto')
+    const columns = [...node.querySelectorAll('[data-column]')]
+    const box = node.getBoundingClientRect()
+    const visible = columns.filter((cell) => {
+      const at = cell.getBoundingClientRect()
+      return at.right > box.left && at.left < box.right
+    })
+    return {
+      columns: columns.length,
+      scrollLeft: Math.round(node.scrollLeft),
+      first: visible[0]?.dataset.column,
+      last: visible.at(-1)?.dataset.column,
+    }
+  })
+}
+
+test('Earlier days pages back through a long history', async ({ page, account }) => {
+  // Sixty days answered, so the window already reaches the first of them and
+  // there is nothing left for the button to add. It did nothing at all: no new
+  // columns, and the view where it was.
+  await withHistory(account, 60)
+  await page.goto('/table')
+  await expect(page.getByRole('table')).toBeVisible()
+  await page.waitForTimeout(400)
+
+  const before = await viewport(page)
+  await page.getByRole('button', { name: '← Earlier days' }).click()
+  await page.waitForTimeout(300)
+  const after = await viewport(page)
+
+  // The day that was on the left edge is now on the right: one screen back.
+  expect(after.last).toBe(before.first)
+  expect(after.scrollLeft).toBeLessThan(before.scrollLeft)
+  // Back, not all the way to the beginning, which is where it first landed.
+  expect(after.scrollLeft).toBeGreaterThan(0)
+})
+
+test('Earlier days lands on the days it added to a short history', async ({
+  page,
+  account,
+}) => {
+  // Three days answered, so the fortnight really is added.
+  await withHistory(account, 3)
+  await page.goto('/table')
+  await expect(page.getByRole('table')).toBeVisible()
+  await page.waitForTimeout(400)
+
+  const before = await viewport(page)
+  await page.getByRole('button', { name: '← Earlier days' }).click()
+  await page.waitForTimeout(300)
+  const after = await viewport(page)
+
+  expect(after.columns).toBeGreaterThan(before.columns)
+  // The view moved onto them rather than leaving them off to the left.
+  expect(after.last).toBe(before.first)
+  expect(after.first < before.first, 'the view is showing earlier days').toBe(true)
+})
+
+test('the export downloads a csv', async ({ page, account }) => {
   await withHistory(account, 3)
   await page.goto('/table')
 
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.getByRole('button', { name: 'Download .xlsx' }).click(),
+    page.getByRole('button', { name: 'Download .csv' }).click(),
   ])
-  expect(download.suggestedFilename()).toBe('happiness-answers.xlsx')
+  expect(download.suggestedFilename()).toBe('happiness-answers.csv')
+
+  // A day per row, and a header naming the questions: an error body saved under
+  // a .csv name would also download happily.
+  const chunks = []
+  for await (const chunk of await download.createReadStream()) chunks.push(chunk)
+  const text = Buffer.concat(chunks).toString('utf8')
+  expect(text.replace(/^\uFEFF/, '')).toMatch(/^Day,/)
+})
+
+test('the window never claims more days than were answered', async ({ page, account }) => {
+  // The length slider is clamped to the days on record, but its *value* used to
+  // keep whatever was stored — so one answered day still read "30 days", a
+  // window the data cannot fill.
+  await withHistory(account, 1)
+  await page.goto('/stats')
+
+  await expect(page.getByText(/^Length · 1 day$/)).toBeVisible()
+  const length = page.locator('input[type=range]').nth(1)
+  await expect(length).toHaveAttribute('max', '1')
+  expect(await length.inputValue()).toBe('1')
 })
 
 test('every stats view renders, and the controls survive a reload', async ({

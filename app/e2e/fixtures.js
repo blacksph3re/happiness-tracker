@@ -112,7 +112,12 @@ export async function answerBand(page, index) {
   // The write resolves long before the card finishes turning, and a tap during
   // that turn is deliberately ignored so a double tap cannot skip a question.
   // Returning early would make any caller answering twice in a row race it.
-  await expect(page.locator('[data-card]')).toHaveCSS('opacity', '1')
+  //
+  // Waited on the flag rather than the opacity it drives: the fade is a CSS
+  // transition, so a sample taken before the browser has applied the new class
+  // still reads `1` and this returned mid-turn - the next tap then landed while
+  // the card was leaving, was dropped, and its write never came.
+  await expect(page.locator('[data-card]')).toHaveAttribute('data-leaving', 'false')
 }
 
 /**

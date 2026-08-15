@@ -1,9 +1,19 @@
 <script>
+  import { get } from 'svelte/store'
+  import { swipe } from '../../lib/swipe.js'
   import Ladder from '../../lib/wellbeing/Ladder.svelte'
   import { link } from '../../lib/router.js'
   import { attempt } from '../../lib/api.js'
   import { upsertAnswer } from '../../lib/generated/sdk.gen'
-  import { ensureAnswers, ensureCatalogue, ensureCatalogues, ensureMe, rememberAnswer } from '../../lib/store.js'
+  import {
+    answers as answerStore,
+    ensureAnswers,
+    ensureCatalogue,
+    ensureCatalogues,
+    ensureMe,
+    refreshDay,
+    rememberAnswer,
+  } from '../../lib/store.js'
   import { dayLabel, localHour, shiftDay, today } from '../../lib/day.js'
   import { ANSWER_MIN_HEIGHT } from '../../lib/layout.js'
   import { answerRatio, tint } from '../../lib/wellbeing/scale.js'
@@ -108,6 +118,10 @@
     const question = current
     answers = { ...answers, [question.id]: { question_id: question.id, ...payload } }
 
+    // Whether this is the first thing recorded on this day, read before the
+    // cache is told about it: the server answers the day's first write by also
+    // writing the auto-tracked values, and only a re-read has those.
+    const opensTheDay = !get(answerStore).some((row) => row.day === day)
     rememberAnswer({ day, question_id: question.id, ...payload })
 
     // Fire and forget: the next question opens without waiting for the server.
@@ -115,7 +129,9 @@
       upsertAnswer({
         body: { day, local_hour: localHour(), question_id: question.id, ...payload },
       })
-    )
+    ).then(() => {
+      if (opensTheDay) refreshDay(day)
+    })
 
     advance()
   }
@@ -152,41 +168,6 @@
     flipTo(position)
   }
 
-  // Matches the record's day swipe, so the same gesture means "the next one"
-  // wherever you are in the app.
-  const SWIPE_THRESHOLD = 48
-  let touchStart = null
-
-  function onTouchStart(event) {
-    // Dragging the slider is how a continuous question is answered; that drag
-    // must not also turn the page.
-    if (event.target.closest('input[type="range"]')) {
-      touchStart = null
-      return
-    }
-    const touch = event.changedTouches[0]
-    touchStart = { x: touch.clientX, y: touch.clientY }
-  }
-
-  /** Treat a horizontal drag as a move between questions. */
-  function onTouchEnd(event) {
-    if (!touchStart) return
-    const touch = event.changedTouches[0]
-    const travelled = touch.clientX - touchStart.x
-    const drift = touch.clientY - touchStart.y
-    touchStart = null
-
-    // Ignore a short drag, and anything more vertical than horizontal: that is
-    // a scroll, not a swipe.
-    if (Math.abs(travelled) < SWIPE_THRESHOLD) return
-    if (Math.abs(travelled) <= Math.abs(drift)) return
-
-    // Stops the browser turning this into a tap on whichever band the finger
-    // happened to lift over, which would answer the question being left.
-    event.preventDefault()
-    step(travelled < 0 ? 1 : -1)
-  }
-
   function step(delta) {
     const next = index + delta
     // The closing card is the last position, so stepping forward can reach it.
@@ -218,11 +199,12 @@
 </script>
 
 <!-- No hint on screen: the arrows and the progress bar already say the run has
-     an order, and the gesture is the same one the record uses. -->
+     an order, and the gesture is the same one the record uses. See `swipe` for
+     why this is ignored rather than given a role. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <section
   class="mx-auto w-full max-w-5xl px-5 py-8"
-  ontouchstart={onTouchStart}
-  ontouchend={onTouchEnd}
+  use:swipe={{ onswipe: step, ignore: 'input[type="range"]' }}
 >
   {#if loading}
     <p class="meta">Loading your questions…</p>
@@ -334,8 +316,13 @@
       </span>
     </nav>
 
+    <!-- `leaving` is published because it, not the opacity it drives, is what
+         decides whether a tap counts: the flag is cleared by a timer while the
+         fade is a CSS transition, so a test reading the opacity can believe the
+         card has settled while `record` is still dropping taps. -->
     <div
       data-card
+      data-leaving={leaving}
       class="rounded-xl p-3 ring-1 ring-ember/45 transition-all ease-out
              {leaving ? 'translate-y-1 opacity-0' : 'translate-y-0 opacity-100'}"
       style:transition-duration="{FLIP_MS}ms"

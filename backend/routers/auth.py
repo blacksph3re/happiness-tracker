@@ -21,9 +21,11 @@ from schemas import (
 from security import (
     ACCESS_TOKEN_TYPE,
     REFRESH_TOKEN_TYPE,
+    LoginLocked,
     TokenError,
     create_token,
     decode_token,
+    get_login_throttle,
     hash_password,
     issue_tokens,
     verify_password,
@@ -61,7 +63,9 @@ def version() -> Version:
     summary="Sign in",
     description=(
         "Exchange a username and password for an access and a refresh token. "
-        "Unknown usernames and wrong passwords are answered identically."
+        "Unknown usernames and wrong passwords are answered identically, and "
+        "take the same time to answer. Too many failures for one username "
+        "within the lockout window are refused with `429` until it passes."
     ),
     tags=["Auth"],
 )
@@ -83,17 +87,35 @@ def login(payload: LoginRequest, db: DbSession) -> TokenPair:
     Raises
     ------
     fastapi.HTTPException
-        With status 401 when the credentials do not match. Unknown usernames
-        and wrong passwords are answered identically so the endpoint cannot be
-        used to enumerate accounts.
+        With status 401 when the credentials do not match, or 429 when the
+        submitted username has failed too many times recently. Unknown
+        usernames and wrong passwords are answered identically, and the
+        lockout is keyed on the submitted username regardless of whether an
+        account exists, so neither response can be used to enumerate
+        accounts.
     """
+    throttle = get_login_throttle()
+    try:
+        throttle.check(payload.username)
+    except LoginLocked:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts. Try again later.",
+        ) from None
+
     user = db.execute(
         select(User).where(User.username == payload.username)
     ).scalar_one_or_none()
-    if user is None or not verify_password(payload.password, user.password_hash):
+    # Always hashes, even for a username that does not exist: skipping it
+    # would answer a nonexistent username measurably faster than a wrong
+    # password for a real one.
+    valid = verify_password(payload.password, user.password_hash if user else None)
+    if user is None or not valid:
+        throttle.record_failure(payload.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
         )
+    throttle.clear(payload.username)
     return TokenPair(**issue_tokens(user.id, user.token_version))
 
 

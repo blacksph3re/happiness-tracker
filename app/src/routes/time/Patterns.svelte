@@ -52,6 +52,11 @@
   const MAX_CUSTOM_DAYS = 365
   const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
+  /** The widest smoothing the slider offers, and the reach it needs either side. */
+  const MAX_SMOOTHING = 14
+
+  const MAX_PAD = Math.floor((MAX_SMOOTHING - 1) / 2)
+
   let by = $state('project')
   let unit = $state('month')
   let anchor = $state(today())
@@ -107,40 +112,65 @@
     }
   })
 
+  /**
+   * Each group's day-by-day seconds, *after* its rule.
+   *
+   * Reported rather than tracked, everywhere and without a second column
+   * beside it: a tag carrying a lunch rule is a tag whose hours are the hours
+   * it reports, and showing the un-deducted figure next to it only invites the
+   * question of which one counts. A tag whose raw hours matter is a tag with no
+   * rule on it — or a second tag over the same projects.
+   *
+   * Wherever no rule applies, which is every project and most tags, `reported`
+   * equals what was tracked and nothing here changes.
+   */
   const groups = $derived.by(() => {
-    const seen = new Map()
-    const reported = new Map()
+    const shown = new Map()
+    const raw = new Map()
     for (const row of rows) {
-      if (!seen.has(row.key)) {
-        seen.set(row.key, new Map())
-        reported.set(row.key, new Map())
+      if (!shown.has(row.key)) {
+        shown.set(row.key, new Map())
+        raw.set(row.key, new Map())
       }
-      seen.get(row.key).set(row.day, row.seconds)
-      reported.get(row.key).set(row.day, row.reported ?? row.seconds)
+      shown.get(row.key).set(row.day, row.reported ?? row.seconds)
+      raw.get(row.key).set(row.day, row.seconds)
     }
-    return [...seen.entries()]
-      .map(([key, byDay]) => ({
-        key,
-        ...describe(key),
-        byDay,
-        total: [...byDay.entries()]
-          .filter(([day]) => kept.has(day))
-          .reduce((sum, [, seconds]) => sum + seconds, 0),
-        // What the tag's rule makes of the same days. Equal to the tracked
-        // total wherever no rule applies, which is everywhere by default.
-        reportedTotal: [...reported.get(key).entries()]
-          .filter(([day]) => kept.has(day))
-          .reduce((sum, [, seconds]) => sum + seconds, 0),
-      }))
-      .sort((a, b) => b.total - a.total)
+    const summed = (byDay) =>
+      [...byDay.entries()]
+        .filter(([day]) => kept.has(day))
+        .reduce((sum, [, seconds]) => sum + seconds, 0)
+
+    return (
+      [...shown.entries()]
+        .map(([key, byDay]) => ({
+          key,
+          ...describe(key),
+          byDay,
+          total: summed(byDay),
+          // Kept for the table alone, which is the one place both numbers
+          // belong: reading them side by side is what says how much the rule
+          // took. Every other view — the charts, the shares, the caption —
+          // reads `total`, which is what the tag reports.
+          trackedTotal: summed(raw.get(key)),
+        }))
+        // A tag every day of which the filters left out is a legend entry, a
+        // slice of nothing and a table row reading zero. It is not in the window
+        // being looked at, so it is not on the page.
+        .filter((group) => group.trackedTotal > 0)
+        .sort((a, b) => b.total - a.total)
+    )
   })
 
   const tracked = $derived(groups.reduce((sum, group) => sum + group.total, 0))
 
-  /** Whether any group's rule changed its number, so the column earns its place. */
-  const deducted = $derived(
-    groups.some((group) => group.reportedTotal !== group.total)
-  )
+  /**
+   * Whether a rule actually took something off what is shown.
+   *
+   * Only ever used to *say so*. The numbers are the reported ones either way;
+   * this decides whether the page calls them reported or tracked, so a figure
+   * that has had an hour removed never reads as the hours worked.
+   */
+  const deducted = $derived(rows.some((row) => (row.deduction ?? 0) > 0))
 
   const overlapping = $derived(
     days.some(
@@ -165,19 +195,63 @@
 
   const plotted = $derived(days.filter((day) => kept.has(day)))
 
+  /** Half a smoothing window: how far past each edge an average has to reach. */
+  const smoothingPad = $derived(smoothing > 1 ? Math.floor((smoothing - 1) / 2) : 0)
+
+  /**
+   * The days an average is computed over: the window, plus half a window
+   * either side of it.
+   *
+   * Without the padding the average at each edge was taken over however much of
+   * its window happened to fall inside the period, so the first and last days
+   * of every month read as a taper that is an artefact of where the month was
+   * cut rather than anything that was worked. The padding is averaged over and
+   * then cut off again, so what is drawn is still exactly the window.
+   *
+   * Padding days are filtered like any other — "only days I worked from home"
+   * must not be quietly broken by the six days before the first of the month —
+   * and nothing after today is reached for, there being nothing there yet.
+   */
+  const padded = $derived.by(() => {
+    if (smoothingPad === 0 || plotted.length === 0) {
+      return { days: plotted, lead: 0, tail: 0 }
+    }
+    const before = []
+    const after = []
+    for (let step = smoothingPad; step >= 1; step -= 1) {
+      before.push(shiftDay(plotted[0], -step))
+    }
+    for (let step = 1; step <= smoothingPad; step += 1) {
+      const day = shiftDay(plotted.at(-1), step)
+      if (day <= today()) after.push(day)
+    }
+    const allowed = matchingDays([...before, ...after], facets, filters)
+    const lead = before.filter((day) => allowed.has(day))
+    const tail = after.filter((day) => allowed.has(day))
+    return { days: [...lead, ...plotted, ...tail], lead: lead.length, tail: tail.length }
+  })
+
   const seriesInput = $derived({
     days: plotted,
     smoothed: smoothing > 1,
     series: groups.map((group) => {
-      const daily = plotted.map((day) =>
+      const value = (day) =>
         group.byDay.has(day) ? hours(group.byDay.get(day)) : showGaps ? null : 0
+      if (smoothing <= 1) {
+        return { name: group.name, colour: swatch(group.colour), data: plotted.map(value) }
+      }
+      // Smoothing reads through a gap, which is the point of the control: a
+      // wider window closes the holes a sparse week leaves.
+      const averaged = movingAverage(
+        padded.days.map((day) => value(day) ?? 0),
+        smoothing
       )
       return {
         name: group.name,
         colour: swatch(group.colour),
-        // Smoothing reads through a gap, which is the point of the control: a
-        // wider window closes the holes a sparse week leaves.
-        data: smoothing > 1 ? movingAverage(daily.map((v) => v ?? 0), smoothing) : daily,
+        // Back to the window: the padding was there to be averaged over, not
+        // to be drawn, and drawing it would widen the period behind the reader.
+        data: averaged.slice(padded.lead, averaged.length - padded.tail),
       }
     }),
   })
@@ -257,14 +331,22 @@
    * A day and a week both fit: one lane per project, or one per day. A month of
    * lanes would be thirty rows of slivers, so the long windows answer "how
    * much" and leave "when" to the shorter ones.
+   *
+   * Never by tag. A lane says when something ran, and a tag does not run —
+   * its projects do, several of them at once and each already drawn in its own
+   * colour, so the tag lane was the same blocks with the row labels taken away.
    */
-  const strip = $derived(!asLine)
+  const strip = $derived(!asLine && by !== 'tag')
 
   // The page reads its totals; it does not own them. A component that cannot
   // assign to `rows` or `loading` cannot feed them back into the query, which
   // is the shape of the loop that once froze this view.
   const summary = resource(
-    () => ({ by, start, end, dayView }),
+    // Fetched a fixed six days wider than the window at both ends, so a
+    // smoothed line has real neighbours to average with at its edges instead of
+    // tapering into a half-window. Fixed rather than `smoothingPad`, or every
+    // notch of the slider would be a different range and a fresh request.
+    () => ({ by, start: shiftDay(start, -MAX_PAD), end: shiftDay(end, MAX_PAD), dayView }),
     async ({ by: grouping, start: from, end: to }) => {
       await Promise.all([
         ensureProjects(),
@@ -321,7 +403,9 @@
       {/each}
     </div>
 
-    <div class="ml-auto flex gap-1" role="group" aria-label="Window">
+    <!-- Wraps, or five buttons at 79px each hang three pixels past a 390px
+         phone and give the whole page a horizontal scroll. -->
+    <div class="ml-auto flex flex-wrap gap-1" role="group" aria-label="Window">
       {#each WINDOWS as [value, label] (value)}
         <button
           class="meta rounded-md border px-4 py-2 transition
@@ -372,10 +456,13 @@
   <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
     <p class="meta" data-period>
       {dayView ? dayLabel(anchor) : shown.label}
-      · {formatDuration(tracked)} {by === 'tag' ? 'across tags' : 'tracked'}
-      {#if deducted}
-        · {formatDuration(groups.reduce((sum, g) => sum + g.reportedTotal, 0))} reported
-      {/if}
+      <!-- "reported" wherever a rule took something off, because the number is
+           then not the hours worked and must not read as though it were. -->
+      · {formatDuration(tracked)}{deducted ? ' reported' : ''}{by === 'tag'
+        ? ' across tags'
+        : deducted
+          ? ''
+          : ' tracked'}
     </p>
     <div class="flex gap-2">
       <!-- Custom is steered by its own sliders; a Previous that slid the window
@@ -413,8 +500,11 @@
 
   {#if !dayView}
     <div class="mb-4 rounded-xl border border-white/10 bg-ink-soft">
+      <!-- A whole row that answers a click has to answer a pointer too; the
+           card treatment, since that is what this is the header of. -->
       <button
-        class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+        class="flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3
+               text-left hover:bg-dusk/10"
         aria-expanded={filtersOpen}
         onclick={() => (filtersOpen = !filtersOpen)}
       >
@@ -458,7 +548,7 @@
 
   {#if strip}
     <div class="mb-4">
-      <DayTimeline {by} bind:day={anchor} bind:fullDay days={dayView ? null : days} />
+      <DayTimeline bind:day={anchor} bind:fullDay days={dayView ? null : days} />
     </div>
   {/if}
 
@@ -476,7 +566,7 @@
     {/if}
     <div class="mt-4 grid gap-4 lg:grid-cols-2">
       {#each ['Share of tracked time', asLine ? 'Average by weekday' : 'Hours per day'] as title (title)}
-        <div class="rounded-xl border border-white/10 bg-ink-soft p-4">
+        <div class="min-w-0 rounded-xl border border-white/10 bg-ink-soft p-4">
           <p class="meta mb-2">{title}</p>
           <div class="flex h-72 items-center justify-center text-haze">
             Nothing tracked in this window.
@@ -507,7 +597,7 @@
             <input
               type="range"
               min="1"
-              max="14"
+              max={MAX_SMOOTHING}
               bind:value={smoothing}
               aria-label="Smoothing"
               class="h-2 w-full cursor-pointer appearance-none rounded-full bg-dusk-deep
@@ -544,12 +634,17 @@
     <!-- The same pair under every window: what the time was spent on, and how
          it was distributed. Only the second card changes with the length of the
          period — days when there are few, weekday averages when there are many. -->
+    <!-- `min-w-0` on the items, and it is load-bearing: a grid track sizes to
+         its content's minimum, an ECharts canvas carries an inline pixel width,
+         and the two deadlock. Narrowing the window left the canvas at its old
+         width, which held the card at that width, which left the canvas nothing
+         smaller to resize to — so the card hung past the edge of the page. -->
     <div class="mt-4 grid gap-4 lg:grid-cols-2">
-      <div class="rounded-xl border border-white/10 bg-ink-soft p-4">
+      <div class="min-w-0 rounded-xl border border-white/10 bg-ink-soft p-4">
         <p class="meta mb-2">Share of tracked time</p>
         <div use:chart={shareOptions(shareInput)} class="h-72 w-full"></div>
       </div>
-      <div class="rounded-xl border border-white/10 bg-ink-soft p-4">
+      <div class="min-w-0 rounded-xl border border-white/10 bg-ink-soft p-4">
         <p class="meta mb-2">
           {asLine ? 'Average by weekday' : 'Hours per day'}
         </p>
@@ -580,11 +675,11 @@
               {group.name}
             </td>
             <td class="numeral py-2 text-right tabular-nums">
-              {formatDuration(group.total)}
+              {formatDuration(group.trackedTotal)}
             </td>
             {#if deducted}
               <td class="numeral py-2 text-right tabular-nums">
-                {formatDuration(group.reportedTotal)}
+                {formatDuration(group.total)}
               </td>
             {/if}
             <td class="numeral py-2 text-right tabular-nums text-haze">
@@ -593,6 +688,27 @@
           </tr>
         {/each}
       </tbody>
+      <!-- The column had a per-group number and no answer to "and altogether?".
+           Named "across tags" when grouping by tag, because there it is the sum
+           of overlapping rows rather than the hours the window holds. -->
+      <tfoot>
+        <tr class="border-t border-white/15" data-total>
+          <td class="py-2 font-medium">
+            {by === 'tag' ? 'Total across tags' : 'Total'}
+          </td>
+          <td class="numeral py-2 text-right font-medium tabular-nums">
+            {formatDuration(groups.reduce((sum, group) => sum + group.trackedTotal, 0))}
+          </td>
+          {#if deducted}
+            <td class="numeral py-2 text-right font-medium tabular-nums">
+              {formatDuration(tracked)}
+            </td>
+          {/if}
+          <!-- 100, not the sum of the column above it: the shares are rounded
+               per row and would read 99% or 101% often enough to look wrong. -->
+          <td class="numeral py-2 text-right tabular-nums text-haze">100%</td>
+        </tr>
+      </tfoot>
     </table>
   {/if}
 </section>

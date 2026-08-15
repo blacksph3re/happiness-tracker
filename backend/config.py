@@ -83,6 +83,16 @@ class Settings(BaseSettings):
     password_min_length: int = 8
     """Minimum accepted password length. The only password rule."""
 
+    login_max_attempts: int = 5
+    """Failed logins allowed for one username within `login_lockout_window`
+    before the next attempt is refused with 429 - regardless of whether that
+    username names a real account, so the lockout cannot be used to tell
+    which usernames exist."""
+
+    login_lockout_window: str = "15m"
+    """How long a failed login counts against a username, as a duration
+    string in the same format `access_token_ttl` accepts."""
+
     @property
     def database_url(self) -> str:
         """Return the SQLAlchemy URL for the configured SQLite file.
@@ -118,6 +128,17 @@ class Settings(BaseSettings):
             Parsed refresh token lifetime.
         """
         return _parse_duration(self.refresh_token_ttl)
+
+    @property
+    def login_lockout_window_delta(self) -> timedelta:
+        """Return `login_lockout_window` as a timedelta.
+
+        Returns
+        -------
+        datetime.timedelta
+            Parsed lockout window.
+        """
+        return _parse_duration(self.login_lockout_window)
 
     @property
     def signing_key(self) -> str:

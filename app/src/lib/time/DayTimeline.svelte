@@ -1,14 +1,13 @@
 <script>
+  import { swipe } from '../swipe.js'
   import { dayLabel, shiftDay, today } from '../day.js'
   import { clockOfSeconds, dayOffsets, formatDuration, slices } from './duration.js'
   import { now } from './tick.js'
   import { resource } from '../resource.svelte.js'
   import {
     ensureProjects,
-    ensureTags,
     ensureTimeEntries,
     projects as projectStore,
-    tags as tagStore,
     timeEntries,
   } from '../store.js'
 
@@ -22,7 +21,6 @@
    * length of a day.
    */
   let {
-    by = 'project',
     day = $bindable(today()),
     fullDay = $bindable(false),
     days = null,
@@ -45,29 +43,91 @@
   const NEIGHBOURS = 3
 
 
-  const SWIPE_THRESHOLD = 48
-  let touchStartX = 0
+  /**
+   * What the pointer is over, and where to put the label for it.
+   *
+   * A `title` attribute was doing this job, and doing it badly: the browser
+   * waits about a second before showing one, shows it wherever it likes, and on
+   * a phone never shows it at all. The charts on the same page answer instantly
+   * through their own tooltip, so this is the same answer in the same shape.
+   */
+  let hovered = $state(null)
 
-  function onTouchStart(event) {
-    touchStartX = event.changedTouches[0].clientX
+  /** Describe a span the way the chart tooltips describe a point. */
+  function label(span) {
+    const clock = `${clockOfSeconds(span.from)}–${
+      span.entry.ended_at ? clockOfSeconds(span.to) : 'running'
+    }`
+    const spill = span.to > window.to ? ' · runs past the end of this day' : ''
+    return {
+      name: span.project.name,
+      detail: `${clock} · ${formatDuration(span.seconds)}${spill}`,
+    }
   }
 
-  /** Treat a horizontal drag as a day change, the way a photo viewer would. */
-  function onTouchEnd(event) {
-    const travelled = event.changedTouches[0].clientX - touchStartX
-    if (Math.abs(travelled) < SWIPE_THRESHOLD) return
-    if (travelled < 0 && day >= today()) return
-    day = shiftDay(day, travelled < 0 ? 1 : -1)
+  /**
+   * Whether the label is held open by a tap rather than by the pointer.
+   *
+   * A finger has no hover: it arrives, and then it is gone. ECharts answers a
+   * tap by leaving the tooltip up until something else is tapped, so a lane
+   * does the same — otherwise the label flashes for exactly as long as the
+   * finger is down, which is how "hovering does not work on mobile" looks.
+   */
+  let pinned = $state(false)
+
+  function follow(span, event) {
+    // A mouse leaving un-pins; a pointer that never hovers cannot, so a tap
+    // elsewhere is what closes a pinned label. See the window handler below.
+    if (event.pointerType !== 'mouse') pinned = true
+    hovered = { ...label(span), x: event.clientX, y: event.clientY }
+  }
+
+  /** Track the pointer without re-pinning, so a mouse move stays a hover. */
+  function drift(span, event) {
+    if (event.pointerType === 'mouse') follow(span, event)
+  }
+
+  function release(event) {
+    if (event.pointerType === 'mouse' && !pinned) hovered = null
   }
 
   const projects = $derived(new Map(($projectStore ?? []).map((p) => [p.id, p])))
 
+  // `globalThis`, not `window`: this component declares a `window` of its own —
+  // the stretch of the day the axis covers — and reaching for `addEventListener`
+  // on that one throws where the whole timeline renders.
+  //
+  // Captured, so it runs before the span's own handler can re-pin: a tap that
+  // lands on another block should move the label rather than close it.
+  $effect(() => {
+    const put = () => {
+      pinned = false
+      hovered = null
+    }
+    const dismiss = (event) => {
+      if (!pinned) return
+      // The label itself counts as elsewhere: tapping it is how it is put away.
+      if (event.target?.closest?.('[data-span]')) return
+      put()
+    }
+    // A pinned label is positioned against the viewport, so scrolling would
+    // otherwise carry it down the page over blocks it no longer describes —
+    // stuck to the screen with no way left to be rid of it. Scrolling is a
+    // clear enough "moved on", so it goes.
+    const leave = () => {
+      if (pinned) put()
+    }
+    globalThis.addEventListener('pointerdown', dismiss, true)
+    globalThis.addEventListener('scroll', leave, { capture: true, passive: true })
+    return () => {
+      globalThis.removeEventListener('pointerdown', dismiss, true)
+      globalThis.removeEventListener('scroll', leave, { capture: true })
+    }
+  })
+
   /**
-   * Every span falling on this day, in one lane per group.
-   *
-   * A span always keeps its own project's colour, whichever grouping is in
-   * force: the lane says which tag, the colour still says which project, so
-   * grouping by tag loses no information here the way a summed bar would.
+   * Every span falling on this day, in one lane per project — or per day, when
+   * a run of them is shown.
    */
   const lanes = $derived.by(() => {
     const offsets = dayOffsets($timeEntries)
@@ -77,37 +137,22 @@
       // Archived projects leave the patterns page, as they do the totals; the
       // record and the export still hold their sessions.
       if (!project || !project.active) continue
-      const keys =
-        by === 'tag'
-          ? project.tags.length
-            ? project.tags.map((tag) => tag.id)
-            : [null]
-          : [project.id]
-
       for (const slice of slices(entry, $now, offsets)) {
         if (!shown.includes(slice.day) || slice.to <= slice.from) continue
-        // A lane is a day when several are shown, and a group when one is.
-        for (const key of byDay ? [slice.day] : keys) {
-          if (!byGroup.has(key)) byGroup.set(key, [])
-          byGroup.get(key).push({ ...slice, entry, project })
-        }
+        // A lane is a day when several are shown, and a project when one is.
+        const key = byDay ? slice.day : project.id
+        if (!byGroup.has(key)) byGroup.set(key, [])
+        byGroup.get(key).push({ ...slice, entry, project })
       }
     }
 
-    const named = new Map(($tagStore ?? []).map((tag) => [tag.id, tag]))
-    const describe = (key) => {
-      if (byDay) return { label: dayLabel(key), colour: null }
-      if (by === 'tag') {
-        return {
-          label: named.get(key)?.name ?? 'Untagged',
-          colour: named.get(key)?.colour ?? 'haze',
-        }
-      }
-      return {
-        label: projects.get(key)?.name ?? '',
-        colour: projects.get(key)?.colour ?? 'haze',
-      }
-    }
+    const describe = (key) =>
+      byDay
+        ? { label: dayLabel(key), colour: null }
+        : {
+            label: projects.get(key)?.name ?? '',
+            colour: projects.get(key)?.colour ?? 'haze',
+          }
 
     const lanes = [...byGroup.entries()].map(([key, spans]) => ({
       key,
@@ -120,6 +165,7 @@
       ? lanes.toSorted((a, b) => String(a.key).localeCompare(String(b.key)))
       : lanes.toSorted((a, b) => a.spans[0].from - b.spans[0].from)
   })
+
 
   const tracked = $derived(lanes.reduce((sum, lane) => sum + lane.total, 0))
 
@@ -182,7 +228,6 @@
     ({ from, to }) =>
       Promise.all([
         ensureProjects(),
-        ensureTags(),
         ensureTimeEntries({
           start: shiftDay(from, -NEIGHBOURS),
           end: shiftDay(to, NEIGHBOURS),
@@ -203,12 +248,16 @@
     Nothing tracked on this day.
   </p>
 {:else}
-  <!-- Swipe changes the day, as it does in the records. -->
+  <!-- Swipe changes the day, as it does in the records. Previous and Next do
+       the same thing as buttons, so the gesture stays an enhancement. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="rounded-xl border border-white/10 bg-ink-soft p-4"
     data-timeline={day}
-    ontouchstart={onTouchStart}
-    ontouchend={onTouchEnd}
+    use:swipe={{
+      onswipe: (delta) => (day = shiftDay(day, delta)),
+      forward: () => day < today(),
+    }}
   >
     <!-- The axis and every lane share one grid, so a bar and its hour line up
          whatever the label column ends up measuring. -->
@@ -255,7 +304,14 @@
                  keeps a floor width: a session that happened must be visible. -->
             {@const drawnTo = Math.min(span_.to, window.to)}
             {@const clipped = span_.to > window.to}
+            <!-- Pointer events rather than mouse ones, so a tap answers on a
+                 phone too — where a `title` never appeared at all. The span is
+                 not focusable and carries an `aria-label` instead: it is a
+                 picture of data that is also listed as text beside it. -->
             <span
+              role="img"
+              aria-label="{span_.project.name} · {label(span_).detail}"
+              data-span={span_.entry.id}
               class="absolute inset-y-1 rounded-sm {clipped ? 'rounded-r-none' : ''}"
               style:left="{position(span_.from)}%"
               style:width="{Math.max(0, position(drawnTo) - position(span_.from))}%"
@@ -263,11 +319,10 @@
               style:background="var(--color-{span_.project
                 .colour}, var(--color-dusk-lift))"
               style:opacity={span_.entry.ended_at ? 0.85 : 1}
-              title="{span_.project.name} · {clockOfSeconds(span_.from)}–{span_.entry.ended_at
-                ? clockOfSeconds(span_.to)
-                : 'running'} · {formatDuration(span_.seconds)}{clipped
-                ? ' · runs past the end of this day'
-                : ''}"
+              onpointerdown={(event) => follow(span_, event)}
+              onpointerenter={(event) => drift(span_, event)}
+              onpointermove={(event) => drift(span_, event)}
+              onpointerleave={release}
             ></span>
           {/each}
 
@@ -281,6 +336,29 @@
       {/each}
     </div>
   </div>
+
+  <!-- Fixed to the viewport, not to the lane: a lane clips its own overflow, so
+       anything positioned inside it would be cut off at the edges — which is
+       where a tooltip is most often needed. Translated up and right of the
+       pointer, and inert, so it can never sit between the pointer and the bar
+       it is describing. -->
+  {#if hovered}
+    <!-- Inert while it follows a pointer, so it can never sit between the
+         cursor and the block it describes; tappable once pinned, or a tap meant
+         to dismiss it would fall through onto the block underneath and pin it
+         all over again. -->
+    <div
+      data-span-tip
+      class="fixed z-50 max-w-64 rounded-md bg-paper px-3 py-2 text-xs leading-snug
+             text-ink shadow-lg {pinned ? 'pointer-events-auto' : 'pointer-events-none'}"
+      style:left="{hovered.x + 12}px"
+      style:top="{hovered.y - 12}px"
+      style:transform="translateY(-100%)"
+    >
+      <span class="block font-semibold">{hovered.name}</span>
+      <span class="block text-ink/70">{hovered.detail}</span>
+    </div>
+  {/if}
 
   <p class="meta mt-3 normal-case">
     <span class="sm:hidden">Swipe to change day. </span>

@@ -1,29 +1,32 @@
 <script>
   import { attempt, unwrap } from '../lib/api.js'
   import { changeMyPassword, setMyDefaultCatalogue } from '../lib/generated/sdk.gen'
+  import { resource } from '../lib/resource.svelte.js'
   import { catalogues as catalogueStore, ensureCatalogues, ensureMe, me as meStore } from '../lib/store.js'
   import { pushToast } from '../lib/toasts.js'
 
-  let me = $state(null)
-  let catalogues = $state([])
   let currentPassword = $state('')
   let newPassword = $state('')
 
-  $effect(() => {
-    load()
-  })
+  // Through `resource` rather than an effect that assigns what this component
+  // reads: nothing here changes to re-trigger a load today, which is the only
+  // reason the effect was safe, and that is a property nobody was maintaining.
+  const loaded = resource(
+    () => null,
+    () => Promise.all([ensureMe(), ensureCatalogues()]),
+    { name: 'settings' }
+  )
 
-  async function load() {
-    me = await ensureMe()
-    catalogues = (await ensureCatalogues()) ?? []
-  }
+  // Read from the stores the load fills, so a change made elsewhere — the
+  // catalogue list, the account after a rename — is reflected without a refetch.
+  const me = $derived($meStore)
+  const catalogues = $derived($catalogueStore ?? [])
 
   async function chooseCatalogue(event) {
     const updated = await attempt(() =>
       setMyDefaultCatalogue({ body: { catalogue_id: Number(event.target.value) } })
     )
     if (updated) {
-      me = updated
       meStore.set(updated)
       pushToast('Default catalogue changed', 'ok')
     }
@@ -47,7 +50,7 @@
 </script>
 
 <section class="mx-auto w-full max-w-2xl px-5 py-8">
-  <p class="meta">Signed in as {me?.username ?? '…'}</p>
+  <p class="meta">Signed in as {loaded.loading ? '…' : (me?.username ?? 'nobody')}</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">Settings</h1>
 
   <div class="rounded-xl border border-white/10 bg-ink-soft p-6">

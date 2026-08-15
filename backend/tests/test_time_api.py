@@ -1,8 +1,8 @@
+import csv
 import sqlite3
 from datetime import datetime
 from io import BytesIO
-
-from openpyxl import load_workbook
+from zipfile import ZipFile
 
 from tests.conftest import make_user
 
@@ -427,18 +427,16 @@ def test_the_export_agrees_with_the_summary(client, admin_headers):
     project = make_project(client, admin_headers, "Backend", tag_ids=[tag["id"]])
     record(client, admin_headers, project["id"], at(10, 22), at(11, 2))
 
-    response = client.get("/api/time/export.xlsx", headers=admin_headers)
-    assert response.status_code == 200
-    book = load_workbook(BytesIO(response.content))
-    assert book.sheetnames == ["Sessions", "By project", "By tag"]
-
-    by_project = list(book["By project"].values)[1:]
+    by_project = exported(client, admin_headers, "by-project.csv")[1:]
     assert by_project == [
-        ("2026-06-10", "Backend", 2.0),
-        ("2026-06-11", "Backend", 2.0),
+        ["2026-06-10", "Backend", "2.0"],
+        ["2026-06-11", "Backend", "2.0"],
     ]
-    by_tag = list(book["By tag"].values)[1:]
-    assert by_tag == [("2026-06-10", "Work", 2.0), ("2026-06-11", "Work", 2.0)]
+    by_tag = exported(client, admin_headers, "by-tag.csv")[1:]
+    assert by_tag == [
+        ["2026-06-10", "Work", "2.0"],
+        ["2026-06-11", "Work", "2.0"],
+    ]
 
 
 def test_a_concurrent_second_check_in_reads_as_a_refusal(client, admin_headers):
@@ -545,17 +543,16 @@ def test_the_export_reads_in_local_time(client, admin_headers):
     # Two hours east: 22:00 UTC was midnight where it was recorded.
     record(client, admin_headers, project["id"], at(10, 22), at(11, 1), offset=120)
 
-    response = client.get("/api/time/export.xlsx", headers=admin_headers)
-    header, row = list(load_workbook(BytesIO(response.content))["Sessions"].values)
+    header, row = exported(client, admin_headers)
 
-    assert header[1:7] == (
+    assert header[1:7] == [
         "Started",
         "Ended",
         "Day offset",
         "Recorded offset",
         "Started (UTC)",
         "Ended (UTC)",
-    )
+    ]
     # Local first, as every screen shows it; UTC kept so it stays unambiguous.
     # The day's clock and the session's own are both named, because after a
     # flight they are not the same thing.
@@ -582,10 +579,7 @@ def test_an_archived_project_leaves_the_summary(client, admin_headers):
     # ...but the hours are still recorded, and still exported.
     rows = client.get("/api/time/entries", headers=admin_headers).json()
     assert len(rows) == 2
-    book = load_workbook(
-        BytesIO(client.get("/api/time/export.xlsx", headers=admin_headers).content)
-    )
-    assert any("Reading" in str(row) for row in book["Sessions"].values)
+    assert any("Reading" in row for row in exported(client, admin_headers))
 
 
 def set_bands(client, headers, tag_id, bands):
@@ -779,3 +773,14 @@ def test_the_tracked_range_reads_each_days_own_offset(client, admin_headers):
     assert client.get("/api/time/range", headers=admin_headers).json()["first"] == (
         "2026-06-11"
     )
+
+
+def exported(client, headers, name="sessions.csv", **params):
+    """Read one CSV out of the export bundle as a list of rows."""
+    response = client.get("/api/time/export.zip", headers=headers, params=params)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    with ZipFile(BytesIO(response.content)) as bundle:
+        assert bundle.namelist() == ["sessions.csv", "by-project.csv", "by-tag.csv"]
+        text = bundle.read(name).decode("utf-8-sig")
+    return list(csv.reader(text.splitlines()))

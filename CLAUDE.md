@@ -148,7 +148,7 @@ components fixes last month; so does editing a lunch-break band.
 
 The corollary is that the **server computes it once** and the client reads the
 result. `/api/time/summary` does the split and the grouping so the screen and
-the `.xlsx` cannot drift. The client mirrors `slices()` only to *draw* a session
+the exported CSV cannot drift. The client mirrors `slices()` only to *draw* a session
 across two days without a round trip per day — never to report a number.
 
 `answers` and `time_entries` hold what happened. Anything else is a view.
@@ -224,12 +224,13 @@ Do not re-open these without being asked to; each was decided deliberately.
 | | |
 | --- | --- |
 | Secrets | `JWT_SECRET` and `ADMIN_PASSWORD` have no defaults. The server crashes without them rather than generating one |
+| Login attempts | 5 failures per username per 15 minutes, counted in process memory and cleared by a restart. Keyed on the **submitted username**, never the client IP — the app sits behind nginx and does not trust proxy headers, so every request would otherwise share one key. A locked username answers `429` whether or not the account exists |
 | Schema | The server never creates tables. An unmigrated database fails with `no such table` |
 | Deployment | A VM behind nginx doing SSL and a second auth layer. **The domain is an environment variable, never in the repo** |
 | Answers | Never rewritten, never deleted — there is no delete endpoint. A session, by contrast, is corrected and deleted freely |
 | Scores | Over scaled questions only; an enum has no numeric value to contribute |
 | Projects and tags | Per user. Sharing is a later feature |
-| Deduction rules | On a tag, not on the account — a day of reading owes nobody a lunch break |
+| Deduction rules | On a tag, not on the account — a day of reading owes nobody a lunch break. A tag with a rule shows **reported time only** — except the Patterns group table, which keeps tracked beside reported |
 | Parallel timers | Several projects at once, yes. The same project twice over the same minutes, no |
 | Long sessions | Never auto-closed, no warning. A multi-day session is a hand-editing job |
 | Navigation | The landing page is the only bridge between the halves; neither links to the other |

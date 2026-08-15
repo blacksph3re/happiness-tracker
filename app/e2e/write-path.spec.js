@@ -17,7 +17,17 @@ test('moving between questions makes no server call', async ({ page, account }) 
   await page.getByRole('button', { name: 'Skip →' }).click()
   expect(calls).toEqual([])
 
+  // The day's first answer costs one read as well as the write: the server
+  // writes the auto-tracked values — weekday, month, hour — alongside it, and
+  // they are in no response the client sees, so the record would build its
+  // columns without them until something forced a reload.
   await answerBand(page, 3)
+  expect(calls).toEqual(['PUT /api/answers', 'GET /api/answers'])
+
+  // Every answer after it is the write alone, which is the property this is
+  // really guarding: answering is not a page that re-reads itself.
+  calls.length = 0
+  await answerBand(page, 2)
   expect(calls).toEqual(['PUT /api/answers'])
 })
 
@@ -50,6 +60,24 @@ test('a rejected write is reported and the app stays usable', async ({ page, acc
   await expect(page.getByText('The server fell over')).toBeVisible()
   // The failure is reported, not blocking: the next question is already open.
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[1].prompt)
+})
+
+test('an unreachable server is reported as such, not as a null dereference', async ({
+  page,
+}) => {
+  // Killing the server under a loaded page leaves the generated client with no
+  // response at all to hand back. Reading `.status` off that reported
+  // "Cannot read properties of undefined" to the user, which names an internal
+  // mistake rather than the thing that actually went wrong.
+  await page.goto('/time/projects')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Projects')
+
+  await page.route('**/api/**', (route) => route.abort('connectionrefused'))
+  await page.getByLabel('New project').fill('Offline project')
+  await page.getByRole('button', { name: /^Add$/ }).first().click()
+
+  await expect(page.getByText(/could not reach the server/i)).toBeVisible()
+  await expect(page.getByText(/undefined/i)).toHaveCount(0)
 })
 
 test('a validation failure names the field that was wrong', async ({
