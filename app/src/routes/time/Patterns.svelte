@@ -18,8 +18,10 @@
   import {
     answers as answerStore,
     ensureAnswers,
+    ensureDeductionRules,
     ensureProjects,
     ensureTags,
+    ensureTimeEntries,
     ensureTrackedRange,
     ensureVariables,
     projects as projectStore,
@@ -351,6 +353,12 @@
       await Promise.all([
         ensureProjects(),
         ensureTags(),
+        // The sessions themselves, which this page never draws directly — it
+        // reads totals. They are fetched so that the totals can still be worked
+        // out here when there is nothing to ask: a page that only ever held
+        // somebody else's arithmetic has nothing to fall back on.
+        ensureTimeEntries({ start: from, end: to }),
+        ensureDeductionRules(),
         // The questionnaire's answers become filters here, so the two halves
         // can be read against each other.
         ensureVariables(),

@@ -2,10 +2,7 @@
   import ProjectCard from '../../lib/time/ProjectCard.svelte'
   import { attempt } from '../../lib/api.js'
   import {
-    checkIn,
-    checkOut,
     createProject,
-    resumeProject,
   } from '../../lib/generated/sdk.gen'
   import {
     elapsed,
@@ -21,7 +18,7 @@
     ensureProjects,
     ensureTimeEntries,
     projects as projectStore,
-    rememberEntry,
+    saveEntry,
     timeEntries,
   } from '../../lib/store.js'
   import { link } from '../../lib/router.js'
@@ -112,24 +109,34 @@
     }
   }
 
-  /** Start or stop one project, leaving every other timer alone. */
+  /**
+   * Start or stop one project, leaving every other timer alone.
+   *
+   * Both are the same write — a session under the device's own identity, with
+   * or without an end — and both are queued rather than sent. Checking in with
+   * no signal is the case this whole design exists for: the timer starts now,
+   * and the server hears about it when there is one.
+   */
   async function toggle(project, running) {
     if (busy.includes(project.id)) return
     busy = [...busy, project.id]
     try {
       if (running) {
-        const closed = await attempt(() =>
-          checkOut({ path: { project_id: project.id }, body: { at: nowUtc() } })
-        )
-        if (closed) rememberEntry(closed)
+        await saveEntry({
+          client_id: running.client_id,
+          project_id: project.id,
+          started_at: running.started_at,
+          ended_at: nowUtc(),
+          utc_offset: running.utc_offset,
+          note: running.note ?? null,
+        })
       } else {
-        const opened = await attempt(() =>
-          checkIn({
-            path: { project_id: project.id },
-            body: { at: nowUtc(), utc_offset: utcOffset() },
-          })
-        )
-        if (opened) rememberEntry(opened)
+        await saveEntry({
+          project_id: project.id,
+          started_at: nowUtc(),
+          ended_at: null,
+          utc_offset: utcOffset(),
+        })
       }
     } finally {
       busy = busy.filter((id) => id !== project.id)
@@ -139,12 +146,21 @@
   /** Take back a stop: the old session reopens and swallows the gap. */
   async function resume(project) {
     if (busy.includes(project.id)) return
+    const last = resumableProjects.get(project.id)
+    if (!last) return
     busy = [...busy, project.id]
     try {
-      const reopened = await attempt(() =>
-        resumeProject({ path: { project_id: project.id } })
-      )
-      if (reopened) rememberEntry(reopened)
+      // Reopening is the session written again with no end: the original start
+      // is kept, so the pause since it stopped counts as worked — which is what
+      // taking back a stop means, and is why this is not a fresh check-in.
+      await saveEntry({
+        client_id: last.client_id,
+        project_id: project.id,
+        started_at: last.started_at,
+        ended_at: null,
+        utc_offset: last.utc_offset,
+        note: last.note ?? null,
+      })
     } finally {
       busy = busy.filter((id) => id !== project.id)
     }

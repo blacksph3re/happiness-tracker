@@ -101,13 +101,20 @@ export const test = base.extend({
  * straight after a click races the request it is looking for.
  */
 export async function answerBand(page, index) {
+  // Through the sync queue, not a direct PUT: an answer lands on the device
+  // first and is replayed to the server, so what a test waits for is the queue
+  // draining rather than the write itself.
   const [response] = await Promise.all([
     page.waitForResponse(
-      (r) => r.url().includes('/api/answers') && r.request().method() === 'PUT'
+      (r) => r.url().includes('/api/sync') && r.request().method() === 'POST'
     ),
     page.getByRole('group').getByRole('button').nth(index).click(),
   ])
-  expect(response.status(), 'the answer was rejected').toBe(204)
+  expect(response.status(), 'the answer was rejected').toBe(200)
+  const { results } = await response.json()
+  expect(results.every((one) => one.outcome === 'applied'), JSON.stringify(results)).toBe(
+    true
+  )
 
   // The write resolves long before the card finishes turning, and a tap during
   // that turn is deliberately ignored so a double tap cannot skip a question.
@@ -170,6 +177,29 @@ export function realQuestions(catalogue) {
 }
 
 /**
+ * Record one answer through the queue, for a test that needs a specific one.
+ *
+ * @param {import('@playwright/test').APIRequestContext} api
+ * @param {{day: string, question_id: number, value?: number, option_id?: number}} answer
+ */
+export async function seedAnswer(api, answer) {
+  seeded += 1
+  const response = await api.post('/api/sync', {
+    data: {
+      intents: [
+        {
+          seq: seeded,
+          kind: 'answer.put',
+          client_updated_at: `2026-06-15T00:${String(seeded % 60).padStart(2, '0')}:00`,
+          payload: { local_hour: 9, ...answer },
+        },
+      ],
+    },
+  })
+  expect(response.ok(), await response.text()).toBeTruthy()
+}
+
+/**
  * Record answers straight through the API.
  *
  * Clicking a browser through sixty days to give the stats page something to
@@ -178,12 +208,22 @@ export function realQuestions(catalogue) {
 export async function seedAnswers(api, questions, days, valueFor = () => 3) {
   for (const [dayIndex, day] of days.entries()) {
     for (const [questionIndex, question] of questions.entries()) {
-      const response = await api.put('/api/answers', {
+      seeded += 1
+      const response = await api.post('/api/sync', {
         data: {
-          day,
-          local_hour: 9,
-          question_id: question.id,
-          value: valueFor(dayIndex, questionIndex, question),
+          intents: [
+            {
+              seq: seeded,
+              kind: 'answer.put',
+              client_updated_at: `2026-06-15T00:${String(seeded % 60).padStart(2, '0')}:00`,
+              payload: {
+                day,
+                local_hour: 9,
+                question_id: question.id,
+                value: valueFor(dayIndex, questionIndex, question),
+              },
+            },
+          ],
         },
       })
       expect(response.ok(), await response.text()).toBeTruthy()
@@ -223,18 +263,39 @@ export async function makeTag(account, name, extra = {}) {
   return response.json()
 }
 
-/** Record a finished session, as the record view's "add" form does. */
-export async function recordSession(account, projectId, startedAt, endedAt) {
-  const response = await account.api.post('/api/time/entries', {
+let seeded = 0
+
+/**
+ * Record a finished session, the way the app does: through the sync queue.
+ *
+ * There is no other door. Seeding through one the app cannot use would be
+ * seeding through a code path nobody runs.
+ */
+export async function recordSession(account, projectId, startedAt, endedAt, offset = 0) {
+  seeded += 1
+  const client_id = `seed-${seeded}`
+  const response = await account.api.post('/api/sync', {
     data: {
-      project_id: projectId,
-      started_at: startedAt,
-      ended_at: endedAt,
-      utc_offset: 0,
+      intents: [
+        {
+          seq: seeded,
+          kind: 'entry.upsert',
+          client_id,
+          client_updated_at: `2026-06-15T00:${String(seeded % 60).padStart(2, '0')}:00`,
+          payload: {
+            project_id: projectId,
+            started_at: startedAt,
+            ended_at: endedAt,
+            utc_offset: offset,
+          },
+        },
+      ],
     },
   })
-  expect(response.status(), 'recording a session').toBe(201)
-  return response.json()
+  expect(response.status(), 'recording a session').toBe(200)
+  const [result] = (await response.json()).results
+  expect(result.outcome, JSON.stringify(result)).toBe('applied')
+  return { ...result.entry, client_id }
 }
 
 /**

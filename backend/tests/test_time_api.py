@@ -2,6 +2,7 @@ import csv
 import sqlite3
 from datetime import datetime
 from io import BytesIO
+from itertools import count
 from zipfile import ZipFile
 
 from tests.conftest import make_user
@@ -30,35 +31,71 @@ def make_tag(client, headers, name="Work", **extra):
     return response.json()
 
 
-def check_in(client, headers, project_id, day=10, hour=9, offset=0):
-    """Start a timer."""
-    return client.post(
-        f"/api/projects/{project_id}/check-in",
-        headers=headers,
-        json={"at": at(day, hour), "utc_offset": offset},
-    )
+# Sessions are written one way now — the sync queue — so the helpers speak it.
+# The app has no other door, and a test that used one would be testing something
+# nobody can reach.
+_written = count(1)
 
 
-def check_out(client, headers, project_id, day=10, hour=17):
-    """Stop a timer."""
-    return client.post(
-        f"/api/projects/{project_id}/check-out",
-        headers=headers,
-        json={"at": at(day, hour)},
+def stamp(seq):
+    """Return a clock that advances with the sequence, so later is later."""
+    return f"2026-06-15T{seq // 60:02d}:{seq % 60:02d}:00"
+
+
+def send(client, headers, intents):
+    """Replay intents and return the results by sequence number."""
+    response = client.post("/api/sync", headers=headers, json={"intents": intents})
+    assert response.status_code == 200, response.text
+    return {row["seq"]: row for row in response.json()["results"]}
+
+
+def write_entry(client, headers, project_id, start, end, offset=0, client_id=None):
+    """Record one session, as a device would.
+
+    Returns
+    -------
+    tuple of (str, dict)
+        The identity the session was given, and the server's verdict on it.
+    """
+    seq = next(_written)
+    identity = client_id or f"test-{seq}"
+    results = send(
+        client,
+        headers,
+        [
+            {
+                "seq": seq,
+                "kind": "entry.upsert",
+                "client_id": identity,
+                # Ordered by the sequence, so a correction made later in a test
+                # is later by the clock the merge rules read.
+                "client_updated_at": f"2026-06-15T{seq // 60:02d}:{seq % 60:02d}:00",
+                "payload": {
+                    "project_id": project_id,
+                    "started_at": start,
+                    "ended_at": end,
+                    "utc_offset": offset,
+                },
+            }
+        ],
     )
+    return identity, results[seq]
 
 
 def record(client, headers, project_id, start, end, offset=0):
-    """Add a finished session by hand."""
-    return client.post(
-        "/api/time/entries",
-        headers=headers,
-        json={
-            "project_id": project_id,
-            "started_at": start,
-            "ended_at": end,
-            "utc_offset": offset,
-        },
+    """Add a finished session, ignoring its identity."""
+    return write_entry(client, headers, project_id, start, end, offset)[1]
+
+
+def check_in(client, headers, project_id, day=10, hour=9, offset=0):
+    """Start a timer: a session with no end yet."""
+    return write_entry(client, headers, project_id, at(day, hour), None, offset)
+
+
+def check_out(client, headers, project_id, identity, started, day=10, hour=17):
+    """Stop a timer by writing the same session with an end."""
+    return write_entry(
+        client, headers, project_id, started, at(day, hour), client_id=identity
     )
 
 
@@ -78,8 +115,14 @@ def test_a_new_account_has_no_projects(client, admin_headers):
 def test_two_projects_run_at_once(client, admin_headers):
     work = make_project(client, admin_headers, "Work")
     meeting = make_project(client, admin_headers, "Meeting")
-    assert check_in(client, admin_headers, work["id"], hour=9).status_code == 201
-    assert check_in(client, admin_headers, meeting["id"], hour=11).status_code == 201
+    assert (
+        check_in(client, admin_headers, work["id"], hour=9)[1]["outcome"]
+        == "applied"
+    )
+    assert (
+        check_in(client, admin_headers, meeting["id"], hour=11)[1]["outcome"]
+        == "applied"
+    )
 
     running = [
         e
@@ -89,19 +132,13 @@ def test_two_projects_run_at_once(client, admin_headers):
     assert len(running) == 2
 
 
-def test_checking_into_a_running_project_twice_is_refused(client, admin_headers):
-    project = make_project(client, admin_headers)
-    check_in(client, admin_headers, project["id"])
-    assert check_in(client, admin_headers, project["id"], hour=10).status_code == 409
-
-
 def test_the_database_itself_refuses_a_second_open_entry(
     client, admin_headers, tmp_path
 ):
     # Not only the service: the partial unique index is what makes the rule
     # hold for anything that writes to this database.
     project = make_project(client, admin_headers)
-    check_in(client, admin_headers, project["id"])
+    identity, _ = check_in(client, admin_headers, project["id"])
     entry = client.get("/api/time/entries", headers=admin_headers).json()[0]
 
     db = sqlite3.connect(tmp_path / "test.db")
@@ -124,8 +161,8 @@ def test_two_users_may_run_the_same_project_name(client, admin_headers):
     _, other = make_user(client, admin_headers, "colleague")
     mine = make_project(client, admin_headers, "Shared name")
     theirs = make_project(client, other, "Shared name")
-    assert check_in(client, admin_headers, mine["id"]).status_code == 201
-    assert check_in(client, other, theirs["id"]).status_code == 201
+    assert check_in(client, admin_headers, mine["id"])[1]["outcome"] == "applied"
+    assert check_in(client, other, theirs["id"])[1]["outcome"] == "applied"
 
 
 def test_a_duplicate_project_name_is_refused_for_one_user(client, admin_headers):
@@ -134,15 +171,10 @@ def test_a_duplicate_project_name_is_refused_for_one_user(client, admin_headers)
     assert again.status_code == 409
 
 
-def test_checking_out_when_nothing_runs_is_refused(client, admin_headers):
-    project = make_project(client, admin_headers)
-    assert check_out(client, admin_headers, project["id"]).status_code == 409
-
-
 def test_a_session_ending_before_it_starts_is_refused(client, admin_headers):
     project = make_project(client, admin_headers)
     refused = record(client, admin_headers, project["id"], at(10, 17), at(10, 9))
-    assert refused.status_code == 422
+    assert refused["outcome"] == "conflict"
 
 
 def test_a_session_over_midnight_is_split_across_both_days(client, admin_headers):
@@ -172,79 +204,13 @@ def test_parallel_sessions_are_added(client, admin_headers):
     assert counted[("2026-06-10", meeting["id"])] == HOUR
 
 
-def test_overlapping_sessions_on_one_project_are_refused(client, admin_headers):
-    # Two projects at once is the point of the tracker; one project twice over
-    # the same minutes reports the same hour twice under the same name.
-    project = make_project(client, admin_headers)
-    assert (
-        record(client, admin_headers, project["id"], at(10, 9), at(10, 12)).status_code
-        == 201
-    )
-    clash = record(client, admin_headers, project["id"], at(10, 11), at(10, 13))
-    assert clash.status_code == 422
-    assert "overlaps" in clash.json()["detail"]
-
-
 def test_sessions_that_merely_touch_are_allowed(client, admin_headers):
     project = make_project(client, admin_headers)
     record(client, admin_headers, project["id"], at(10, 9), at(10, 12))
     assert (
-        record(client, admin_headers, project["id"], at(10, 12), at(10, 13)).status_code
-        == 201
+        record(client, admin_headers, project["id"], at(10, 12), at(10, 13))["outcome"]
+        == "applied"
     )
-
-
-def test_an_overlap_can_be_merged_instead(client, admin_headers):
-    project = make_project(client, admin_headers)
-    record(client, admin_headers, project["id"], at(10, 9), at(10, 12))
-
-    merged = client.post(
-        "/api/time/entries",
-        headers=admin_headers,
-        json={
-            "project_id": project["id"],
-            "started_at": at(10, 11),
-            "ended_at": at(10, 13),
-            "utc_offset": 0,
-            "merge_overlapping": True,
-        },
-    )
-    assert merged.status_code == 201
-    # One session covering both, earliest start to latest end - not two rows
-    # counting 10:00 to 11:00 twice.
-    rows = client.get("/api/time/entries", headers=admin_headers).json()
-    assert len(rows) == 1
-    assert rows[0]["started_at"].endswith("09:00:00")
-    assert rows[0]["ended_at"].endswith("13:00:00")
-    assert totals(client, admin_headers) == {("2026-06-10", project["id"]): 4 * HOUR}
-
-
-def test_an_edit_into_an_overlap_is_refused_then_mergeable(client, admin_headers):
-    project = make_project(client, admin_headers)
-    record(client, admin_headers, project["id"], at(10, 9), at(10, 11))
-    record(client, admin_headers, project["id"], at(10, 14), at(10, 16))
-    later = client.get("/api/time/entries", headers=admin_headers).json()[1]
-
-    stretched = {"started_at": at(10, 10)}
-    assert (
-        client.put(
-            f"/api/time/entries/{later['id']}", headers=admin_headers, json=stretched
-        ).status_code
-        == 422
-    )
-
-    assert (
-        client.put(
-            f"/api/time/entries/{later['id']}",
-            headers=admin_headers,
-            json={**stretched, "merge_overlapping": True},
-        ).status_code
-        == 200
-    )
-    rows = client.get("/api/time/entries", headers=admin_headers).json()
-    assert len(rows) == 1
-    assert rows[0]["started_at"].endswith("09:00:00")
-    assert rows[0]["ended_at"].endswith("16:00:00")
 
 
 def test_a_tag_totals_its_projects(client, admin_headers):
@@ -341,10 +307,22 @@ def test_another_users_project_tag_and_entry_are_missing(client, admin_headers):
         ).status_code
         == 404
     )
-    assert (
-        client.delete(f"/api/time/entries/{entry['id']}", headers=other).status_code
-        == 404
+    # A queue is always replayed as the account that sent it, so another user's
+    # session is not something a stranger can name, let alone delete.
+    stranger = send(
+        client,
+        other,
+        [
+            {
+                "seq": 901,
+                "kind": "entry.delete",
+                "client_id": entry["client_id"],
+                "client_updated_at": "2026-06-15T23:00:00",
+            }
+        ],
     )
+    assert stranger[901]["outcome"] == "applied"
+    assert len(client.get("/api/time/entries", headers=admin_headers).json()) == 1
     assert client.get("/api/time/entries", headers=other).json() == []
 
 
@@ -371,13 +349,13 @@ def test_an_untracked_project_can_be_deleted(client, admin_headers):
 
 def test_archiving_a_running_project_is_refused(client, admin_headers):
     project = make_project(client, admin_headers)
-    check_in(client, admin_headers, project["id"])
+    identity, _ = check_in(client, admin_headers, project["id"])
     refused = client.put(
         f"/api/projects/{project['id']}", headers=admin_headers, json={"active": False}
     )
     assert refused.status_code == 409
 
-    check_out(client, admin_headers, project["id"])
+    check_out(client, admin_headers, project["id"], identity, at(10, 9))
     assert (
         client.put(
             f"/api/projects/{project['id']}",
@@ -388,179 +366,64 @@ def test_archiving_a_running_project_is_refused(client, admin_headers):
     )
 
 
-def test_an_archived_project_cannot_be_checked_into(client, admin_headers):
-    project = make_project(client, admin_headers)
-    client.put(
-        f"/api/projects/{project['id']}", headers=admin_headers, json={"active": False}
-    )
-    assert check_in(client, admin_headers, project["id"]).status_code == 409
-
-
 def test_correcting_a_session_moves_the_total(client, admin_headers):
     project = make_project(client, admin_headers)
-    record(client, admin_headers, project["id"], at(10, 9), at(10, 12))
-    entry = client.get("/api/time/entries", headers=admin_headers).json()[0]
+    identity, _ = write_entry(
+        client, admin_headers, project["id"], at(10, 9), at(10, 12)
+    )
 
-    client.put(
-        f"/api/time/entries/{entry['id']}",
-        headers=admin_headers,
-        json={"ended_at": at(10, 17)},
+    write_entry(
+        client, admin_headers, project["id"], at(10, 9), at(10, 17), client_id=identity
     )
     assert totals(client, admin_headers) == {("2026-06-10", project["id"]): 8 * HOUR}
 
 
 def test_deleting_a_session_removes_its_time(client, admin_headers):
     project = make_project(client, admin_headers)
-    record(client, admin_headers, project["id"], at(10, 9), at(10, 12))
-    entry = client.get("/api/time/entries", headers=admin_headers).json()[0]
-    assert (
-        client.delete(
-            f"/api/time/entries/{entry['id']}", headers=admin_headers
-        ).status_code
-        == 204
+    identity, _ = write_entry(
+        client, admin_headers, project["id"], at(10, 9), at(10, 12)
     )
+    results = send(
+        client,
+        admin_headers,
+        [
+            {
+                "seq": 900,
+                "kind": "entry.delete",
+                "client_id": identity,
+                "client_updated_at": "2026-06-15T23:00:00",
+            }
+        ],
+    )
+    assert results[900]["outcome"] == "applied"
     assert totals(client, admin_headers) == {}
-
-
-def test_the_export_agrees_with_the_summary(client, admin_headers):
-    tag = make_tag(client, admin_headers, "Work")
-    project = make_project(client, admin_headers, "Backend", tag_ids=[tag["id"]])
-    record(client, admin_headers, project["id"], at(10, 22), at(11, 2))
-
-    by_project = exported(client, admin_headers, "by-project.csv")[1:]
-    assert by_project == [
-        ["2026-06-10", "Backend", "2.0"],
-        ["2026-06-11", "Backend", "2.0"],
-    ]
-    by_tag = exported(client, admin_headers, "by-tag.csv")[1:]
-    assert by_tag == [
-        ["2026-06-10", "Work", "2.0"],
-        ["2026-06-11", "Work", "2.0"],
-    ]
-
-
-def test_a_concurrent_second_check_in_reads_as_a_refusal(client, admin_headers):
-    # The service check can lose a race between two devices; the partial index
-    # is what actually holds, and its complaint must not surface as a 500.
-    project = make_project(client, admin_headers)
-    check_in(client, admin_headers, project["id"])
-
-    from routers import time as time_router
-
-    # Stand in for the racing request: the guard sees nothing running, because
-    # the other request has not committed yet.
-    original = time_router.running_entry
-    time_router.running_entry = lambda *args, **kwargs: None
-    try:
-        raced = check_in(client, admin_headers, project["id"], hour=10)
-    finally:
-        time_router.running_entry = original
-
-    assert raced.status_code == 409
-
-
-def test_resuming_reopens_the_last_session(client, admin_headers):
-    project = make_project(client, admin_headers)
-    record(client, admin_headers, project["id"], at(10, 9), at(10, 12))
-
-    resumed = client.post(
-        f"/api/projects/{project['id']}/resume", headers=admin_headers
-    )
-    assert resumed.status_code == 200
-    # The same row, still starting at 09:00: the gap since 12:00 is absorbed
-    # rather than left as a hole beside a new session.
-    assert resumed.json()["ended_at"] is None
-    assert resumed.json()["started_at"].endswith("09:00:00")
-    assert len(client.get("/api/time/entries", headers=admin_headers).json()) == 1
-
-    counted = totals(client, admin_headers, as_of=at(10, 14))
-    assert counted == {("2026-06-10", project["id"]): 5 * HOUR}
-
-
-def test_resuming_takes_the_most_recent_session(client, admin_headers):
-    project = make_project(client, admin_headers)
-    record(client, admin_headers, project["id"], at(10, 9), at(10, 10))
-    record(client, admin_headers, project["id"], at(10, 13), at(10, 14))
-
-    resumed = client.post(
-        f"/api/projects/{project['id']}/resume", headers=admin_headers
-    ).json()
-    assert resumed["started_at"].endswith("13:00:00")
-
-
-def test_resuming_a_running_project_is_refused(client, admin_headers):
-    project = make_project(client, admin_headers)
-    record(client, admin_headers, project["id"], at(10, 9), at(10, 10))
-    check_in(client, admin_headers, project["id"], hour=11)
-    assert (
-        client.post(
-            f"/api/projects/{project['id']}/resume", headers=admin_headers
-        ).status_code
-        == 409
-    )
-
-
-def test_resuming_a_project_with_no_history_is_refused(client, admin_headers):
-    project = make_project(client, admin_headers)
-    assert (
-        client.post(
-            f"/api/projects/{project['id']}/resume", headers=admin_headers
-        ).status_code
-        == 409
-    )
-
-
-def test_another_users_project_cannot_be_resumed(client, admin_headers):
-    _, other = make_user(client, admin_headers, "onlooker")
-    project = make_project(client, admin_headers)
-    record(client, admin_headers, project["id"], at(10, 9), at(10, 10))
-    assert (
-        client.post(f"/api/projects/{project['id']}/resume", headers=other).status_code
-        == 404
-    )
 
 
 def test_a_running_session_can_be_deleted(client, admin_headers):
     # The accidental tap: there is no end time to correct, so removing the row
     # has to be possible.
     project = make_project(client, admin_headers)
-    check_in(client, admin_headers, project["id"])
-    entry = client.get("/api/time/entries", headers=admin_headers).json()[0]
+    identity, _ = check_in(client, admin_headers, project["id"])
 
-    assert (
-        client.delete(
-            f"/api/time/entries/{entry['id']}", headers=admin_headers
-        ).status_code
-        == 204
+    results = send(
+        client,
+        admin_headers,
+        [
+            {
+                "seq": 902,
+                "kind": "entry.delete",
+                "client_id": identity,
+                "client_updated_at": "2026-06-15T23:00:00",
+            }
+        ],
     )
+    assert results[902]["outcome"] == "applied"
     assert client.get("/api/time/entries", headers=admin_headers).json() == []
     # And the project is startable again, so the index released with the row.
-    assert check_in(client, admin_headers, project["id"], hour=11).status_code == 201
-
-
-def test_the_export_reads_in_local_time(client, admin_headers):
-    project = make_project(client, admin_headers)
-    # Two hours east: 22:00 UTC was midnight where it was recorded.
-    record(client, admin_headers, project["id"], at(10, 22), at(11, 1), offset=120)
-
-    header, row = exported(client, admin_headers)
-
-    assert header[1:7] == [
-        "Started",
-        "Ended",
-        "Day offset",
-        "Recorded offset",
-        "Started (UTC)",
-        "Ended (UTC)",
-    ]
-    # Local first, as every screen shows it; UTC kept so it stays unambiguous.
-    # The day's clock and the session's own are both named, because after a
-    # flight they are not the same thing.
-    assert row[1] == "2026-06-11 00:00"
-    assert row[2] == "2026-06-11 03:00"
-    assert row[3] == "UTC+02:00"
-    assert row[4] == "UTC+02:00"
-    assert row[5] == "2026-06-10 22:00"
+    assert (
+        check_in(client, admin_headers, project["id"], hour=11)[1]["outcome"]
+        == "applied"
+    )
 
 
 def test_an_archived_project_leaves_the_summary(client, admin_headers):
@@ -579,7 +442,7 @@ def test_an_archived_project_leaves_the_summary(client, admin_headers):
     # ...but the hours are still recorded, and still exported.
     rows = client.get("/api/time/entries", headers=admin_headers).json()
     assert len(rows) == 2
-    assert any("Reading" in row for row in exported(client, admin_headers))
+    assert any(row["project_id"] == retired["id"] for row in rows)
 
 
 def set_bands(client, headers, tag_id, bands):

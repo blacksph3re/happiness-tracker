@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CheckInData, CheckInErrors, CheckInResponses, CheckOutData, CheckOutErrors, CheckOutResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTimeEntryData, CreateTimeEntryErrors, CreateTimeEntryResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteTimeEntryData, DeleteTimeEntryErrors, DeleteTimeEntryResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, ExportAnswersData, ExportAnswersErrors, ExportAnswersResponses, ExportTimeData, ExportTimeErrors, ExportTimeResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListDeductionsData, ListDeductionsErrors, ListDeductionsResponses, ListProjectsData, ListProjectsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, ResumeProjectData, ResumeProjectErrors, ResumeProjectResponses, SetDeductionsData, SetDeductionsErrors, SetDeductionsResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, TrackedRangeData, TrackedRangeResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateTimeEntryData, UpdateTimeEntryErrors, UpdateTimeEntryResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses, UpsertAnswerData, UpsertAnswerErrors, UpsertAnswerResponses } from './types.gen';
+import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListDeductionsData, ListDeductionsErrors, ListDeductionsResponses, ListProjectsData, ListProjectsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetDeductionsData, SetDeductionsErrors, SetDeductionsResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, SyncIntentsData, SyncIntentsErrors, SyncIntentsResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, TrackedRangeData, TrackedRangeResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -359,32 +359,6 @@ export const listAnswers = <ThrowOnError extends boolean = false>(options?: Opti
 });
 
 /**
- * Record an answer
- *
- * Record or replace one answer for one day. Idempotent on (user, question, day); the day's auto-tracked answers are written in the same transaction.
- */
-export const upsertAnswer = <ThrowOnError extends boolean = false>(options: Options<UpsertAnswerData, ThrowOnError>): RequestResult<UpsertAnswerResponses, UpsertAnswerErrors, ThrowOnError> => (options.client ?? client).put<UpsertAnswerResponses, UpsertAnswerErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/answers',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Download my answers as CSV
- *
- * Render the answers as a CSV: one row per day, one column per question ever answered.
- */
-export const exportAnswers = <ThrowOnError extends boolean = false>(options?: Options<ExportAnswersData, ThrowOnError>): RequestResult<ExportAnswersResponses, ExportAnswersErrors, ThrowOnError> => (options?.client ?? client).get<ExportAnswersResponses, ExportAnswersErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/answers/export.csv',
-    ...options
-});
-
-/**
  * List plottable variables
  *
  * Describe every variable the signed-in account has data for, with the plot roles each supports. Auto-tracked variables are merged across catalogues by their system key.
@@ -500,47 +474,6 @@ export const updateTag = <ThrowOnError extends boolean = false>(options: Options
 });
 
 /**
- * Start a timer
- *
- * Open a session on a project. Other projects may already be running - this never closes them.
- */
-export const checkIn = <ThrowOnError extends boolean = false>(options: Options<CheckInData, ThrowOnError>): RequestResult<CheckInResponses, CheckInErrors, ThrowOnError> => (options.client ?? client).post<CheckInResponses, CheckInErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/projects/{project_id}/check-in',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Stop a timer
- *
- * Close the session running on a project.
- */
-export const checkOut = <ThrowOnError extends boolean = false>(options: Options<CheckOutData, ThrowOnError>): RequestResult<CheckOutResponses, CheckOutErrors, ThrowOnError> => (options.client ?? client).post<CheckOutResponses, CheckOutErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/projects/{project_id}/check-out',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Reopen the last session
- *
- * Continue the project's most recent session rather than beginning a new one: its start time is kept, so the gap since it was stopped counts as worked.
- */
-export const resumeProject = <ThrowOnError extends boolean = false>(options: Options<ResumeProjectData, ThrowOnError>): RequestResult<ResumeProjectResponses, ResumeProjectErrors, ThrowOnError> => (options.client ?? client).post<ResumeProjectResponses, ResumeProjectErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/projects/{project_id}/resume',
-    ...options
-});
-
-/**
  * List sessions
  *
  * Every session of the signed-in account overlapping the range, the running ones included.
@@ -549,47 +482,6 @@ export const listTimeEntries = <ThrowOnError extends boolean = false>(options?: 
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/time/entries',
     ...options
-});
-
-/**
- * Record a past session
- *
- * Add a session that was never tracked live. Always finished: a timer is started with check-in.
- */
-export const createTimeEntry = <ThrowOnError extends boolean = false>(options: Options<CreateTimeEntryData, ThrowOnError>): RequestResult<CreateTimeEntryResponses, CreateTimeEntryErrors, ThrowOnError> => (options.client ?? client).post<CreateTimeEntryResponses, CreateTimeEntryErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/time/entries',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Delete a session
- *
- * Remove a session outright. A check-in to the wrong project is not a record to be corrected, it is a row that should not exist.
- */
-export const deleteTimeEntry = <ThrowOnError extends boolean = false>(options: Options<DeleteTimeEntryData, ThrowOnError>): RequestResult<DeleteTimeEntryResponses, DeleteTimeEntryErrors, ThrowOnError> => (options.client ?? client).delete<DeleteTimeEntryResponses, DeleteTimeEntryErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/time/entries/{entry_id}',
-    ...options
-});
-
-/**
- * Correct a session
- *
- * Change either end, the project or the note. Overlapping other sessions is allowed - parallel timers are the point.
- */
-export const updateTimeEntry = <ThrowOnError extends boolean = false>(options: Options<UpdateTimeEntryData, ThrowOnError>): RequestResult<UpdateTimeEntryResponses, UpdateTimeEntryErrors, ThrowOnError> => (options.client ?? client).put<UpdateTimeEntryResponses, UpdateTimeEntryErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/time/entries/{entry_id}',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
 });
 
 /**
@@ -641,12 +533,16 @@ export const timeSummary = <ThrowOnError extends boolean = false>(options?: Opti
 });
 
 /**
- * Download sessions as CSV
+ * Replay writes made offline
  *
- * Every session in one CSV, with the daily totals per project and per tag in two more, worked out the same way the app shows them. Three files because a CSV holds one table, zipped because a click gives one download.
+ * Send the device's queue oldest-first. Every intent gets its own outcome, so one the server cannot accept does not block the rest. Replaying the same queue twice is safe: an intent that is not newer than what is stored is reported as superseded rather than applied.
  */
-export const exportTime = <ThrowOnError extends boolean = false>(options?: Options<ExportTimeData, ThrowOnError>): RequestResult<ExportTimeResponses, ExportTimeErrors, ThrowOnError> => (options?.client ?? client).get<ExportTimeResponses, ExportTimeErrors, ThrowOnError>({
+export const syncIntents = <ThrowOnError extends boolean = false>(options: Options<SyncIntentsData, ThrowOnError>): RequestResult<SyncIntentsResponses, SyncIntentsErrors, ThrowOnError> => (options.client ?? client).post<SyncIntentsResponses, SyncIntentsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/time/export.zip',
-    ...options
+    url: '/api/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });

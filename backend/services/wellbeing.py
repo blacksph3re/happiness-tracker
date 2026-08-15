@@ -1,3 +1,4 @@
+import math
 from datetime import date
 
 from sqlalchemy import select
@@ -431,3 +432,57 @@ def sync_system_answers(
                 value=computed,
             )
         )
+
+
+def check_answer(question, option, day_value, day_option_id) -> None:
+    """Check that a response fits the question it answers.
+
+    Moved here from the router that used to own it, when the only way to write
+    an answer became the sync queue: validation belongs to the rules, not to one
+    of the doors into them, and a queued answer must meet the same bar as one
+    typed with a connection.
+
+    Parameters
+    ----------
+    question : Question
+        The question being answered.
+    option : QuestionOption or None
+        The chosen option, already loaded, for an enum question.
+    day_value : float or None
+        The submitted numeric value.
+    day_option_id : int or None
+        The submitted option id.
+
+    Raises
+    ------
+    QuestionRuleError
+        When the wrong field is used for the question's kind, the value falls
+        outside its bounds, a discrete value is not whole, the option belongs to
+        another question, or the question is one the server writes itself.
+    """
+    if question.is_system:
+        raise QuestionRuleError("Auto-tracked questions are written by the server")
+    if question.is_computed:
+        raise QuestionRuleError(
+            "A score is worked out from other answers, not answered itself"
+        )
+
+    if question.kind == "enum":
+        if day_option_id is None or day_value is not None:
+            raise QuestionRuleError("An enum question is answered with an option")
+        if option is None or option.question_id != question.id:
+            raise QuestionRuleError("Option does not belong to this question")
+        return
+
+    if day_value is None or day_option_id is not None:
+        raise QuestionRuleError("A scaled question is answered with a value")
+    # NaN compares false against every bound, so it would slip past the range
+    # checks below and only fail at insert time as a 500.
+    if not math.isfinite(day_value):
+        raise QuestionRuleError("Value must be a finite number")
+    if question.min_value is not None and day_value < question.min_value:
+        raise QuestionRuleError("Value is below the question's lower bound")
+    if question.max_value is not None and day_value > question.max_value:
+        raise QuestionRuleError("Value is above the question's upper bound")
+    if question.kind == "discrete" and day_value != int(day_value):
+        raise QuestionRuleError("A discrete question takes whole numbers")

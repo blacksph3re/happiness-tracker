@@ -21,14 +21,22 @@ test('moving between questions makes no server call', async ({ page, account }) 
   // writes the auto-tracked values — weekday, month, hour — alongside it, and
   // they are in no response the client sees, so the record would build its
   // columns without them until something forced a reload.
+  //
+  // The write is the queue draining, not a direct PUT. An answer is recorded on
+  // the device and replayed, which is what lets it happen with no connection at
+  // all — and from here it looks like one request either way.
+  //
+  // Sorted, because the order is not the contract and is no longer fixed: the
+  // re-read is kicked off by the answer landing on the device, and the queue
+  // drains alongside it rather than in front of it.
   await answerBand(page, 3)
-  expect(calls).toEqual(['PUT /api/answers', 'GET /api/answers'])
+  expect(calls.toSorted()).toEqual(['GET /api/answers', 'POST /api/sync'])
 
   // Every answer after it is the write alone, which is the property this is
   // really guarding: answering is not a page that re-reads itself.
   calls.length = 0
   await answerBand(page, 2)
-  expect(calls).toEqual(['PUT /api/answers'])
+  expect(calls).toEqual(['POST /api/sync'])
 })
 
 test('a stalled write never blocks the next question', async ({ page, account }) => {
@@ -47,18 +55,22 @@ test('a stalled write never blocks the next question', async ({ page, account })
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[2].prompt)
 })
 
-test('a rejected write is reported and the app stays usable', async ({ page, account }) => {
+test('a rejected write keeps the answer and the app stays usable', async ({
+  page,
+  account,
+}) => {
   const questions = realQuestions(await catalogueOf(account.api))
-  await page.route('**/api/answers', (route) =>
-    route.request().method() === 'PUT'
-      ? route.fulfill({ status: 500, json: { detail: 'The server fell over' } })
-      : route.continue()
+  await page.route('**/api/sync', (route) =>
+    route.fulfill({ status: 500, json: { detail: 'The server fell over' } })
   )
   await page.goto('/answer')
 
   await page.getByRole('group').getByRole('button').nth(3).click()
-  await expect(page.getByText('The server fell over')).toBeVisible()
-  // The failure is reported, not blocking: the next question is already open.
+
+  // A server that cannot take the answer no longer loses it. It stays on the
+  // device, the badge says so, and the next question is already open — where
+  // this once reported the failure and dropped what was typed.
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '1')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[1].prompt)
 })
 

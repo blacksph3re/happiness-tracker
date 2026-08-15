@@ -1,10 +1,10 @@
 <script>
   import { get } from 'svelte/store'
   import { swipe } from '../../lib/swipe.js'
+  import { flush } from '../../lib/sync.js'
   import Ladder from '../../lib/wellbeing/Ladder.svelte'
   import { link } from '../../lib/router.js'
   import { attempt } from '../../lib/api.js'
-  import { upsertAnswer } from '../../lib/generated/sdk.gen'
   import {
     answers as answerStore,
     ensureAnswers,
@@ -12,7 +12,7 @@
     ensureCatalogues,
     ensureMe,
     refreshDay,
-    rememberAnswer,
+    saveAnswer,
   } from '../../lib/store.js'
   import { dayLabel, localHour, shiftDay, today } from '../../lib/day.js'
   import { ANSWER_MIN_HEIGHT } from '../../lib/layout.js'
@@ -122,16 +122,23 @@
     // cache is told about it: the server answers the day's first write by also
     // writing the auto-tracked values, and only a re-read has those.
     const opensTheDay = !get(answerStore).some((row) => row.day === day)
-    rememberAnswer({ day, question_id: question.id, ...payload })
-
-    // Fire and forget: the next question opens without waiting for the server.
-    attempt(() =>
-      upsertAnswer({
-        body: { day, local_hour: localHour(), question_id: question.id, ...payload },
-      })
-    ).then(() => {
-      if (opensTheDay) refreshDay(day)
+    // Queued, not sent: the answer is on the device before this returns, and
+    // reaches the server whenever there is one to reach. The next question
+    // opens either way.
+    // Chained on the queue draining, not on the answer being recorded: the
+    // auto-tracked values are written by the *server* alongside the day's first
+    // answer, so re-reading before it has one is a request that can only come
+    // back without them.
+    saveAnswer({
+      day,
+      local_hour: localHour(),
+      question_id: question.id,
+      ...payload,
     })
+      .then(() => flush())
+      .then(() => {
+        if (opensTheDay) refreshDay(day)
+      })
 
     advance()
   }

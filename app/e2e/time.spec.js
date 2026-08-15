@@ -492,37 +492,33 @@ test('merging collapses a project to one row a day', async ({ page, account }) =
   await expect(day.getByRole('button', { name: 'Edit' })).toHaveCount(3)
 })
 
-test('an overlapping edit offers a merge or a discard', async ({ page, account }) => {
+test('stretching a session over another merges them and says so', async ({
+  page,
+  account,
+}) => {
   const project = await makeProject(account, 'The rewrite')
   await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T11:00:00`)
   await recordSession(account, project.id, `${TODAY}T14:00:00`, `${TODAY}T16:00:00`)
 
   await page.goto('/time/record')
   const day = page.locator(`[data-day="${TODAY}"]`)
-  // The afternoon one by its clock, not by its position: a day lists its
-  // sessions latest first, so "the last row" is the morning.
+  // The afternoon one by its clock: a day lists its sessions latest first.
   const afternoon = day.locator('[data-row]', { hasText: '14:00' })
   await afternoon.getByRole('button', { name: 'Edit' }).click()
-  // Stretch the afternoon session back over the morning one.
+  // Stretch it back over the morning session.
   await page.getByLabel('Started time', { exact: true }).fill('10:00')
   await page.getByRole('button', { name: 'Save' }).click()
 
-  await expect(page.locator('[data-overlap]')).toBeVisible()
-  await expect(day.locator('[data-row]')).toHaveCount(2)
-
-  // Discarding leaves both sessions as they were.
-  await page.getByRole('button', { name: 'Discard the change' }).click()
-  await expect(page.locator('[data-overlap]')).toHaveCount(0)
-  await expect(day.locator('[data-day-total]')).toHaveText('4h 00m')
-
-  // Merging makes one session covering 09:00 to 16:00.
-  await afternoon.getByRole('button', { name: 'Edit' }).click()
-  await page.getByLabel('Started time', { exact: true }).fill('10:00')
-  await page.getByRole('button', { name: 'Save' }).click()
-  await page.getByRole('button', { name: 'Merge into one' }).click()
-
+  // No prompt: the same rule applies whether or not there was a connection at
+  // the time, so the two are merged into the union they describe — 09:00 to
+  // 16:00 — rather than asked about at a moment the app may not be able to ask.
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-sync', 'synced')
   await expect(day.locator('[data-row]')).toHaveCount(1)
   await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('7h 00m')
+
+  // Told, not silent. The decision is in the panel, with the span it swallowed.
+  await page.locator('[data-sync]').click()
+  await expect(page.locator('[data-sync-notices]')).toContainText('merged into one')
 })
 
 test('a session over midnight is shown on both days', async ({ page, account }) => {
@@ -852,7 +848,10 @@ test('the smoothed line reaches past the window it is drawn for', async ({
   // work stopped.
   await page.goto('/time/patterns')
   await expect(page.locator('[data-period]')).toBeVisible()
-  expect(ranges.length, 'no summary was fetched').toBeGreaterThan(0)
+  // Polled rather than read once: the page reads its snapshot from the device
+  // before it asks the server anything, so the request comes a beat after the
+  // window is on screen.
+  await expect.poll(() => ranges.length, { message: 'no summary was fetched' }).toBeGreaterThan(0)
   for (const [start, end] of ranges) {
     expect(start, `summary fetched from ${start}`).toBe('2026-05-26')
     expect(end, `summary fetched to ${end}`).toBe('2026-07-06')
@@ -981,22 +980,14 @@ test('a session running past midnight stays inside its lane', async ({
   const project = await makeProject(account, 'Night shift')
   // Recorded in a different offset from the day it would spill into, so it is
   // kept whole — and its slice therefore runs past that day's own midnight.
-  await account.api.post('/api/time/entries', {
-    data: {
-      project_id: project.id,
-      started_at: '2026-06-14T20:00:00',
-      ended_at: `${TODAY}T01:00:00`,
-      utc_offset: 120,
-    },
-  })
-  await account.api.post('/api/time/entries', {
-    data: {
-      project_id: project.id,
-      started_at: `${TODAY}T08:00:00`,
-      ended_at: `${TODAY}T09:00:00`,
-      utc_offset: 0,
-    },
-  })
+  await recordSession(
+    account,
+    project.id,
+    '2026-06-14T20:00:00',
+    `${TODAY}T01:00:00`,
+    120
+  )
+  await recordSession(account, project.id, `${TODAY}T08:00:00`, `${TODAY}T09:00:00`)
 
   await page.goto('/time/patterns')
   await page.getByRole('button', { name: 'Week', exact: true }).click()

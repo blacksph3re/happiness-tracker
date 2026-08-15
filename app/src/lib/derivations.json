@@ -1,0 +1,833 @@
+{
+  "days": [
+    {
+      "day": "2026-01-01",
+      "local_hour": 9,
+      "name": "2026-01-01 at 9",
+      "values": {
+        "day_of_year": 1.0,
+        "first_answer_hour": 9.0,
+        "month": 0.0,
+        "weekday": 3.0,
+        "year": 2026.0
+      }
+    },
+    {
+      "day": "2026-06-15",
+      "local_hour": 0,
+      "name": "2026-06-15 at 0",
+      "values": {
+        "day_of_year": 166.0,
+        "first_answer_hour": 0.0,
+        "month": 5.0,
+        "weekday": 0.0,
+        "year": 2026.0
+      }
+    },
+    {
+      "day": "2026-12-31",
+      "local_hour": 23,
+      "name": "2026-12-31 at 23",
+      "values": {
+        "day_of_year": 365.0,
+        "first_answer_hour": 23.0,
+        "month": 11.0,
+        "weekday": 3.0,
+        "year": 2026.0
+      }
+    },
+    {
+      "day": "2024-02-29",
+      "local_hour": 12,
+      "name": "2024-02-29 at 12",
+      "values": {
+        "day_of_year": 60.0,
+        "first_answer_hour": 12.0,
+        "month": 1.0,
+        "weekday": 3.0,
+        "year": 2024.0
+      }
+    },
+    {
+      "day": "2026-03-01",
+      "local_hour": 7,
+      "name": "2026-03-01 at 7",
+      "values": {
+        "day_of_year": 60.0,
+        "first_answer_hour": 7.0,
+        "month": 2.0,
+        "weekday": 6.0,
+        "year": 2026.0
+      }
+    }
+  ],
+  "deductions": [
+    {
+      "bands": [],
+      "deduction": 0,
+      "name": "no rule, 0s tracked",
+      "reported": 0,
+      "tracked": 0
+    },
+    {
+      "bands": [],
+      "deduction": 0,
+      "name": "no rule, 60s tracked",
+      "reported": 60,
+      "tracked": 60
+    },
+    {
+      "bands": [],
+      "deduction": 0,
+      "name": "no rule, 3600s tracked",
+      "reported": 3600,
+      "tracked": 3600
+    },
+    {
+      "bands": [],
+      "deduction": 0,
+      "name": "no rule, 21600s tracked",
+      "reported": 21600,
+      "tracked": 21600
+    },
+    {
+      "bands": [],
+      "deduction": 0,
+      "name": "no rule, 28800s tracked",
+      "reported": 28800,
+      "tracked": 28800
+    },
+    {
+      "bands": [],
+      "deduction": 0,
+      "name": "no rule, 36000s tracked",
+      "reported": 36000,
+      "tracked": 36000
+    },
+    {
+      "bands": [],
+      "deduction": 0,
+      "name": "no rule, 43200s tracked",
+      "reported": 43200,
+      "tracked": 43200
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 0,
+      "name": "a lunch deduction, 0s tracked",
+      "reported": 0,
+      "tracked": 0
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 0,
+      "name": "a lunch deduction, 60s tracked",
+      "reported": 60,
+      "tracked": 60
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 0,
+      "name": "a lunch deduction, 3600s tracked",
+      "reported": 3600,
+      "tracked": 3600
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "a lunch deduction, 21600s tracked",
+      "reported": 18900,
+      "tracked": 21600
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "a lunch deduction, 28800s tracked",
+      "reported": 26100,
+      "tracked": 28800
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "a lunch deduction, 36000s tracked",
+      "reported": 33300,
+      "tracked": 36000
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "a lunch deduction, 43200s tracked",
+      "reported": 40500,
+      "tracked": 43200
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 15,
+          "from_minutes": 240
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 0,
+      "name": "two bands, the higher one reached, 0s tracked",
+      "reported": 0,
+      "tracked": 0
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 15,
+          "from_minutes": 240
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 0,
+      "name": "two bands, the higher one reached, 60s tracked",
+      "reported": 60,
+      "tracked": 60
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 15,
+          "from_minutes": 240
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 0,
+      "name": "two bands, the higher one reached, 3600s tracked",
+      "reported": 3600,
+      "tracked": 3600
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 15,
+          "from_minutes": 240
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "two bands, the higher one reached, 21600s tracked",
+      "reported": 18900,
+      "tracked": 21600
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 15,
+          "from_minutes": 240
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "two bands, the higher one reached, 28800s tracked",
+      "reported": 26100,
+      "tracked": 28800
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 15,
+          "from_minutes": 240
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "two bands, the higher one reached, 36000s tracked",
+      "reported": 33300,
+      "tracked": 36000
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 15,
+          "from_minutes": 240
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "two bands, the higher one reached, 43200s tracked",
+      "reported": 40500,
+      "tracked": 43200
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "a cap, 0s tracked",
+      "reported": 0,
+      "tracked": 0
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "a cap, 60s tracked",
+      "reported": 60,
+      "tracked": 60
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "a cap, 3600s tracked",
+      "reported": 3600,
+      "tracked": 3600
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "a cap, 21600s tracked",
+      "reported": 21600,
+      "tracked": 21600
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "a cap, 28800s tracked",
+      "reported": 28800,
+      "tracked": 28800
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "a cap, 36000s tracked",
+      "reported": 36000,
+      "tracked": 36000
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 7200,
+      "name": "a cap, 43200s tracked",
+      "reported": 36000,
+      "tracked": 43200
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 600,
+          "from_minutes": 1
+        }
+      ],
+      "deduction": 0,
+      "name": "a deduction larger than the day, 0s tracked",
+      "reported": 0,
+      "tracked": 0
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 600,
+          "from_minutes": 1
+        }
+      ],
+      "deduction": 60,
+      "name": "a deduction larger than the day, 60s tracked",
+      "reported": 0,
+      "tracked": 60
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 600,
+          "from_minutes": 1
+        }
+      ],
+      "deduction": 3600,
+      "name": "a deduction larger than the day, 3600s tracked",
+      "reported": 0,
+      "tracked": 3600
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 600,
+          "from_minutes": 1
+        }
+      ],
+      "deduction": 21600,
+      "name": "a deduction larger than the day, 21600s tracked",
+      "reported": 0,
+      "tracked": 21600
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 600,
+          "from_minutes": 1
+        }
+      ],
+      "deduction": 28800,
+      "name": "a deduction larger than the day, 28800s tracked",
+      "reported": 0,
+      "tracked": 28800
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 600,
+          "from_minutes": 1
+        }
+      ],
+      "deduction": 36000,
+      "name": "a deduction larger than the day, 36000s tracked",
+      "reported": 0,
+      "tracked": 36000
+    },
+    {
+      "bands": [
+        {
+          "deduct_minutes": 600,
+          "from_minutes": 1
+        }
+      ],
+      "deduction": 36000,
+      "name": "a deduction larger than the day, 43200s tracked",
+      "reported": 7200,
+      "tracked": 43200
+    }
+  ],
+  "scores": [
+    {
+      "name": "sum of three, all answered",
+      "result": 12.0,
+      "score": {
+        "aggregate": "sum",
+        "components": [
+          {
+            "source_question_id": 1,
+            "weight": 1.0
+          },
+          {
+            "source_question_id": 2,
+            "weight": 1.0
+          },
+          {
+            "source_question_id": 3,
+            "weight": 1.0
+          }
+        ],
+        "require_all": false
+      },
+      "values": {
+        "1": 4.0,
+        "2": 3.0,
+        "3": 5.0
+      }
+    },
+    {
+      "name": "mean, weighted",
+      "result": 3.0,
+      "score": {
+        "aggregate": "mean",
+        "components": [
+          {
+            "source_question_id": 1,
+            "weight": 2.0
+          },
+          {
+            "source_question_id": 2,
+            "weight": 1.0
+          }
+        ],
+        "require_all": false
+      },
+      "values": {
+        "1": 4.0,
+        "2": 1.0
+      }
+    },
+    {
+      "name": "a component missing, require_all off",
+      "result": 4.0,
+      "score": {
+        "aggregate": "sum",
+        "components": [
+          {
+            "source_question_id": 1,
+            "weight": 1.0
+          },
+          {
+            "source_question_id": 2,
+            "weight": 1.0
+          }
+        ],
+        "require_all": false
+      },
+      "values": {
+        "1": 4.0
+      }
+    },
+    {
+      "name": "a component missing, require_all on",
+      "result": null,
+      "score": {
+        "aggregate": "sum",
+        "components": [
+          {
+            "source_question_id": 1,
+            "weight": 1.0
+          },
+          {
+            "source_question_id": 2,
+            "weight": 1.0
+          }
+        ],
+        "require_all": true
+      },
+      "values": {
+        "1": 4.0
+      }
+    },
+    {
+      "name": "nothing answered",
+      "result": null,
+      "score": {
+        "aggregate": "sum",
+        "components": [
+          {
+            "source_question_id": 1,
+            "weight": 1.0
+          }
+        ],
+        "require_all": false
+      },
+      "values": {}
+    },
+    {
+      "name": "weights summing to zero",
+      "result": null,
+      "score": {
+        "aggregate": "mean",
+        "components": [
+          {
+            "source_question_id": 1,
+            "weight": 1.0
+          },
+          {
+            "source_question_id": 2,
+            "weight": -1.0
+          }
+        ],
+        "require_all": false
+      },
+      "values": {
+        "1": 4.0,
+        "2": 2.0
+      }
+    }
+  ],
+  "summaries": [
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 10800
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 10800,
+          "20": 10800
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-10T12:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T09:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "one session inside a day",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 7200
+        },
+        "2026-06-11": {
+          "1": 7200
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 7200,
+          "20": 7200
+        },
+        "2026-06-11": {
+          "10": 7200,
+          "20": 7200
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-11T02:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T22:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "a session across midnight",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 28800,
+          "2": 28800
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 57600,
+          "20": 28800
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-10T17:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T09:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T18:00:00",
+          "project_id": 2,
+          "started_at": "2026-06-10T10:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "two projects at once, so the day sums past its own length",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-15": {
+          "1": 10800
+        }
+      },
+      "by_tag": {
+        "2026-06-15": {
+          "10": 10800,
+          "20": 10800
+        }
+      },
+      "entries": [
+        {
+          "ended_at": null,
+          "project_id": 1,
+          "started_at": "2026-06-15T09:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "a session still running",
+      "offsets": {
+        "2026-06-15": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 28800
+        },
+        "2026-06-11": {
+          "1": 28800
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 28800,
+          "20": 28800
+        },
+        "2026-06-11": {
+          "10": 28800,
+          "20": 28800
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-10T16:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T08:00:00",
+          "utc_offset": 120
+        },
+        {
+          "ended_at": "2026-06-12T04:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-11T20:00:00",
+          "utc_offset": -300
+        }
+      ],
+      "name": "days on two different clocks after a flight",
+      "offsets": {
+        "2026-06-10": 120,
+        "2026-06-11": -300
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 14400
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 14400,
+          "20": 14400
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-11T00:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T20:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "a session ending exactly at midnight",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 2400
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 2400,
+          "20": 2400
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-10T09:15:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T09:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T11:20:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T11:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T14:05:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T14:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "several short sessions on one project",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    }
+  ]
+}

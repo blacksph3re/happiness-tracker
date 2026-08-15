@@ -17,6 +17,9 @@
   import Toasts from './lib/Toasts.svelte'
   import { clearTokens, signedIn } from './lib/api.js'
   import { ensureMe, me, resetStore } from './lib/store.js'
+  import SyncBadge from './lib/SyncBadge.svelte'
+  import { watch } from './lib/sync.js'
+  import { applyUpdate, updateReady, watchForUpdates } from './lib/updates.js'
 
   const ROUTES = {
     '/': Landing,
@@ -40,6 +43,13 @@
   $effect(() => {
     if ($signedIn) ensureMe()
     else resetStore()
+  })
+
+  // Started once, for the life of the tab: the queue drains on the events that
+  // mean it might work now, which on a phone is chiefly "the app came back".
+  $effect(() => {
+    watch()
+    watchForUpdates()
   })
 
   /** Pages that belong to the account rather than to either half. */
@@ -102,6 +112,7 @@
       <nav class="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-5 py-4">
         <a href="/" use:link class="flex items-baseline gap-2">
           <span class="numeral text-xl">DT</span>
+          <SyncBadge />
           <span class="meta hidden sm:inline">
             {section === 'time' ? 'Time' : section === 'wellbeing' ? 'Wellbeing' : 'Tracker'}
           </span>
@@ -150,6 +161,25 @@
     <main>
       <Page />
     </main>
+
+    <!-- Offered, not taken. Applying it reloads the page, and this app is one
+         people are part-way through a questionnaire in. -->
+    {#if $updateReady}
+      <div
+        data-update-ready
+        class="fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-md flex-wrap items-center
+               justify-between gap-3 rounded-xl border border-white/15 bg-ink-soft px-4
+               py-3 shadow-xl"
+      >
+        <p class="text-sm">A newer version is ready.</p>
+        <button
+          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+          onclick={applyUpdate}
+        >
+          Reload to update
+        </button>
+      </div>
+    {/if}
   </div>
 {/if}
 

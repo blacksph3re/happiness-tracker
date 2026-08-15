@@ -27,6 +27,7 @@ from services.wellbeing import (
     WEEKDAY_LABELS,
     QuestionRuleError,
     ScoreRuleError,
+    check_answer,
     check_question_bounds,
     check_question_options,
     check_question_shape,
@@ -39,6 +40,7 @@ from services.wellbeing import (
 )
 
 __all__ = [
+    "check_answer",
     "MONTH_LABELS",
     "SYSTEM_QUESTION_SPECS",
     "WEEKDAY_LABELS",

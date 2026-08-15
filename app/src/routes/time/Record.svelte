@@ -1,16 +1,11 @@
 <script>
-  import { attempt, unwrap } from '../../lib/api.js'
-  import {
-    createTimeEntry,
-    deleteTimeEntry,
-    exportTime,
-    updateTimeEntry,
-  } from '../../lib/generated/sdk.gen'
+  import { save, toCsv, toZip } from '../../lib/download.js'
   import { tick } from 'svelte'
 
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
   import { link } from '../../lib/router.js'
   import { period, weekHeading } from '../../lib/time/period.js'
+  import { exportTables } from '../../lib/time/summary.js'
   import { offsetLabel } from '../../lib/time/duration.js'
   import { resource } from '../../lib/resource.svelte.js'
   import {
@@ -27,19 +22,19 @@
   import TimeField from '../../lib/time/TimeField.svelte'
   import { now } from '../../lib/time/tick.js'
   import {
+    ensureDeductionRules,
     ensureProjects,
     ensureSummary,
     ensureTags,
     ensureTimeEntries,
     ensureTrackedRange,
-    forgetEntry,
     projects as projectStore,
-    rememberEntry,
+    removeEntry,
+    saveEntry,
     tags as tagStore,
     timeEntries,
     trackedDays,
   } from '../../lib/store.js'
-  import { pushToast } from '../../lib/toasts.js'
 
   /**
    * Every tracked day in one scroll, and the place a session is corrected.
@@ -79,16 +74,6 @@
    * cannot honestly carry out on its own.
    */
   const workable = $derived(!merged && by === 'project')
-
-  /**
-   * A write the server refused because it overlaps, held for the answer.
-   *
-   * The overlap is not a failure to report and forget: the two likely
-   * intentions — "these are one session" and "I mistyped" — are both one tap
-   * away, and the merge is a single atomic write rather than a delete and an
-   * edit that could half-happen.
-   */
-  let clash = $state(null)
 
   const projects = $derived(new Map(($projectStore ?? []).map((p) => [p.id, p])))
 
@@ -339,7 +324,11 @@
   /** One session's slice, in the shape a row is drawn from. */
   function asRow(slice) {
     return {
-      key: `${slice.entry.id}:${slice.from}:${slice.group}`,
+      // Keyed on the identity the device gave the session, not on the row id:
+      // a session recorded here has no row id until it syncs, so every local
+      // one would key as `undefined` — and two of them on the same project and
+      // minute would then be the same key, which Svelte refuses.
+      key: `${slice.entry.client_id ?? slice.entry.id}:${slice.from}:${slice.group}`,
       group: slice.group,
       from: slice.from,
       to: slice.to,
@@ -448,7 +437,7 @@
   function startEditing(entry) {
     adding = null
     editing = {
-      id: entry.id,
+      client_id: entry.client_id,
       project_id: entry.project_id,
       startDay: localDay(entry.started_at, entry.utc_offset),
       startClock: clockLabel(entry.started_at, entry.utc_offset),
@@ -469,107 +458,74 @@
     }
   }
 
-  async function saveEdit(merge = false) {
-    const body = {
+  /**
+   * Save a correction.
+   *
+   * Queued rather than sent: the session is corrected on the device now, and
+   * the server hears about it when it can. An overlap is no longer a question
+   * asked here either — the sync rules merge overlapping sessions into their
+   * union and say so in the panel, which is the same answer this prompt used to
+   * ask for and one that also works with no connection.
+   */
+  async function saveEdit() {
+    await saveEntry({
+      client_id: editing.client_id,
       project_id: editing.project_id,
       started_at: fromLocal(editing.startDay, editing.startClock, editing.offset),
-      merge_overlapping: merge,
-    }
-    if (!editing.running) {
-      body.ended_at = fromLocal(editing.endDay, editing.endClock, editing.offset)
-    }
-    const saved = await write(
-      () => updateTimeEntry({ path: { entry_id: editing.id }, body }),
-      () => saveEdit(true)
-    )
-    if (!saved) return
-    rememberEntry(saved)
+      ended_at: editing.running
+        ? null
+        : fromLocal(editing.endDay, editing.endClock, editing.offset),
+      utc_offset: editing.offset,
+      note: editing.note ?? null,
+    })
     revision += 1
-    // A merge removes the sessions it swallowed, and the store cannot know
-    // which from the one row it gets back.
-    if (merge) await ensureTimeEntries({ force: true })
     editing = null
-    clash = null
   }
 
-  async function saveNew(merge = false) {
-    const offset = utcOffset()
+  async function saveNew() {
     const day = adding.day
-    const created = await write(
-      () =>
-        createTimeEntry({
-          body: {
-            project_id: adding.project_id,
-            started_at: fromLocal(day, adding.startClock, offset),
-            ended_at: fromLocal(day, adding.endClock, offset),
-            utc_offset: offset,
-            merge_overlapping: merge,
-          },
-        }),
-      () => saveNew(true)
-    )
-    if (!created) return
-    rememberEntry(created)
+    await saveEntry({
+      project_id: adding.project_id,
+      started_at: fromLocal(day, adding.startClock, utcOffset()),
+      ended_at: fromLocal(day, adding.endClock, utcOffset()),
+      utc_offset: utcOffset(),
+    })
     revision += 1
-    if (merge) await ensureTimeEntries({ force: true })
     reach(day)
     adding = null
-    clash = null
-  }
-
-  /**
-   * Run a write, catching the one refusal that has a good second answer.
-   *
-   * @param {() => Promise<unknown>} call The write.
-   * @param {() => Promise<unknown>} retry The same write, merging.
-   */
-  async function write(call, retry) {
-    try {
-      return await unwrap(call)
-    } catch (error) {
-      if (error.message.includes('overlaps')) {
-        clash = { retry }
-        return null
-      }
-      pushToast(error.message)
-      return null
-    }
   }
 
   async function remove(entry) {
-    // A 204 unwraps to null, which is also what a failure gives back, so this
-    // one reads the exception rather than the value.
-    try {
-      await unwrap(() => deleteTimeEntry({ path: { entry_id: entry.id } }))
-    } catch (error) {
-      pushToast(error.message)
-      return
-    }
-    forgetEntry(entry.id)
+    await removeEntry(entry.client_id)
     revision += 1
     editing = null
   }
 
+  /**
+   * Save what has been tracked, worked out here rather than fetched.
+   *
+   * Three tables, because a CSV holds one: the sessions, and the daily totals
+   * per project and per tag. Built from the same functions this page draws
+   * from, so the file cannot disagree with the screen — and, unlike the
+   * server-rendered export it replaces, it works with no connection.
+   */
   async function download() {
-    // Everything, not the weeks on screen: the button reads "download", and a
-    // range would quietly export however far the list happened to be scrolled.
-    // The wellbeing export behaves the same way.
-    //
-    // A zip, and the label says so: a CSV holds one table and this export is
-    // three — the sessions, and the daily totals per project and per tag.
-    const file = await attempt(() => exportTime({ parseAs: 'blob' }))
-    if (!file) return
-    const url = URL.createObjectURL(file)
-    const link = Object.assign(document.createElement('a'), {
-      href: url,
-      download: 'tracked-time.zip',
+    const [known, allTags, rules] = await Promise.all([
+      ensureProjects(),
+      ensureTags(),
+      ensureDeductionRules(),
+    ])
+    const tables = exportTables({
+      entries: $timeEntries,
+      projects: known ?? [],
+      tags: allTags ?? [],
+      bandsOf: rules ?? {},
+      asOf: $now,
     })
-    // Attached and revoked a tick later: revoking synchronously can cancel the
-    // download before the browser has read the blob.
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 0)
+    save(
+      toZip(Object.fromEntries(Object.entries(tables).map(([n, rows]) => [n, toCsv(rows)]))),
+      'tracked-time.zip'
+    )
   }
 </script>
 
@@ -686,36 +642,6 @@
           A session cannot be recorded on a day that has not happened yet.
         </p>
       {/if}
-    </div>
-  {/if}
-
-  {#if clash}
-    <!-- Asked rather than reported: an overlap on one project is either two
-         halves of the same session or a slip, and both answers are one tap. -->
-    <div
-      data-overlap
-      class="mb-4 rounded-xl border border-ember/50 bg-dusk/20 px-5 py-4"
-    >
-      <p class="font-medium">That overlaps another session on the same project.</p>
-      <p class="mt-1 mb-3 text-sm text-haze">
-        Merging keeps the earliest start and the latest end, and removes what it
-        swallowed. One project cannot run twice over the same minutes — the hour
-        would be counted twice under the same name.
-      </p>
-      <div class="flex flex-wrap gap-2">
-        <button
-          class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift"
-          onclick={() => clash.retry()}
-        >
-          Merge into one
-        </button>
-        <button
-          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-          onclick={() => (clash = null)}
-        >
-          Discard the change
-        </button>
-      </div>
     </div>
   {/if}
 
@@ -900,7 +826,7 @@
                         </div>
                       </div>
 
-                      {#if only && editing?.id === only.id}
+                      {#if only && editing?.client_id === only.client_id}
                         <div
                           class="mt-3 flex flex-wrap items-end gap-3 border-t
                                  border-white/10 pt-3"

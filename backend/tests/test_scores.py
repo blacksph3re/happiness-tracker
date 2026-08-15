@@ -1,20 +1,42 @@
+from itertools import count
+
 from tests.conftest import make_user
 
 DAY = "2026-03-04"
 
 
+_sent = count(1)
+
+
+def stamp(seq):
+    """Return a clock that advances with the sequence, so later is later."""
+    return f"2026-06-15T{seq // 60:02d}:{seq % 60:02d}:00"
+
+
 def answer(client, headers, question_id, value, day=DAY, hour=9):
-    """Submit one answer through the hot path."""
-    return client.put(
-        "/api/answers",
+    """Submit one answer the only way there is: through the sync queue."""
+    seq = next(_sent)
+    response = client.post(
+        "/api/sync",
         headers=headers,
         json={
-            "day": day,
-            "local_hour": hour,
-            "question_id": question_id,
-            "value": value,
+            "intents": [
+                {
+                    "seq": seq,
+                    "kind": "answer.put",
+                    "client_updated_at": stamp(seq),
+                    "payload": {
+                        "day": day,
+                        "local_hour": hour,
+                        "question_id": question_id,
+                        "value": value,
+                    },
+                }
+            ]
         },
     )
+    assert response.status_code == 200, response.text
+    return response.json()["results"][0]
 
 
 def score_of(client, headers, score_id, day=DAY):
@@ -131,7 +153,7 @@ def test_a_score_is_not_answerable(
     client, admin_headers, catalogue_id, starter_questions
 ):
     score = seeded_score(client, admin_headers, catalogue_id)
-    assert answer(client, admin_headers, score["id"], 3.0).status_code == 403
+    assert answer(client, admin_headers, score["id"], 3.0)["outcome"] == "conflict"
 
 
 def test_a_score_is_not_editable_as_a_question(

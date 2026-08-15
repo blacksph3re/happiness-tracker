@@ -20,6 +20,29 @@ function accessToken() {
   return localStorage.getItem(ACCESS_KEY)
 }
 
+/**
+ * Whose token this is, read from the token itself.
+ *
+ * Not a substitute for asking the server — nothing is authorised on the
+ * strength of this — but the device has to know whose snapshot it is holding
+ * *before* it restores any of it, and a round trip is exactly what it does not
+ * have at that moment.
+ *
+ * @returns {number|null} The account id, or null when there is no readable token.
+ */
+export function tokenHolder() {
+  const token = accessToken()
+  if (!token) return null
+  try {
+    const [, body] = token.split('.')
+    const claims = JSON.parse(atob(body.replace(/-/g, '+').replace(/_/g, '/')))
+    const id = Number(claims.sub)
+    return Number.isInteger(id) ? id : null
+  } catch {
+    return null
+  }
+}
+
 /** Persist a freshly issued token pair and mark the session as active. */
 export function storeTokens({ access_token, refresh_token }) {
   localStorage.setItem(ACCESS_KEY, access_token)
@@ -78,6 +101,24 @@ function describeFailure(payload, status) {
 // Every generated call carries the bearer token, so no call site handles auth.
 client.setConfig({ auth: () => accessToken() ?? undefined })
 
+/**
+ * Whether this device is holding writes the server has not taken.
+ *
+ * Injected rather than imported: `sync.js` reads this module, and asking it a
+ * question from here would be a cycle. It is a question about the app's state,
+ * which the app answers.
+ */
+let holdingWrites = null
+
+/**
+ * Tell this module how to find out whether a queue is waiting.
+ *
+ * @param {() => boolean} ask
+ */
+export function whenHoldingWrites(ask) {
+  holdingWrites = ask
+}
+
 let refreshing = null
 
 /** Refresh at most once at a time, however many calls hit 401 together. */
@@ -119,6 +160,18 @@ export async function unwrap(call) {
       ;({ data, error, response } = await call())
     }
     if (response.status === 401) {
+      // A device holding writes nobody else has is not sent back to the login
+      // page: doing that clears the tokens, and the queue's only route back to
+      // the server is signing in as the same account. The badge says what has
+      // happened and the sign-in form is a tap away, with everything intact.
+      //
+      // The queue itself is never cleared here, whichever branch runs. Only
+      // tokens are.
+      if (holdingWrites?.()) {
+        const refused = new Error('Sign in again to sync the changes on this device')
+        refused.status = 401
+        throw refused
+      }
       // Replace rather than push: the expired page must not stay in history, or
       // Back lands on it, 401s again and bounces forward to login for ever.
       clearTokens()

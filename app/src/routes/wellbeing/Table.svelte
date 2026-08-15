@@ -1,9 +1,9 @@
 <script>
   import { tick } from 'svelte'
 
+  import { save, toCsv } from '../../lib/download.js'
   import { swipe } from '../../lib/swipe.js'
   import { attempt } from '../../lib/api.js'
-  import { exportAnswers } from '../../lib/generated/sdk.gen'
   import { ensureAllCatalogues, ensureAnswers } from '../../lib/store.js'
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
   import { navigate } from '../../lib/router.js'
@@ -150,20 +150,33 @@
     return Number.isInteger(row.value) ? String(row.value) : row.value.toFixed(1)
   }
 
-  async function download() {
-    // `parseAs` keeps the generated client usable for a binary body, so the
-    // path, the bearer token and the token refresh are all handled the same way
-    // as every other call rather than by hand here.
-    const file = await attempt(() => exportAnswers({ parseAs: 'blob' }))
-    if (!file) return
-    const url = URL.createObjectURL(file)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = 'happiness-answers.csv'
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 0)
+  /**
+   * Save the record as CSV, built from what is on the page.
+   *
+   * One row per day and one column per question ever answered, which is the
+   * orientation analysis tools expect even though the table runs the other way.
+   * Rendered here rather than fetched: the file then holds exactly what the
+   * screen holds, including anything answered with no connection.
+   */
+  function download() {
+    const columns = shown
+    const rows = [['Day', ...columns.map((question) => question.prompt)]]
+    for (const day of answered) {
+      rows.push([
+        day,
+        ...columns.map((question) => {
+          const cell = cells[`${question.id}:${day}`]
+          if (!cell) return null
+          if (cell.option_id != null) {
+            return question.options.find((o) => o.id === cell.option_id)?.label ?? ''
+          }
+          // A rating of 4 is a whole number everywhere it is shown, and only
+          // became `4.0` on the way out.
+          return Number.isInteger(cell.value) ? cell.value : cell.value
+        }),
+      ])
+    }
+    save(new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' }), 'happiness-answers.csv')
   }
 </script>
 
@@ -200,8 +213,14 @@
       >
         Later days →
       </button>
+      <!-- Disabled until the record is on screen. The file is rendered from what
+           the page holds, so a click before it has anything would hand over a
+           header row and nothing else — which is the cost of the export no
+           longer coming from the server, and worth spending a `disabled` on. -->
       <button
-        class="meta rounded-md border border-white/15 px-4 py-2 hover:border-white/40"
+        class="meta rounded-md border border-white/15 px-4 py-2 hover:border-white/40
+               disabled:cursor-not-allowed disabled:opacity-30"
+        disabled={loading}
         onclick={download}
       >
         Download .csv
@@ -332,6 +351,7 @@
               </th>
               {#each days as day (day)}
                 <td
+                  data-cell="{question.id}:{day}"
                   class="numeral truncate px-4 py-3 tabular-nums
                          {cells[`${question.id}:${day}`] ? 'text-paper' : 'text-white/20'}"
                   title={render(cells[`${question.id}:${day}`], question)}

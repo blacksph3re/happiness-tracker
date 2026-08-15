@@ -1,5 +1,5 @@
-import csv
 from datetime import date
+from itertools import count
 
 from tests.conftest import make_user
 
@@ -7,18 +7,46 @@ DAY = "2026-03-04"
 SYSTEM_KEYS = {"weekday", "day_of_year", "month", "year", "first_answer_hour"}
 
 
-def answer(client, headers, question_id, value, day=DAY, hour=9):
-    """Submit one answer through the hot path."""
-    return client.put(
-        "/api/answers",
+_sent = count(1)
+
+
+def stamp(seq):
+    """Return a clock that advances with the sequence, so later is later."""
+    return f"2026-06-15T{seq // 60:02d}:{seq % 60:02d}:00"
+
+
+def answer(client, headers, question_id, value=None, day=DAY, hour=9, option_id=None):
+    """Submit one answer the only way there is: through the sync queue.
+
+    Returns
+    -------
+    dict
+        The verdict on that one intent, rather than an HTTP response — every
+        write is now one item in a queue and is answered as one.
+    """
+    seq = next(_sent)
+    response = client.post(
+        "/api/sync",
         headers=headers,
         json={
-            "day": day,
-            "local_hour": hour,
-            "question_id": question_id,
-            "value": value,
+            "intents": [
+                {
+                    "seq": seq,
+                    "kind": "answer.put",
+                    "client_updated_at": stamp(seq),
+                    "payload": {
+                        "day": day,
+                        "local_hour": hour,
+                        "question_id": question_id,
+                        "value": value,
+                        "option_id": option_id,
+                    },
+                }
+            ]
         },
     )
+    assert response.status_code == 200, response.text
+    return response.json()["results"][0]
 
 
 def system_answers(client, headers, catalogue_id, day=DAY):
@@ -48,7 +76,7 @@ def test_answering_a_day_materialises_system_answers(
     client, admin_headers, catalogue_id, starter_questions
 ):
     written = answer(client, admin_headers, starter_questions[0]["id"], 4)
-    assert written.status_code == 204
+    assert written["outcome"] == "applied"
     recorded = system_answers(client, admin_headers, catalogue_id)
     assert set(recorded) == SYSTEM_KEYS
     assert recorded["weekday"] == "Wed"  # 2026-03-04 was a Wednesday
@@ -88,7 +116,10 @@ def test_past_and_future_days_are_unbounded(
 ):
     question_id = starter_questions[0]["id"]
     for day in ("1999-01-01", "2099-12-31"):
-        assert answer(client, admin_headers, question_id, 3, day=day).status_code == 204
+        assert (
+            answer(client, admin_headers, question_id, 3, day=day)["outcome"]
+            == "applied"
+        )
     rows = client.get("/api/answers", headers=admin_headers).json()
     days = {row["day"] for row in rows}
     assert {"1999-01-01", "2099-12-31"} <= days
@@ -109,16 +140,16 @@ def test_system_questions_reject_direct_writes(
 ):
     detail = client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers).json()
     system_id = next(q["id"] for q in detail["questions"] if q["system_key"])
-    assert answer(client, admin_headers, system_id, 3).status_code == 403
+    assert answer(client, admin_headers, system_id, 3)["outcome"] == "conflict"
 
 
 def test_values_outside_bounds_are_rejected(client, admin_headers, starter_questions):
     question_id = starter_questions[0]["id"]
-    assert answer(client, admin_headers, question_id, -1).status_code == 422
-    assert answer(client, admin_headers, question_id, 6).status_code == 422
-    assert answer(client, admin_headers, question_id, 2.5).status_code == 422
+    assert answer(client, admin_headers, question_id, -1)["outcome"] == "conflict"
+    assert answer(client, admin_headers, question_id, 6)["outcome"] == "conflict"
+    assert answer(client, admin_headers, question_id, 2.5)["outcome"] == "conflict"
     # 0 is the bottom of the WHO-5 scale, so it must be accepted.
-    assert answer(client, admin_headers, question_id, 0).status_code == 204
+    assert answer(client, admin_headers, question_id, 0)["outcome"] == "applied"
 
 
 def test_enum_answer_requires_a_matching_option(
@@ -136,34 +167,22 @@ def test_enum_answer_requires_a_matching_option(
     option_id = created["options"][0]["id"]
 
     assert (
-        client.put(
-            "/api/answers",
-            headers=admin_headers,
-            json={
-                "day": DAY,
-                "local_hour": 9,
-                "question_id": created["id"],
-                "option_id": option_id,
-            },
-        ).status_code
-        == 204
+        answer(client, admin_headers, created["id"], option_id=option_id)["outcome"]
+        == "applied"
     )
-    # A value instead of an option, and an option from another question, both fail.
-    assert answer(client, admin_headers, created["id"], 1).status_code == 422
+    # A value where an option belongs, and an option from another question:
+    # both refused, and refused by the rules rather than by the door, which is
+    # why they are still refused now the door has gone.
     assert (
-        client.put(
-            "/api/answers",
-            headers=admin_headers,
-            json={
-                "day": DAY,
-                "local_hour": 9,
-                "question_id": starter_questions[0]["id"],
-                "option_id": option_id,
-            },
-        ).status_code
-        == 422
+        answer(client, admin_headers, created["id"], value=1)["outcome"]
+        == "conflict"
     )
-
+    assert (
+        answer(client, admin_headers, starter_questions[0]["id"], option_id=option_id)[
+            "outcome"
+        ]
+        == "conflict"
+    )
 
 def test_users_cannot_see_or_touch_each_others_answers(
     client, admin_headers, starter_questions
@@ -193,25 +212,6 @@ def test_users_cannot_see_or_touch_each_others_answers(
     assert alice_after[0]["value"] == 5.0
 
 
-def test_export_has_one_row_per_day(client, admin_headers, starter_questions):
-    answer(client, admin_headers, starter_questions[0]["id"], 4, day="2026-03-04")
-    answer(client, admin_headers, starter_questions[0]["id"], 2, day="2026-03-05")
-
-    response = client.get("/api/answers/export.csv", headers=admin_headers)
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/csv")
-
-    # Decoded through utf-8-sig: the file opens with a byte-order mark so Excel
-    # reads it as UTF-8, and that mark must not become part of the first header.
-    header, *body = list(csv.reader(response.content.decode("utf-8-sig").splitlines()))
-    assert header[0] == "Day"
-    assert starter_questions[0]["prompt"] in header
-    assert [row[0] for row in body] == ["2026-03-04", "2026-03-05"]
-
-    column = header.index(starter_questions[0]["prompt"])
-    assert [row[column] for row in body] == ["4", "2"]
-
-
 def test_stats_variables_report_roles(
     client, admin_headers, catalogue_id, starter_questions
 ):
@@ -225,16 +225,7 @@ def test_stats_variables_report_roles(
         },
     ).json()
     answer(client, admin_headers, starter_questions[0]["id"], 4)
-    client.put(
-        "/api/answers",
-        headers=admin_headers,
-        json={
-            "day": DAY,
-            "local_hour": 9,
-            "question_id": created["id"],
-            "option_id": created["options"][0]["id"],
-        },
-    )
+    answer(client, admin_headers, created["id"], option_id=created["options"][0]["id"])
 
     variables = client.get("/api/stats/variables", headers=admin_headers).json()
     by_key = {variable["key"]: variable for variable in variables}
@@ -279,20 +270,30 @@ def test_non_finite_values_are_rejected(client, admin_headers, starter_questions
 
     for raw in ("NaN", "Infinity"):
         response = client.request(
-            "PUT",
-            "/api/answers",
+            "POST",
+            "/api/sync",
             headers={**admin_headers, "Content-Type": "application/json"},
             content=json.dumps(
                 {
-                    "day": DAY,
-                    "local_hour": 9,
-                    "question_id": starter_questions[0]["id"],
-                    "value": float("nan") if raw == "NaN" else float("inf"),
+                    "intents": [
+                        {
+                            "seq": 1,
+                            "kind": "answer.put",
+                            "client_updated_at": "2026-06-15T09:00:00",
+                            "payload": {
+                                "day": DAY,
+                                "local_hour": 9,
+                                "question_id": starter_questions[0]["id"],
+                                "value": float("nan") if raw == "NaN" else float("inf"),
+                            },
+                        }
+                    ]
                 }
-            ).replace('"value": NaN', '"value": NaN'),
+            ),
         )
-        assert response.status_code == 422, f"{raw} -> {response.status_code}"
-
+        assert response.status_code == 200, f"{raw} -> {response.status_code}"
+        verdict = response.json()["results"][0]
+        assert verdict["outcome"] == "conflict", f"{raw} -> {verdict}"
 
 def test_one_set_of_system_answers_per_day_across_catalogues(
     client, admin_headers, starter_questions
@@ -360,6 +361,4 @@ def test_a_deactivated_question_leaves_the_variables(
     # ...but the answer it already holds is still recorded and still exported.
     rows = client.get("/api/answers", headers=admin_headers).json()
     assert any(row["question_id"] == retired["id"] for row in rows)
-    exported = client.get("/api/answers/export.csv", headers=admin_headers)
-    header = next(csv.reader(exported.content.decode("utf-8-sig").splitlines()))
-    assert retired["prompt"] in header
+    assert any(row["question_id"] == retired["id"] for row in rows)

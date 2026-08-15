@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.fields import FieldInfo
@@ -652,6 +653,14 @@ class TimeEntryOut(BaseModel):
     utc_offset: int
     """Minutes east of UTC at check-in."""
 
+    client_id: str | None
+    """The identity the recording device gave this session.
+
+    Sent to the client because it is what a later correction or deletion refers
+    to — including one made with no connection, where the row's own id is not
+    yet known to anybody.
+    """
+
     note: str | None
     """Optional free text."""
 
@@ -767,3 +776,97 @@ class TrackedRange(BaseModel):
 
     last: date | None
     """Latest tracked day, or None when nothing has been tracked."""
+
+
+# ---------------------------------------------------------------------------
+# Sync. One endpoint replays what a device recorded with no connection, and
+# answers per intent rather than per request: a session the server refuses must
+# not wedge the fortnight of answers queued behind it.
+# ---------------------------------------------------------------------------
+
+
+class SyncIntent(BaseModel):
+    """One write a device made locally, waiting to be replayed."""
+
+    seq: int
+    """The device's own ordering. Echoed back so it can retire the right entry."""
+
+    kind: Literal["answer.put", "entry.upsert", "entry.delete"]
+    """What the intent does.
+
+    `entry.upsert` covers creating and correcting alike, deliberately: a
+    correction to a session another device deleted re-creates it, and a single
+    kind is what makes that fall out rather than being special-cased.
+    """
+
+    client_updated_at: datetime
+    """The device's clock at the moment of the tap. What decides who wins."""
+
+    client_id: str | None = Field(default=None, max_length=36)
+    """The device's identity for a session. Required for the entry kinds."""
+
+    payload: dict = Field(default_factory=dict)
+    """The write itself, in the shape the matching endpoint takes."""
+
+
+class SyncEntryPayload(BaseModel):
+    """A session as a device queues it.
+
+    Distinct from `TimeEntryCreate` in one respect that matters: `ended_at` may
+    be null, because checking in with no connection queues a session that is
+    still running.
+    """
+
+    project_id: int
+    """The project worked on."""
+
+    started_at: datetime
+    """When the session began, in UTC."""
+
+    ended_at: datetime | None = None
+    """When it ended, in UTC, or null while the timer is still running."""
+
+    utc_offset: int = Field(ge=-720, le=840)
+    """Minutes east of UTC at check-in."""
+
+    note: str | None = Field(default=None, max_length=500)
+    """Optional free text about the session."""
+
+
+class SyncRequest(BaseModel):
+    """A device's queue, oldest first."""
+
+    intents: list[SyncIntent] = Field(default_factory=list, max_length=500)
+    """The intents to replay, in the order they were made."""
+
+
+class SyncResult(BaseModel):
+    """What became of one intent."""
+
+    seq: int
+    """The intent this answers."""
+
+    outcome: Literal["applied", "superseded", "merged", "dropped", "conflict"]
+    """What happened.
+
+    `superseded` and `dropped` are both "the server kept what it had" — the
+    first for a write, the second for a deletion — and neither is an error: the
+    device should retire the intent either way. `conflict` is the one that needs
+    a person.
+    """
+
+    detail: str | None = None
+    """Why, when the outcome is not `applied`. Shown in the sync panel."""
+
+    entry: TimeEntryOut | None = None
+    """The session as it now stands, for the device to fold back in."""
+
+
+class SyncResponse(BaseModel):
+    """The outcome of a whole queue."""
+
+    results: list[SyncResult]
+    """One per intent, in the order they were sent."""
+
+    server_time: datetime
+    """The server's clock, so a device can notice its own is wrong."""

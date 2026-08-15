@@ -1,12 +1,23 @@
 import { get, writable } from 'svelte/store'
 
-import { attempt } from './api.js'
+import { attempt, tokenHolder, unwrap } from './api.js'
+import { overlayAnswers, overlayEntries } from './projection.js'
+import { summaryRows, trackedEdges } from './time/summary.js'
+import { connection, enqueue, loadQueue, notices, queued } from './sync.js'
+import {
+  clearSnapshot,
+  readSnapshot,
+  rememberOwner,
+  snapshotOwner,
+  writeSnapshot,
+} from './local.js'
 import {
   getCatalogue,
   getCurrentUser,
   getMyPreferences,
   listAnswers,
   listCatalogues,
+  listDeductions,
   listProjects,
   listStatsVariables,
   listTags,
@@ -43,6 +54,15 @@ export const projects = writable(null)
 
 /** The signed-in account's tags. */
 export const tags = writable(null)
+
+/**
+ * Deduction bands by tag id.
+ *
+ * Cached because reported time has to be computable here: with no connection
+ * there is no summary endpoint to ask, and a tag with a lunch rule that reports
+ * its raw hours offline would be wrong in the direction that matters.
+ */
+export const deductionRules = writable(null)
 
 /** The first and last day tracking covers, for window controls that must stop. */
 export const trackedDays = writable(null)
@@ -83,10 +103,66 @@ export async function ensureSummary({ start, end, by, as_of }) {
   const key = `${by}:${start}:${end}`
   if (summaries.has(key)) return summaries.get(key)
   return once(`summary:${key}`, async () => {
-    const rows = (await attempt(() => timeSummary({ query: { start, end, by, as_of } }))) ?? []
-    summaries.set(key, rows)
-    return rows
+    const rows = await quietly(() => timeSummary({ query: { start, end, by, as_of } }))
+    if (rows) {
+      summaries.set(key, rows)
+      return rows
+    }
+    // Nothing to ask. The same arithmetic, run here — see `lib/time/summary.js`
+    // for why that second implementation exists and what holds it to the first.
+    // Not cached: it is computed from the sessions this device holds, and those
+    // change under it as the queue moves.
+    return localSummary({ start, end, by, as_of })
   })
+}
+
+/**
+ * Work out the summary from what the device holds.
+ *
+ * @param {{start: string, end: string, by: string, as_of: string}} query
+ * @returns {Promise<Array<object>>} Rows in the shape the endpoint returns.
+ */
+async function localSummary({ start, end, by, as_of }) {
+  const [known, rules] = await Promise.all([ensureProjects(), ensureDeductionRules()])
+  const live = new Set(known.filter((project) => project.active).map((p) => p.id))
+  return summaryRows({
+    // Archived projects leave the reports, as they do online.
+    entries: get(timeEntries).filter((entry) => live.has(entry.project_id)),
+    asOf: as_of ? Date.parse(`${as_of}Z`) : Date.now(),
+    by,
+    tagsOf: Object.fromEntries(known.map((p) => [p.id, p.tags.map((tag) => tag.id)])),
+    bandsOf: rules ?? {},
+    start,
+    end,
+  })
+}
+
+/**
+ * Run a read without reporting its failure.
+ *
+ * `attempt` toasts, which is right for something a person asked for and wrong
+ * for a read that has a local answer: being told "could not reach the server"
+ * every few seconds is not news to someone who knows they are on a train.
+ *
+ * @param {() => Promise<unknown>} call
+ * @returns {Promise<unknown|null>} Null when it did not arrive.
+ */
+async function quietly(call) {
+  try {
+    const answer = await unwrap(call)
+    connection.set('online')
+    return answer
+  } catch (failure) {
+    // Only a request that never reached a server means offline. A 422 means the
+    // server is right there and disagreeing, which is a different sentence.
+    //
+    // Learned from requests rather than from `navigator.onLine`, which reports
+    // whether the device has a network interface and not whether anything is
+    // reachable through it — it reads `true` on a train, in a tunnel, and in
+    // Playwright with the context offline.
+    if (failure.message?.includes('Could not reach')) connection.set('offline')
+    return null
+  }
 }
 
 /** Forget the cached totals, after anything that changes what they count. */
@@ -94,6 +170,160 @@ export function forgetSummaries() {
   summaries.clear()
   // A new session can extend the history past what a slider currently allows.
   trackedDays.set(null)
+}
+
+/**
+ * The stores kept on the device between visits, by the name they are kept under.
+ *
+ * Everything a read view needs and nothing a write path owns: the outbox is not
+ * here, because it is not a copy of anything.
+ */
+const PERSISTED = {
+  me,
+  catalogues,
+  catalogueDetails,
+  answers,
+  variables,
+  preferences,
+  projects,
+  tags,
+  deductionRules,
+  trackedDays,
+  timeEntries,
+}
+
+/**
+ * Which values have been read from the server this session.
+ *
+ * A snapshot restored from disk is shown immediately and then replaced: it is
+ * what the app *had*, not what the app knows. Without this the first `ensure`
+ * after a reload would answer from a week-old copy and never ask again.
+ */
+const fetched = new Set()
+
+/**
+ * The answers as the server last gave them, before the queue is laid over.
+ *
+ * Kept apart from what is on screen because the projection has to be *rebuilt*,
+ * not applied once: it depends on the queue and on the catalogues — the
+ * auto-tracked rows need the question ids — and either can arrive after the
+ * answers did. Projecting at fetch time alone left a day answered offline
+ * missing its weekday until something happened to refetch.
+ */
+let fromServer = []
+
+let projecting = false
+
+/** Lay the queue over the server's answers again, whatever just changed. */
+function projected(rows = fromServer) {
+  return overlayAnswers(rows, get(queued), get(catalogueDetails))
+}
+
+/** Rebuild the projection, whatever just changed under it. */
+function reproject() {
+  if (!projecting) return
+  answers.set(projected())
+}
+
+let hydrating = null
+
+/**
+ * Restore the snapshot, once per page load.
+ *
+ * Awaited by every loader rather than gating the first paint, so a route that
+ * mounts before the disk answers is correct rather than blank — it simply
+ * fetches, as it always did.
+ *
+ * @returns {Promise<void>}
+ */
+export function ready() {
+  if (!hydrating) hydrating = hydrate()
+  return hydrating
+}
+
+async function hydrate() {
+  // The queue first, and before any fetch can resolve: every loader awaits this
+  // function, and every one of them lays what it fetched over the queue. A
+  // projection run against a queue not yet read from disk erases exactly the
+  // writes that have not been sent.
+  await loadQueue()
+
+  // Whose snapshot it is, decided before a byte of it is restored. Doing this
+  // after the account is known would mean undoing a restore already in
+  // progress, which races every loader running alongside it — and losing that
+  // race shows one account another's data.
+  const holder = tokenHolder()
+  const owner = await snapshotOwner()
+  if (owner !== null && holder !== null && owner !== holder) {
+    await clearSnapshot()
+  } else if (holder !== null) {
+    const stored = await readSnapshot()
+    for (const [name, store] of Object.entries(PERSISTED)) {
+      if (stored[name] !== undefined) store.set(stored[name])
+    }
+    if (stored.loadedRange !== undefined) loadedRange = stored.loadedRange
+  }
+  if (holder !== null) await rememberOwner(holder)
+
+  // Persist from here on. Subscribing after the restore rather than before it
+  // keeps the hydration itself from writing every value straight back.
+  for (const [name, store] of Object.entries(PERSISTED)) {
+    store.subscribe((value) => schedule(name, value))
+  }
+
+  // What was restored is the last projection, which stands in for the server's
+  // copy until a fetch replaces it.
+  fromServer = get(answers)
+  projecting = true
+  queued.subscribe(reproject)
+  catalogueDetails.subscribe(reproject)
+}
+
+const pendingWrites = new Map()
+
+let writeTimer = null
+
+/**
+ * Queue a snapshot write, coalescing the ones that arrive in the same turn.
+ *
+ * A single answer moves several stores, and each move serialises the whole
+ * collection it belongs to. Collapsing them is worth it; *delaying* them is not
+ * — see below.
+ *
+ * The outbox is not written this way and must not be: it is the only copy of
+ * what someone did, so it is written before the screen is told.
+ *
+ * @param {string} name
+ * @param {unknown} value
+ */
+function schedule(name, value) {
+  pendingWrites.set(name, value)
+  if (writeTimer) return
+  // A microtask, not a timer. Delaying by even a few hundred milliseconds trades
+  // a real property for a small one: the snapshot is what an offline reload
+  // reads, and a reload that beats the timer finds nothing. This still collapses
+  // the several stores one answer touches into one write each, and lands in the
+  // same turn — before anything the reader could do next.
+  writeTimer = true
+  queueMicrotask(() => {
+    writeTimer = null
+    for (const [key, held] of pendingWrites) writeSnapshot(key, snapshotOf(held))
+    pendingWrites.clear()
+  })
+}
+
+/**
+ * Strip a value down to something IndexedDB can store.
+ *
+ * Svelte's stores hold plain values here, but an array or object that has been
+ * through `$state` is a proxy, and the structured clone algorithm refuses one.
+ *
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function snapshotOf(value) {
+  if (value === null || value === undefined) return value
+  return JSON.parse(JSON.stringify(value))
 }
 
 const inFlight = new Map()
@@ -119,33 +349,47 @@ function once(key, load) {
 
 /** Load the signed-in account, unless it is already known. */
 export async function ensureMe({ force = false } = {}) {
-  if (!force && get(me)) return get(me)
+  await ready()
+  if (!force && get(me) && fetched.has('me')) return get(me)
   return once('me', async () => {
-    const loaded = await attempt(() => getCurrentUser())
-    if (loaded) me.set(loaded)
-    return loaded
+    const loaded = await quietly(() => getCurrentUser())
+    if (loaded) {
+      me.set(loaded)
+      fetched.add('me')
+    }
+    return loaded ?? get(me)
   })
 }
 
 /** Load the catalogue list, unless it is already known. */
 export async function ensureCatalogues({ force = false } = {}) {
-  if (!force && get(catalogues).length) return get(catalogues)
+  await ready()
+  if (!force && get(catalogues).length && fetched.has('catalogues')) {
+    return get(catalogues)
+  }
   return once('catalogues', async () => {
-    const loaded = await attempt(() => listCatalogues())
-    if (loaded) catalogues.set(loaded)
-    return loaded ?? []
+    const loaded = await quietly(() => listCatalogues())
+    if (loaded) {
+      catalogues.set(loaded)
+      fetched.add('catalogues')
+    }
+    return loaded ?? get(catalogues)
   })
 }
 
 /** Load one catalogue with its questions, unless it is already cached. */
 export async function ensureCatalogue(id, { force = false } = {}) {
   if (!id) return null
+  await ready()
   const cached = get(catalogueDetails)[id]
-  if (!force && cached) return cached
+  if (!force && cached && fetched.has(`catalogue:${id}`)) return cached
   return once(`catalogue:${id}`, async () => {
-    const loaded = await attempt(() => getCatalogue({ path: { catalogue_id: id } }))
-    if (loaded) catalogueDetails.update((all) => ({ ...all, [id]: loaded }))
-    return loaded
+    const loaded = await quietly(() => getCatalogue({ path: { catalogue_id: id } }))
+    if (loaded) {
+      catalogueDetails.update((all) => ({ ...all, [id]: loaded }))
+      fetched.add(`catalogue:${id}`)
+    }
+    return loaded ?? get(catalogueDetails)[id] ?? null
   })
 }
 
@@ -156,13 +400,24 @@ export async function ensureAllCatalogues({ force = false } = {}) {
   return Object.values(get(catalogueDetails))
 }
 
+
+
 /** Load the full answer history, unless it is already known. */
 export async function ensureAnswers({ force = false } = {}) {
-  if (!force && get(answers).length) return get(answers)
+  await ready()
+  if (!force && get(answers).length && fetched.has('answers')) return get(answers)
   return once('answers', async () => {
-    const loaded = await attempt(() => listAnswers())
-    if (loaded) answers.set(loaded)
-    return loaded ?? []
+    const loaded = await quietly(() => listAnswers())
+    if (!loaded) return get(answers)
+    fromServer = loaded
+    // Returned, not just stored: callers read the value this hands back — the
+    // record builds its rows from it — so handing back the server's array while
+    // storing the projected one shows a caller a day it has an answer for as
+    // empty.
+    const shown = projected(loaded)
+    answers.set(shown)
+    fetched.add('answers')
+    return shown
   })
 }
 
@@ -184,26 +439,33 @@ export async function ensureAnswers({ force = false } = {}) {
 export async function refreshDay(day) {
   const rows = await attempt(() => listAnswers({ query: { from: day, to: day } }))
   if (!rows) return
-  answers.update((all) => [...all.filter((row) => row.day !== day), ...rows])
+  fromServer = [...fromServer.filter((row) => row.day !== day), ...rows]
+  reproject()
 }
 
 /** Load the plottable variables, unless they are already known. */
 export async function ensureVariables({ force = false } = {}) {
-  if (!force && get(variables)) return get(variables)
+  await ready()
+  if (!force && get(variables) && fetched.has('variables')) return get(variables)
   return once('variables', async () => {
-    const loaded = await attempt(() => listStatsVariables())
-    if (loaded) variables.set(loaded)
-    return loaded ?? []
+    const loaded = await quietly(() => listStatsVariables())
+    if (loaded) {
+      variables.set(loaded)
+      fetched.add('variables')
+    }
+    return loaded ?? get(variables) ?? []
   })
 }
 
 /** Load the saved view state, unless it is already known. */
 export async function ensurePreferences({ force = false } = {}) {
+  await ready()
   const cached = get(preferences)
-  if (!force && cached) return cached
+  if (!force && cached && fetched.has('preferences')) return cached
   return once('preferences', async () => {
     const loaded = (await attempt(() => getMyPreferences())) ?? {}
     preferences.set(loaded)
+    fetched.add('preferences')
     persisted = JSON.stringify(loaded)
     return loaded
   })
@@ -239,6 +501,29 @@ export function persistPreferences(next) {
 }
 
 /**
+ * Record one answer: on the device first, and to the server when it can be.
+ *
+ * The write no longer waits on a response, and no longer needs one to have
+ * happened at all — which is what makes answering work on a train. What the
+ * screen shows afterwards comes from `rememberAnswer` either way, so the two
+ * cases look identical from a component.
+ *
+ * @param {{day: string, local_hour: number, question_id: number, value?: number,
+ *   option_id?: number}} answer
+ * @returns {Promise<boolean>} False when the device could not even queue it.
+ */
+export async function saveAnswer(answer) {
+  // Queued *before* the screen is told, and the order is the whole point: the
+  // local update is a cache that can be rebuilt from the server and the queue,
+  // while the queue is the only copy of what was just typed. Showing it first
+  // meant a fast tap-and-navigate could lose the write and leave the app
+  // looking as though it had saved.
+  const queuedIt = await enqueue({ kind: 'answer.put', payload: answer })
+  rememberAnswer(answer)
+  return queuedIt
+}
+
+/**
  * Apply an answer locally so every view reflects it at once.
  *
  * The server is the authority, but it is written to without waiting, so the
@@ -251,41 +536,85 @@ export function rememberAnswer(answer) {
   // A new answer can bring a variable into play that had no data before, so the
   // server's view of what is plottable is no longer current.
   variables.set(null)
-  answers.update((all) => {
-    const rest = all.filter(
+  // Folded into the baseline, not only laid over it. The queue empties as soon
+  // as it drains, and a projection that then fell back to the last *fetched*
+  // answers would undo the correction on screen — the server has it, this
+  // device simply has not re-read it.
+  fromServer = [
+    ...fromServer.filter(
       (row) => !(row.day === answer.day && row.question_id === answer.question_id)
-    )
-    return [...rest, answer]
-  })
+    ),
+    answer,
+  ]
+  answers.set(projected())
 }
 
 /** Load the account's projects, unless they are already known. */
 export async function ensureProjects({ force = false } = {}) {
-  if (!force && get(projects)) return get(projects)
+  await ready()
+  if (!force && get(projects) && fetched.has('projects')) return get(projects)
   return once('projects', async () => {
-    const loaded = (await attempt(() => listProjects())) ?? []
+    // Kept, not cleared, when the read fails: the device holds the last copy,
+    // and replacing it with nothing is how an offline reload shows an account
+    // with no projects and a record it cannot draw.
+    const loaded = await quietly(() => listProjects())
+    if (!loaded) return get(projects) ?? []
     projects.set(loaded)
+    fetched.add('projects')
     return loaded
   })
 }
 
 /** Load the edges of the tracked history, unless they are already known. */
 export async function ensureTrackedRange({ force = false } = {}) {
-  if (!force && get(trackedDays)) return get(trackedDays)
+  await ready()
+  if (!force && get(trackedDays) && fetched.has('tracked-range')) return get(trackedDays)
   return once('tracked-range', async () => {
-    const loaded = (await attempt(() => trackedRange())) ?? { first: null, last: null }
+    const loaded = await quietly(() => trackedRange())
+    if (!loaded) return get(trackedDays) ?? trackedEdges(get(timeEntries))
     trackedDays.set(loaded)
+    fetched.add('tracked-range')
     return loaded
   })
 }
 
 /** Load the account's tags, unless they are already known. */
 export async function ensureTags({ force = false } = {}) {
-  if (!force && get(tags)) return get(tags)
+  await ready()
+  if (!force && get(tags) && fetched.has('tags')) return get(tags)
   return once('tags', async () => {
-    const loaded = (await attempt(() => listTags())) ?? []
+    const loaded = await quietly(() => listTags())
+    if (!loaded) return get(tags) ?? []
     tags.set(loaded)
+    fetched.add('tags')
     return loaded
+  })
+}
+
+/**
+ * Load every tag's deduction rule, unless they are already known.
+ *
+ * One request per tag, which is a handful, and only from views that need
+ * reported time.
+ *
+ * @param {{force?: boolean}} options
+ * @returns {Promise<Record<number, Array<object>>>} Bands by tag id.
+ */
+export async function ensureDeductionRules({ force = false } = {}) {
+  await ready()
+  if (!force && get(deductionRules) && fetched.has('rules')) return get(deductionRules)
+  return once('deduction-rules', async () => {
+    const known = await ensureTags()
+    const pairs = await Promise.all(
+      known.map(async (tag) => [
+        tag.id,
+        (await attempt(() => listDeductions({ path: { tag_id: tag.id } }))) ?? [],
+      ])
+    )
+    const rules = Object.fromEntries(pairs)
+    deductionRules.set(rules)
+    fetched.add('rules')
+    return rules
   })
 }
 
@@ -299,11 +628,12 @@ export async function ensureTags({ force = false } = {}) {
  * @returns {Promise<Array<object>>} Every cached session, not only the range asked for.
  */
 export async function ensureTimeEntries({ start, end, force = false } = {}) {
+  await ready()
   const covers =
     loadedRange &&
     (!loadedRange.start || (start && start >= loadedRange.start)) &&
     (!loadedRange.end || (end && end <= loadedRange.end))
-  if (!force && covers) return get(timeEntries)
+  if (!force && covers && fetched.has('time')) return get(timeEntries)
 
   const wanted = {
     start: loadedRange?.start && start ? min(loadedRange.start, start) : undefined,
@@ -313,11 +643,54 @@ export async function ensureTimeEntries({ start, end, force = false } = {}) {
     const query = {}
     if (wanted.start) query.start = wanted.start
     if (wanted.end) query.end = wanted.end
-    const loaded = (await attempt(() => listTimeEntries({ query }))) ?? []
+    const fresh = await quietly(() => listTimeEntries({ query }))
+    // Unreachable: keep what the device holds. The queue is still laid over it,
+    // because a session recorded here is not waiting on anybody.
+    if (!fresh) {
+      const held = overlayEntries(get(timeEntries), get(queued))
+      timeEntries.set(held)
+      return held
+    }
+    const loaded = overlayEntries(fresh, get(queued))
     timeEntries.set(loaded)
     loadedRange = wanted
+    fetched.add('time')
+    // Kept beside the rows: a snapshot of sessions means nothing without the
+    // range it covers, or the next visit would take a fortnight for the lot.
+    writeSnapshot('loadedRange', wanted)
     return loaded
   })
+}
+
+
+/**
+ * Record a session — new or corrected — on the device, and queue it.
+ *
+ * One call for both, because the identity is the device's: correcting a session
+ * is writing it again under the same `client_id`, which is also what lets a
+ * correction survive the row being deleted somewhere else.
+ *
+ * @param {{client_id?: string, project_id: number, started_at: string,
+ *   ended_at?: string|null, utc_offset: number, note?: string|null}} entry
+ * @returns {Promise<string>} The identity the session now has.
+ */
+export async function saveEntry(entry) {
+  const client_id = entry.client_id ?? crypto.randomUUID()
+  const { client_id: _ignored, ...payload } = entry
+  // Durable before it is visible — see `saveAnswer`.
+  await enqueue({ kind: 'entry.upsert', client_id, payload })
+  rememberEntry({ ...payload, client_id })
+  return client_id
+}
+
+/**
+ * Remove a session here, and tell the server when there is one.
+ *
+ * @param {string} client_id The session's own identity.
+ */
+export async function removeEntry(client_id) {
+  await enqueue({ kind: 'entry.delete', client_id })
+  forgetEntry(client_id)
 }
 
 /**
@@ -331,7 +704,14 @@ export async function ensureTimeEntries({ start, end, force = false } = {}) {
  */
 export function rememberEntry(entry) {
   forgetSummaries()
-  timeEntries.update((all) => [...all.filter((row) => row.id !== entry.id), entry])
+  // Matched on the device's own identity first: a session recorded here has no
+  // server id until it syncs, so `id` cannot be what tells two rows apart.
+  timeEntries.update((all) => [
+    ...all.filter((row) =>
+      entry.client_id ? row.client_id !== entry.client_id : row.id !== entry.id
+    ),
+    entry,
+  ])
 }
 
 /**
@@ -339,13 +719,25 @@ export function rememberEntry(entry) {
  *
  * @param {number} id Identifier of the session.
  */
-export function forgetEntry(id) {
+export function forgetEntry(client_id) {
   forgetSummaries()
-  timeEntries.update((all) => all.filter((row) => row.id !== id))
+  timeEntries.update((all) => all.filter((row) => row.client_id !== client_id))
 }
+
+// A merge or a dropped deletion is the server deciding differently from what
+// this device projected: the session it swallowed is gone there and still here.
+// Re-read rather than leave the two to disagree — this is the one case where
+// the queue draining is not the end of the story.
+notices.subscribe((all) => {
+  if (all.length) ensureTimeEntries({ force: true })
+})
 
 /** Drop every cached value, for a sign-out or a change that invalidates all of it. */
 export function resetStore() {
+  // The snapshot is deliberately left alone: signing out must not throw away
+  // what the device holds, because a queue of offline writes will live beside
+  // it. Only signing in as someone else clears it — see `ensureMe`.
+  fetched.clear()
   me.set(null)
   catalogues.set([])
   answers.set([])
@@ -354,6 +746,7 @@ export function resetStore() {
   preferences.set(null)
   projects.set(null)
   tags.set(null)
+  deductionRules.set(null)
   trackedDays.set(null)
   timeEntries.set([])
   loadedRange = null

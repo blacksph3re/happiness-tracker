@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
@@ -362,6 +363,27 @@ class Answer(Base):
     )
     """Timestamp set on insert and refreshed on every update."""
 
+    client_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    """When the device recording this answer says it was given.
+
+    Stamped at the moment of the tap rather than at the moment it reached the
+    server, which is what lets a queued offline answer be ordered against one
+    made later on another device. Null for rows written before offline support,
+    and for any client that does not send one.
+    """
+
+    server_received_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    """When the server accepted the write that last set this row.
+
+    Kept beside `client_updated_at` so a device with a wrong clock leaves
+    something reconstructable behind: the ordering used a claimed time, and this
+    is the time it actually arrived.
+    """
+
     user: Mapped["User"] = relationship(back_populates="answers")
     """The user who gave this answer."""
 
@@ -542,6 +564,15 @@ class TimeEntry(Base):
             sqlite_where=text("ended_at IS NULL"),
         ),
         Index("ix_time_entries_user_started", "user_id", "started_at"),
+        # A device's own id for a session is unique to that device's owner, so
+        # replaying the same intent twice updates one row instead of making two.
+        Index(
+            "uq_entry_client_id",
+            "user_id",
+            "client_id",
+            unique=True,
+            sqlite_where=text("client_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -575,6 +606,32 @@ class TimeEntry(Base):
 
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     """Optional free text about the session."""
+
+    client_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, default=lambda: str(uuid4())
+    )
+    """The identity a device gives a session before the server has one.
+
+    Defaulted rather than required, so a session created through any other
+    endpoint gets one too: the client keys its rows by this, and a session it
+    could not name would be one it could never correct offline.
+
+    A session recorded with no connection has no primary key until it syncs, and
+    it may be corrected or deleted several times before it ever does. This is
+    what those later intents refer to, what makes replaying one twice a no-op,
+    and what lets an edit re-create a row deleted on another device — the
+    identity outlives the row.
+    """
+
+    client_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    """When the device says this session was last changed. See `Answer`."""
+
+    server_received_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    """When the server accepted the write that last set this row."""
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False

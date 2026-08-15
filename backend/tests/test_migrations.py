@@ -70,15 +70,47 @@ def test_migrating_a_populated_database_keeps_its_rows(migrated):
     )
     db.commit()
 
+    watched = ["catalogues", "users", "questions", "question_options", "answers"]
+
     for revision in chain[1:]:
         upgrade(revision)
+
+        # Sessions arrive part-way along the chain, so they are seeded the
+        # moment the tables exist and watched from there on. Without this the
+        # whole time-tracking half migrated untested, including the backfills
+        # that give every existing session a client identity.
+        if "time_entries" not in watched and _has_table(db, "time_entries"):
+            db.execute(
+                "INSERT INTO projects (id, user_id, name, colour, position, active)"
+                " VALUES (1, 1, 'Kept', 'tide', 0, 1)"
+            )
+            db.execute(
+                "INSERT INTO time_entries"
+                " (id, user_id, project_id, started_at, ended_at, utc_offset)"
+                " VALUES (1, 1, 1, '2026-01-01 09:00:00', '2026-01-01 12:00:00', 0)"
+            )
+            db.commit()
+            watched += ["projects", "time_entries"]
+
         counts = {
             table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-            for table in ("catalogues", "users", "questions", "question_options",
-                          "answers")
+            for table in watched
         }
         assert all(count == 1 for count in counts.values()), (
             f"{revision} lost rows: {counts}"
         )
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
         assert db.execute("SELECT * FROM alembic_version").fetchall() == [(revision,)]
+
+    # Every session ends up with an identity of its own, which is what later
+    # offline edits and deletions refer to.
+    ids = db.execute("SELECT client_id FROM time_entries").fetchall()
+    assert all(client_id for (client_id,) in ids), f"unbackfilled client ids: {ids}"
+
+
+def _has_table(db, name):
+    """Whether the database has reached the revision that creates `name`."""
+    found = db.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone()
+    return found is not None

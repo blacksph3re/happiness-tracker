@@ -1,4 +1,11 @@
-import { expect, privateCatalogue, realQuestions, test, TODAY } from './fixtures.js'
+import {
+  expect,
+  privateCatalogue,
+  realQuestions,
+  seedAnswer,
+  test,
+  TODAY,
+} from './fixtures.js'
 
 const YESTERDAY = '2026-06-14'
 
@@ -24,12 +31,8 @@ async function seedUnevenAnswers(admin, account) {
     [TODAY, short],
     [YESTERDAY, long],
   ]) {
-    await account.api.put('/api/answers', {
-      data: { day, local_hour: 9, question_id: choice.id, option_id: option.id },
-    })
-    await account.api.put('/api/answers', {
-      data: { day, local_hour: 9, question_id: scaled.id, value: 3 },
-    })
+    await seedAnswer(account.api, { day, question_id: choice.id, option_id: option.id })
+    await seedAnswer(account.api, { day, question_id: scaled.id, value: 3 })
   }
   return choice
 }

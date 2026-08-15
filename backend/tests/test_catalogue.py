@@ -79,14 +79,23 @@ def test_answered_questions_freeze_their_scale(
     client, admin_headers, starter_questions
 ):
     question_id = starter_questions[0]["id"]
-    client.put(
-        "/api/answers",
+    client.post(
+        "/api/sync",
         headers=admin_headers,
         json={
-            "day": "2026-03-04",
-            "local_hour": 9,
-            "question_id": question_id,
-            "value": 4,
+            "intents": [
+                {
+                    "seq": 1,
+                    "kind": "answer.put",
+                    "client_updated_at": "2026-06-15T09:00:00",
+                    "payload": {
+                        "day": "2026-03-04",
+                        "local_hour": 9,
+                        "question_id": question_id,
+                        "value": 4,
+                    },
+                }
+            ]
         },
     )
     frozen = client.put(
@@ -111,14 +120,23 @@ def test_deactivated_question_keeps_its_history(
     client, admin_headers, catalogue_id, starter_questions
 ):
     question_id = starter_questions[0]["id"]
-    client.put(
-        "/api/answers",
+    client.post(
+        "/api/sync",
         headers=admin_headers,
         json={
-            "day": "2026-03-04",
-            "local_hour": 9,
-            "question_id": question_id,
-            "value": 4,
+            "intents": [
+                {
+                    "seq": 1,
+                    "kind": "answer.put",
+                    "client_updated_at": "2026-06-15T09:00:00",
+                    "payload": {
+                        "day": "2026-03-04",
+                        "local_hour": 9,
+                        "question_id": question_id,
+                        "value": 4,
+                    },
+                }
+            ]
         },
     )
     client.put(
@@ -150,14 +168,23 @@ def test_enum_options_freeze_once_answered(client, admin_headers, catalogue_id):
     assert added.status_code == 201
     assert len(added.json()["options"]) == 3
 
-    client.put(
-        "/api/answers",
+    client.post(
+        "/api/sync",
         headers=admin_headers,
         json={
-            "day": "2026-03-04",
-            "local_hour": 9,
-            "question_id": created["id"],
-            "option_id": created["options"][0]["id"],
+            "intents": [
+                {
+                    "seq": 1,
+                    "kind": "answer.put",
+                    "client_updated_at": "2026-06-15T09:00:00",
+                    "payload": {
+                        "day": "2026-03-04",
+                        "local_hour": 9,
+                        "question_id": created["id"],
+                        "option_id": created["options"][0]["id"],
+                    },
+                }
+            ]
         },
     )
     assert (
@@ -204,14 +231,23 @@ def test_question_payload_must_match_its_kind(client, admin_headers, catalogue_i
 def test_catalogue_with_answers_cannot_be_deleted(
     client, admin_headers, catalogue_id, starter_questions
 ):
-    client.put(
-        "/api/answers",
+    client.post(
+        "/api/sync",
         headers=admin_headers,
         json={
-            "day": "2026-03-04",
-            "local_hour": 9,
-            "question_id": starter_questions[0]["id"],
-            "value": 4,
+            "intents": [
+                {
+                    "seq": 1,
+                    "kind": "answer.put",
+                    "client_updated_at": "2026-06-15T09:00:00",
+                    "payload": {
+                        "day": "2026-03-04",
+                        "local_hour": 9,
+                        "question_id": starter_questions[0]["id"],
+                        "value": 4,
+                    },
+                }
+            ]
         },
     )
     response = client.delete(f"/api/catalogues/{catalogue_id}", headers=admin_headers)
@@ -238,14 +274,23 @@ def test_bounds_cannot_be_set_on_an_enum_question(client, admin_headers, catalog
 def test_renaming_a_catalogue_keeps_its_questions_and_answers(
     client, admin_headers, catalogue_id, starter_questions
 ):
-    client.put(
-        "/api/answers",
+    client.post(
+        "/api/sync",
         headers=admin_headers,
         json={
-            "day": "2026-03-04",
-            "local_hour": 9,
-            "question_id": starter_questions[0]["id"],
-            "value": 4,
+            "intents": [
+                {
+                    "seq": 1,
+                    "kind": "answer.put",
+                    "client_updated_at": "2026-06-15T09:00:00",
+                    "payload": {
+                        "day": "2026-03-04",
+                        "local_hour": 9,
+                        "question_id": starter_questions[0]["id"],
+                        "value": 4,
+                    },
+                }
+            ]
         },
     )
     renamed = client.put(

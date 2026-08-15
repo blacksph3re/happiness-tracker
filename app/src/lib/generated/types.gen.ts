@@ -25,34 +25,6 @@ export type AccessToken = {
 };
 
 /**
- * AnswerIn
- *
- * A single answer submitted by the questionnaire.
- */
-export type AnswerIn = {
-    /**
-     * Day
-     */
-    day: string;
-    /**
-     * Local Hour
-     */
-    local_hour: number;
-    /**
-     * Question Id
-     */
-    question_id: number;
-    /**
-     * Value
-     */
-    value?: number | null;
-    /**
-     * Option Id
-     */
-    option_id?: number | null;
-};
-
-/**
  * AnswerOut
  *
  * An answer as exposed by the API.
@@ -124,38 +96,6 @@ export type CatalogueOut = {
      * Name
      */
     name: string;
-};
-
-/**
- * CheckIn
- *
- * Payload for starting a timer.
- */
-export type CheckIn = {
-    /**
-     * At
-     */
-    at: string;
-    /**
-     * Utc Offset
-     */
-    utc_offset: number;
-    /**
-     * Note
-     */
-    note?: string | null;
-};
-
-/**
- * CheckOut
- *
- * Payload for stopping a timer.
- */
-export type CheckOut = {
-    /**
-     * At
-     */
-    at: string;
 };
 
 /**
@@ -708,6 +648,85 @@ export type SummaryRow = {
 };
 
 /**
+ * SyncIntent
+ *
+ * One write a device made locally, waiting to be replayed.
+ */
+export type SyncIntent = {
+    /**
+     * Seq
+     */
+    seq: number;
+    /**
+     * Kind
+     */
+    kind: 'answer.put' | 'entry.upsert' | 'entry.delete';
+    /**
+     * Client Updated At
+     */
+    client_updated_at: string;
+    /**
+     * Client Id
+     */
+    client_id?: string | null;
+    /**
+     * Payload
+     */
+    payload?: {
+        [key: string]: unknown;
+    };
+};
+
+/**
+ * SyncRequest
+ *
+ * A device's queue, oldest first.
+ */
+export type SyncRequest = {
+    /**
+     * Intents
+     */
+    intents?: Array<SyncIntent>;
+};
+
+/**
+ * SyncResponse
+ *
+ * The outcome of a whole queue.
+ */
+export type SyncResponse = {
+    /**
+     * Results
+     */
+    results: Array<SyncResult>;
+    /**
+     * Server Time
+     */
+    server_time: string;
+};
+
+/**
+ * SyncResult
+ *
+ * What became of one intent.
+ */
+export type SyncResult = {
+    /**
+     * Seq
+     */
+    seq: number;
+    /**
+     * Outcome
+     */
+    outcome: 'applied' | 'superseded' | 'merged' | 'dropped' | 'conflict';
+    /**
+     * Detail
+     */
+    detail?: string | null;
+    entry?: TimeEntryOut | null;
+};
+
+/**
  * TagCreate
  *
  * Payload for defining a tag.
@@ -772,38 +791,6 @@ export type TagUpdate = {
 };
 
 /**
- * TimeEntryCreate
- *
- * Payload for recording a session that was never tracked live.
- */
-export type TimeEntryCreate = {
-    /**
-     * Merge Overlapping
-     */
-    merge_overlapping?: boolean;
-    /**
-     * Project Id
-     */
-    project_id: number;
-    /**
-     * Started At
-     */
-    started_at: string;
-    /**
-     * Ended At
-     */
-    ended_at: string;
-    /**
-     * Utc Offset
-     */
-    utc_offset: number;
-    /**
-     * Note
-     */
-    note?: string | null;
-};
-
-/**
  * TimeEntryOut
  *
  * One session as exposed by the API.
@@ -830,37 +817,13 @@ export type TimeEntryOut = {
      */
     utc_offset: number;
     /**
+     * Client Id
+     */
+    client_id: string | null;
+    /**
      * Note
      */
     note: string | null;
-};
-
-/**
- * TimeEntryUpdate
- *
- * Payload for correcting a session. Omitted fields are left alone.
- */
-export type TimeEntryUpdate = {
-    /**
-     * Merge Overlapping
-     */
-    merge_overlapping?: boolean;
-    /**
-     * Project Id
-     */
-    project_id?: number | null;
-    /**
-     * Started At
-     */
-    started_at?: string | null;
-    /**
-     * Ended At
-     */
-    ended_at?: string | null;
-    /**
-     * Note
-     */
-    note?: string | null;
 };
 
 /**
@@ -1767,63 +1730,6 @@ export type ListAnswersResponses = {
 
 export type ListAnswersResponse = ListAnswersResponses[keyof ListAnswersResponses];
 
-export type UpsertAnswerData = {
-    body: AnswerIn;
-    path?: never;
-    query?: never;
-    url: '/api/answers';
-};
-
-export type UpsertAnswerErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type UpsertAnswerError = UpsertAnswerErrors[keyof UpsertAnswerErrors];
-
-export type UpsertAnswerResponses = {
-    /**
-     * Successful Response
-     */
-    204: void;
-};
-
-export type UpsertAnswerResponse = UpsertAnswerResponses[keyof UpsertAnswerResponses];
-
-export type ExportAnswersData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * From
-         */
-        from?: string | null;
-        /**
-         * To
-         */
-        to?: string | null;
-    };
-    url: '/api/answers/export.csv';
-};
-
-export type ExportAnswersErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type ExportAnswersError = ExportAnswersErrors[keyof ExportAnswersErrors];
-
-export type ExportAnswersResponses = {
-    /**
-     * A .csv attachment.
-     */
-    200: unknown;
-};
-
 export type ListStatsVariablesData = {
     body?: never;
     path?: never;
@@ -2048,96 +1954,6 @@ export type UpdateTagResponses = {
 
 export type UpdateTagResponse = UpdateTagResponses[keyof UpdateTagResponses];
 
-export type CheckInData = {
-    body: CheckIn;
-    path: {
-        /**
-         * Project Id
-         */
-        project_id: number;
-    };
-    query?: never;
-    url: '/api/projects/{project_id}/check-in';
-};
-
-export type CheckInErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type CheckInError = CheckInErrors[keyof CheckInErrors];
-
-export type CheckInResponses = {
-    /**
-     * Successful Response
-     */
-    201: TimeEntryOut;
-};
-
-export type CheckInResponse = CheckInResponses[keyof CheckInResponses];
-
-export type CheckOutData = {
-    body: CheckOut;
-    path: {
-        /**
-         * Project Id
-         */
-        project_id: number;
-    };
-    query?: never;
-    url: '/api/projects/{project_id}/check-out';
-};
-
-export type CheckOutErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type CheckOutError = CheckOutErrors[keyof CheckOutErrors];
-
-export type CheckOutResponses = {
-    /**
-     * Successful Response
-     */
-    200: TimeEntryOut;
-};
-
-export type CheckOutResponse = CheckOutResponses[keyof CheckOutResponses];
-
-export type ResumeProjectData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         */
-        project_id: number;
-    };
-    query?: never;
-    url: '/api/projects/{project_id}/resume';
-};
-
-export type ResumeProjectErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type ResumeProjectError = ResumeProjectErrors[keyof ResumeProjectErrors];
-
-export type ResumeProjectResponses = {
-    /**
-     * Successful Response
-     */
-    200: TimeEntryOut;
-};
-
-export type ResumeProjectResponse = ResumeProjectResponses[keyof ResumeProjectResponses];
-
 export type ListTimeEntriesData = {
     body?: never;
     path?: never;
@@ -2173,91 +1989,6 @@ export type ListTimeEntriesResponses = {
 };
 
 export type ListTimeEntriesResponse = ListTimeEntriesResponses[keyof ListTimeEntriesResponses];
-
-export type CreateTimeEntryData = {
-    body: TimeEntryCreate;
-    path?: never;
-    query?: never;
-    url: '/api/time/entries';
-};
-
-export type CreateTimeEntryErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type CreateTimeEntryError = CreateTimeEntryErrors[keyof CreateTimeEntryErrors];
-
-export type CreateTimeEntryResponses = {
-    /**
-     * Successful Response
-     */
-    201: TimeEntryOut;
-};
-
-export type CreateTimeEntryResponse = CreateTimeEntryResponses[keyof CreateTimeEntryResponses];
-
-export type DeleteTimeEntryData = {
-    body?: never;
-    path: {
-        /**
-         * Entry Id
-         */
-        entry_id: number;
-    };
-    query?: never;
-    url: '/api/time/entries/{entry_id}';
-};
-
-export type DeleteTimeEntryErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type DeleteTimeEntryError = DeleteTimeEntryErrors[keyof DeleteTimeEntryErrors];
-
-export type DeleteTimeEntryResponses = {
-    /**
-     * Successful Response
-     */
-    204: void;
-};
-
-export type DeleteTimeEntryResponse = DeleteTimeEntryResponses[keyof DeleteTimeEntryResponses];
-
-export type UpdateTimeEntryData = {
-    body: TimeEntryUpdate;
-    path: {
-        /**
-         * Entry Id
-         */
-        entry_id: number;
-    };
-    query?: never;
-    url: '/api/time/entries/{entry_id}';
-};
-
-export type UpdateTimeEntryErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-};
-
-export type UpdateTimeEntryError = UpdateTimeEntryErrors[keyof UpdateTimeEntryErrors];
-
-export type UpdateTimeEntryResponses = {
-    /**
-     * Successful Response
-     */
-    200: TimeEntryOut;
-};
-
-export type UpdateTimeEntryResponse = UpdateTimeEntryResponses[keyof UpdateTimeEntryResponses];
 
 export type ListDeductionsData = {
     body?: never;
@@ -2386,38 +2117,27 @@ export type TimeSummaryResponses = {
 
 export type TimeSummaryResponse = TimeSummaryResponses[keyof TimeSummaryResponses];
 
-export type ExportTimeData = {
-    body?: never;
+export type SyncIntentsData = {
+    body: SyncRequest;
     path?: never;
-    query?: {
-        /**
-         * Start
-         */
-        start?: string | null;
-        /**
-         * End
-         */
-        end?: string | null;
-        /**
-         * As Of
-         */
-        as_of?: string | null;
-    };
-    url: '/api/time/export.zip';
+    query?: never;
+    url: '/api/sync';
 };
 
-export type ExportTimeErrors = {
+export type SyncIntentsErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type ExportTimeError = ExportTimeErrors[keyof ExportTimeErrors];
+export type SyncIntentsError = SyncIntentsErrors[keyof SyncIntentsErrors];
 
-export type ExportTimeResponses = {
+export type SyncIntentsResponses = {
     /**
-     * A .zip of three .csv files.
+     * Successful Response
      */
-    200: unknown;
+    200: SyncResponse;
 };
+
+export type SyncIntentsResponse = SyncIntentsResponses[keyof SyncIntentsResponses];
