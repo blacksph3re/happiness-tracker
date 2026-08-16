@@ -21,7 +21,7 @@
     saveEntry,
     timeEntries,
   } from '../../lib/store.js'
-  import { link } from '../../lib/router.js'
+  import { link, query } from '../../lib/router.js'
   import { pushToast } from '../../lib/toasts.js'
 
   let loading = $state(true)
@@ -33,6 +33,24 @@
   let busy = $state([])
 
   const active = $derived(($projectStore ?? []).filter((project) => project.active))
+
+  /**
+   * The project a link asked for, so arriving from the record lands on it.
+   *
+   * A `?project=` in the URL rather than a store, so the page can be reloaded
+   * or shared and still be about the same thing. It only marks the card; it
+   * never starts anything, because arriving somewhere is not consent to record.
+   */
+  const focus = $derived(Number($query.get('project')) || null)
+
+  // Scrolled to, for an account with more projects than fit a screen: the ring
+  // is no use below the fold.
+  $effect(() => {
+    if (!focus) return
+    document
+      .querySelector(`[data-project="${focus}"]`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
 
   /** The open session per project, so several timers can run at once. */
   const runningByProject = $derived(
@@ -220,6 +238,7 @@
           seconds={running ? elapsed(running, $now) : 0}
           resumable={resumableProjects.get(project.id) ?? null}
           disabled={busy.includes(project.id)}
+          focused={project.id === focus}
           ontoggle={toggle}
           onresume={resume}
         />

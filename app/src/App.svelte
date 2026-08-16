@@ -113,9 +113,14 @@
         <a href="/" use:link class="flex items-baseline gap-2">
           <span class="numeral text-xl">DT</span>
           <SyncBadge />
-          <span class="meta hidden sm:inline">
-            {section === 'time' ? 'Time' : section === 'wellbeing' ? 'Wellbeing' : 'Tracker'}
-          </span>
+          <!-- The label names the half you are in. On the landing page and in
+               Settings you are in neither, and "Tracker" there was a word that
+               only ever restated the mark beside it. -->
+          {#if section}
+            <span class="meta hidden sm:inline">
+              {section === 'time' ? 'Time' : 'Wellbeing'}
+            </span>
+          {/if}
         </a>
 
         <div class="hidden items-center gap-1 md:flex">

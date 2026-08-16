@@ -1,10 +1,10 @@
 import { get, writable } from 'svelte/store'
 
 import { tokenHolder, unwrap } from './api.js'
-import { overlayAnswers, overlayEntries } from './projection.js'
+import { overlayAnswers, overlayEntries, withScores } from './projection.js'
 import { startingDay } from './time/duration.js'
 import { summaryRows, trackedEdges } from './time/summary.js'
-import { connection, enqueue, loadQueue, notices, queued } from './sync.js'
+import { connection, enqueue, enqueueAll, loadQueue, notices, queued } from './sync.js'
 import {
   clearSnapshot,
   readSnapshot,
@@ -586,6 +586,11 @@ export function rememberAnswer(answer) {
     ),
     answer,
   ]
+  // And the scores over it, which the server would have reworked on the next
+  // read there was no reason to make. A day is re-read only when it is
+  // *opened*, so the second answer of a day moved its component and left the
+  // average beside it reading whatever the first answer had produced.
+  fromServer = withScores(fromServer, [answer.day], get(catalogueDetails))
   answers.set(projected())
 }
 
@@ -723,6 +728,46 @@ export async function saveEntry(entry) {
   await enqueue({ kind: 'entry.upsert', client_id, payload })
   rememberEntry({ ...payload, client_id })
   return client_id
+}
+
+/**
+ * Record a run of sessions at once, for an import.
+ *
+ * Not a loop over `saveEntry`: each call of that reprojects every cached
+ * collection over the queue and drops the summary cache, so a file of a year's
+ * sessions would do both a few hundred times over a list it is lengthening as
+ * it goes. One queue write and one cache update for the lot.
+ *
+ * @param {Array<object>} entries Sessions as `saveEntry` takes them, without a
+ *   `client_id`: an import always writes new sessions, never corrections.
+ * @returns {Promise<number>} How many are on the device. Short of what was asked
+ *   for means the device refused the rest, and none of those are saved.
+ */
+export async function saveEntries(entries) {
+  const stamped = entries.map((entry) => ({ ...entry, client_id: crypto.randomUUID() }))
+  const stored = await enqueueAll(
+    stamped.map(({ client_id, ...payload }) => ({
+      kind: 'entry.upsert',
+      client_id,
+      payload,
+    }))
+  )
+
+  // Durable before it is visible, as everywhere else — and only what actually
+  // landed becomes visible, or a refused write would show as a session that
+  // exists nowhere.
+  const saved = stamped.slice(0, stored)
+  if (saved.length) {
+    forgetSummaries()
+    // The two ends only: `reachTrackedRange` notifies every subscriber and
+    // schedules a snapshot write, and a file of a year's sessions would do that
+    // once per row for a range only its earliest and latest days can widen.
+    const days = saved.map((entry) => startingDay(entry)).sort()
+    reachTrackedRange(days[0])
+    reachTrackedRange(days.at(-1))
+    timeEntries.update((all) => [...all, ...saved])
+  }
+  return stored
 }
 
 /**

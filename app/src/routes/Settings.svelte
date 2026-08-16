@@ -1,9 +1,14 @@
 <script>
+  import AdminOffline from '../lib/AdminOffline.svelte'
   import { attempt, unwrap } from '../lib/api.js'
   import { changeMyPassword, setMyDefaultCatalogue } from '../lib/generated/sdk.gen'
   import { resource } from '../lib/resource.svelte.js'
   import { catalogues as catalogueStore, ensureCatalogues, ensureMe, me as meStore } from '../lib/store.js'
+  import { connection } from '../lib/sync.js'
   import { pushToast } from '../lib/toasts.js'
+
+  /** Nothing on this page queues, so nothing on it is offered without a connection. */
+  const offline = $derived($connection !== 'online')
 
   let currentPassword = $state('')
   let newPassword = $state('')
@@ -53,12 +58,16 @@
   <p class="meta">Signed in as {loaded.loading ? '…' : (me?.username ?? 'nobody')}</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">Settings</h1>
 
+  <AdminOffline does="Your account settings are kept in one place, on the server" />
+
   <div class="rounded-xl border border-white/10 bg-ink-soft p-6">
     <h2 class="font-semibold">Default catalogue</h2>
     <p class="mt-1 text-sm text-haze">The set of questions you answer each day.</p>
     <select
-      class="mt-3 w-full rounded-lg border border-white/15 bg-ink px-4 py-3"
+      class="mt-3 w-full rounded-lg border border-white/15 bg-ink px-4 py-3
+             disabled:cursor-not-allowed disabled:opacity-40"
       value={me?.default_catalogue_id ?? ''}
+      disabled={offline}
       onchange={chooseCatalogue}
     >
       {#each catalogues as catalogue (catalogue.id)}
@@ -83,7 +92,12 @@
         <span class="meta normal-case">At least {me.password_min_length} characters</span>
       {/if}
     </label>
-    <button type="submit" class="mt-4 rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift">
+    <button
+      type="submit"
+      disabled={offline}
+      class="mt-4 rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift
+             disabled:cursor-not-allowed disabled:opacity-40"
+    >
       Change password
     </button>
   </form>

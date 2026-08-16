@@ -763,7 +763,26 @@
                               var(--color-dusk-lift))"
                           ></span>
                           <div class="min-w-0">
-                            <p class="truncate font-medium">{shown.name}</p>
+                            <!-- The name is the way back to the project, and
+                                 only on today: Track is where a timer is
+                                 started, and starting one is a thing you do
+                                 *now*. Offered from a Tuesday three weeks ago it
+                                 reads as "edit this", does something else, and
+                                 the day you were looking at is gone.
+                                 A tag row has no such place to go either — a tag
+                                 is not something you check into. -->
+                            {#if by === 'project' && day === today()}
+                              <a
+                                href="/time?project={row.group}"
+                                use:link
+                                data-open-project={row.group}
+                                class="block truncate font-medium hover:underline"
+                              >
+                                {shown.name}
+                              </a>
+                            {:else}
+                              <p class="truncate font-medium">{shown.name}</p>
+                            {/if}
                             <!-- The clock reads this day's part of the session, not
                                  the whole of it: a row showing 22:15–01:55 beside
                                  1h 55m invites the wrong arithmetic. Each day shows

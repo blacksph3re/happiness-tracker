@@ -33,7 +33,12 @@
    * own lane seven times over; a lane per *day*, with the blocks coloured by
    * project, is the same picture at the scale that fits.
    */
-  const byDay = $derived(Array.isArray(days) && days.length > 1)
+  // A list means a run of days, however short the list turns out to be. It once
+  // meant "more than one", which read correctly until a filter narrowed a week
+  // to a single day: the strip fell back to lanes-per-project for whichever day
+  // the window happened to be anchored on, which was rarely the day that
+  // matched.
+  const byDay = $derived(Array.isArray(days))
   const shown = $derived(byDay ? days : [day])
 
   const DAY_SECONDS = 86_400
@@ -245,7 +250,7 @@
   <p class="meta">Loading…</p>
 {:else if lanes.length === 0}
   <p class="rounded-xl border border-white/10 bg-ink-soft px-5 py-8 text-haze">
-    Nothing tracked on this day.
+    Nothing tracked on {byDay ? 'these days' : 'this day'}.
   </p>
 {:else}
   <!-- Swipe changes the day, as it does in the records. Previous and Next do

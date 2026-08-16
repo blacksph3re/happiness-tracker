@@ -1,4 +1,5 @@
 <script>
+  import AdminOffline from '../../lib/AdminOffline.svelte'
   import QuestionForm from '../../lib/wellbeing/QuestionForm.svelte'
   import ScoreForm from '../../lib/wellbeing/ScoreForm.svelte'
   import { attempt, unwrap } from '../../lib/api.js'
@@ -18,11 +19,15 @@
     ensureCatalogues,
     ensureVariables,
   } from '../../lib/store.js'
+  import { connection } from '../../lib/sync.js'
   import { pushToast } from '../../lib/toasts.js'
 
   let catalogues = $state([])
   let selectedId = $state(null)
   let detail = $state(null)
+  /** Questions are shared by everyone, so none of this queues — see AdminOffline. */
+  const offline = $derived($connection !== 'online')
+
   let loading = $state(true)
   let newName = $state('')
   let renaming = $state(false)
@@ -358,6 +363,8 @@
   <p class="meta">What everyone answers</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">Questions</h1>
 
+  <AdminOffline does="Questions are the same for everyone who answers them" />
+
   {#if loading}
     <p class="meta">Loading…</p>
   {:else}
@@ -376,7 +383,7 @@
         <button
           class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                  disabled:opacity-30"
-          disabled={!renameValue.trim()}
+          disabled={offline || !renameValue.trim()}
           onclick={renameCatalogue}
         >
           Save
@@ -402,7 +409,9 @@
         <span class="ml-auto flex items-center gap-2">
           {#if selectedId}
             <button
-              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+              disabled={offline}
+              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                     disabled:cursor-not-allowed disabled:opacity-40"
               onclick={startRename}
             >
               Rename
@@ -411,12 +420,13 @@
           <input
             bind:value={newName}
             placeholder="New catalogue"
+            disabled={offline}
             class="rounded-md border border-white/15 bg-ink-soft px-3 py-2 text-sm"
           />
           <button
             class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                    disabled:opacity-30"
-            disabled={!newName.trim()}
+            disabled={offline || !newName.trim()}
             onclick={addCatalogue}
           >
             Add
@@ -442,7 +452,7 @@
                 class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
                        disabled:cursor-not-allowed disabled:opacity-30"
                 aria-label="Move {question.prompt} earlier"
-                disabled={position === 0}
+                disabled={offline || position === 0}
                 onclick={() => move(question, -1)}
               >
                 ↑
@@ -451,20 +461,24 @@
                 class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
                        disabled:cursor-not-allowed disabled:opacity-30"
                 aria-label="Move {question.prompt} later"
-                disabled={position === questions.length - 1}
+                disabled={offline || position === questions.length - 1}
                 onclick={() => move(question, 1)}
               >
                 ↓
               </button>
             </span>
             <button
-              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+              disabled={offline}
+              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                     disabled:cursor-not-allowed disabled:opacity-40"
               onclick={() => edit(question)}
             >
               Edit
             </button>
             <button
-              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+              disabled={offline}
+              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                     disabled:cursor-not-allowed disabled:opacity-40"
               onclick={() => setActive(question, !question.active)}
             >
               {question.active ? 'Deactivate' : 'Reactivate'}
@@ -509,7 +523,9 @@
             </div>
             <div class="flex shrink-0 items-center gap-2">
               <button
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                disabled={offline}
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                     disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => {
                   scoreDraft = null
                   editingScore = toScoreDraft(score)
@@ -518,13 +534,17 @@
                 Edit
               </button>
               <button
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                disabled={offline}
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                     disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => setScoreActive(score, !score.active)}
               >
                 {score.active ? 'Deactivate' : 'Reactivate'}
               </button>
               <button
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                disabled={offline}
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                     disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => removeScore(score)}
               >
                 Remove
@@ -557,7 +577,7 @@
         <button
           class="meta mt-3 rounded-md border border-white/15 px-4 py-2 hover:border-white/40
                  disabled:cursor-not-allowed disabled:opacity-30"
-          disabled={scorable.length === 0}
+          disabled={offline || scorable.length === 0}
           onclick={() => {
             editingScore = null
             scoreDraft = toScoreDraft(null)

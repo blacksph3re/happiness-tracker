@@ -1,4 +1,5 @@
 <script>
+  import AdminOffline from '../../lib/AdminOffline.svelte'
   import { attempt, unwrap } from '../../lib/api.js'
   import {
     createProject,
@@ -17,9 +18,12 @@
     forgetSummaries,
     projects as projectStore,
     tags as tagStore,
+    timeEntries,
   } from '../../lib/store.js'
+  import { connection } from '../../lib/sync.js'
   import { deductionFor, previewPoints } from '../../lib/time/deductions.js'
   import { formatDuration } from '../../lib/time/duration.js'
+  import ImportSessions from '../../lib/time/ImportSessions.svelte'
   import { nextColour, PROJECT_COLOURS as COLOURS } from '../../lib/time/palette.js'
   import { pushToast } from '../../lib/toasts.js'
 
@@ -36,8 +40,40 @@
   let editingBands = $state(null)
   let bands = $state([])
 
+  /**
+   * Whether the account's own shape can be changed at all right now.
+   *
+   * None of this page queues: a rename made here while the same project was
+   * deleted elsewhere has no sensible merge, so the app refuses rather than
+   * inventing one. Sessions and answers are a different matter and carry on.
+   */
+  const offline = $derived($connection !== 'online')
+
+  /** Which project's import panel is open, if any. */
+  let importing = $state(null)
+
   const projects = $derived($projectStore ?? [])
   const tags = $derived($tagStore ?? [])
+
+  /**
+   * Open the import panel, with the project's whole history behind it.
+   *
+   * Loaded before the panel appears, not alongside it: the overlap check is the
+   * only thing standing between a repeated file and a duplicated year, and it
+   * is worth exactly as much as what it can compare against. This page loads
+   * projects and tags and nothing else, so opened cold there is nothing to
+   * compare against at all. Asked for without bounds, and answered from the
+   * cache on the second open.
+   */
+  async function openImport(project) {
+    await ensureTimeEntries()
+    importing = project.id
+  }
+
+  /** What the import must not land on: this project's sessions, finished or not. */
+  const importable = $derived(
+    ($timeEntries ?? []).filter((entry) => entry.project_id === importing)
+  )
 
   $effect(() => {
     load()
@@ -175,6 +211,8 @@
   <p class="meta">What you track, and how it groups</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">Projects</h1>
 
+  <AdminOffline does="Projects and tags are shared between your devices" />
+
   {#if loading}
     <p class="meta">Loading…</p>
   {:else}
@@ -206,7 +244,7 @@
                   class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
                          disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Move {project.name} earlier"
-                  disabled={position === 0}
+                  disabled={offline || position === 0}
                   onclick={() => move(project, -1)}
                 >
                   ↑
@@ -215,7 +253,7 @@
                   class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
                          disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Move {project.name} later"
-                  disabled={position === projects.length - 1}
+                  disabled={offline || position === projects.length - 1}
                   onclick={() => move(project, 1)}
                 >
                   ↓
@@ -228,13 +266,34 @@
                 Edit
               </button>
               <button
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                disabled={offline}
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                       disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => saveProject(project, { active: !project.active })}
               >
                 {project.active ? 'Archive' : 'Restore'}
               </button>
+              <button
+                data-import-open={project.id}
+                disabled={offline}
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                       disabled:cursor-not-allowed disabled:opacity-40
+                       disabled:hover:border-white/15"
+                onclick={() =>
+                  importing === project.id ? (importing = null) : openImport(project)}
+              >
+                Import CSV
+              </button>
             </div>
           </div>
+
+          {#if importing === project.id}
+            <ImportSessions
+              {project}
+              existing={importable}
+              onclose={() => (importing = null)}
+            />
+          {/if}
 
           {#if editing === project.id}
             <div class="mt-4 flex flex-col gap-4 border-t border-white/10 pt-4">
@@ -243,7 +302,9 @@
                 <input
                   value={project.name}
                   maxlength="80"
-                  class="rounded-lg border border-white/15 bg-ink px-4 py-2.5"
+                  disabled={offline}
+                  class="rounded-lg border border-white/15 bg-ink px-4 py-2.5
+                         disabled:cursor-not-allowed disabled:opacity-40"
                   onchange={(e) => saveProject(project, { name: e.currentTarget.value })}
                 />
               </label>
@@ -255,6 +316,7 @@
                     <button
                       aria-label="Colour {colour}"
                       aria-pressed={project.colour === colour}
+                      disabled={offline}
                       class="size-8 rounded-full border-2 transition
                              {project.colour === colour
                         ? 'border-paper'
@@ -276,6 +338,7 @@
                       {@const on = project.tags.some((t) => t.id === tag.id)}
                       <button
                         aria-pressed={on}
+                        disabled={offline}
                         class="meta rounded-md border px-3 py-2 transition
                                {on
                           ? 'border-ember bg-dusk/30 text-paper'
@@ -290,8 +353,9 @@
               </div>
 
               <button
+                disabled={offline}
                 class="meta self-start rounded-md border border-white/15 px-3 py-2
-                       hover:border-ember"
+                       hover:border-ember disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => removeProject(project)}
               >
                 Delete project
@@ -318,7 +382,7 @@
       />
       <button
         type="submit"
-        disabled={!newProject.trim()}
+        disabled={offline || !newProject.trim()}
         class="meta rounded-md border border-white/15 px-4 py-2.5 hover:border-white/40
                disabled:cursor-not-allowed disabled:opacity-30"
       >
@@ -359,6 +423,7 @@
               {#each COLOURS as colour (colour)}
                 <button
                   aria-label="Colour {colour} for {tag.name}"
+                  disabled={offline}
                   class="size-6 rounded-full border-2 transition
                          {tag.colour === colour
                     ? 'border-paper'
@@ -371,13 +436,17 @@
                 ></button>
               {/each}
               <button
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                disabled={offline}
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                       disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => (editingBands === tag.id ? (editingBands = null) : openBands(tag))}
               >
                 Rule
               </button>
               <button
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-ember"
+                disabled={offline}
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-ember
+                       disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => removeTag(tag)}
               >
                 Remove
@@ -519,7 +588,7 @@
         />
         <button
           type="submit"
-          disabled={!newTag.trim()}
+          disabled={offline || !newTag.trim()}
           class="meta rounded-md border border-white/15 px-4 py-2.5 hover:border-white/40
                  disabled:cursor-not-allowed disabled:opacity-30"
         >

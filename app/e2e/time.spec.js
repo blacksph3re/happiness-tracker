@@ -456,6 +456,51 @@ test('scrolling stops at the first day tracked', async ({ page, account }) => {
   expect(await page.evaluate(() => 1 + 1)).toBe(2)
 })
 
+test('a record row opens its project on Track', async ({ page, account }) => {
+  const rewrite = await makeProject(account, 'The rewrite')
+  const reading = await makeProject(account, 'Reading')
+  await recordSession(account, rewrite.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  await recordSession(account, reading.id, `${TODAY}T13:00:00`, `${TODAY}T14:00:00`)
+
+  // And on an older day the same name is not a link at all.
+  await recordSession(account, rewrite.id, '2026-06-11T09:00:00', '2026-06-11T10:00:00')
+
+  await page.goto('/time/record')
+  await expect(page.locator('[data-day="2026-06-11"] [data-open-project]')).toHaveCount(0)
+  await expect(page.locator('[data-day="2026-06-11"]')).toContainText(rewrite.name)
+
+  await page.locator(`[data-day="${TODAY}"] [data-open-project="${rewrite.id}"]`).click()
+
+  // The card is marked, not started: arriving somewhere is not consent to
+  // record against it.
+  await expect(page).toHaveURL(`/time?project=${rewrite.id}`)
+  await expect(page.locator(`[data-project="${rewrite.id}"]`)).toHaveAttribute(
+    'data-focused',
+    'yes'
+  )
+  await expect(page.locator(`[data-project="${rewrite.id}"]`)).toHaveAttribute(
+    'data-running',
+    'no'
+  )
+  await expect(page.locator(`[data-project="${reading.id}"]`)).toHaveAttribute(
+    'data-focused',
+    'no'
+  )
+})
+
+test('a tag row has no project to open', async ({ page, account }) => {
+  const work = await makeTag(account, 'Work')
+  const project = await makeProject(account, 'Backend', { tag_ids: [work.id] })
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  await page.goto('/time/record')
+  await expect(page.locator('[data-open-project]')).toHaveCount(1)
+
+  // A tag is not something you check into, so its row leads nowhere.
+  await page.locator('[data-group-by="tag"]').click()
+  await expect(page.locator('[data-open-project]')).toHaveCount(0)
+})
+
 test('merging collapses a project to one row a day', async ({ page, account }) => {
   const project = await makeProject(account, 'The rewrite')
   const other = await makeProject(account, 'Reading')
@@ -825,9 +870,11 @@ test('tagged projects group together on patterns', async ({ page, account }) => 
   await expect(page.locator('[data-group="Backend"]')).toContainText('3h 00m')
 
   await page.getByRole('button', { name: 'By tag' }).click()
-  // The tag totals its two projects; the third is kept, not hidden.
+  // The tag totals its two projects. The third has no tag, so it is not a row
+  // here — it is reported under the total instead, and outside it.
   await expect(page.locator('[data-group="Work"]')).toContainText('4h 00m')
-  await expect(page.locator('[data-group="Untagged"]')).toContainText('1h 00m')
+  await expect(page.locator('[data-group="Untagged"]')).toHaveCount(0)
+  await expect(page.locator('[data-untagged]')).toContainText('1h 00m')
 })
 
 test('the smoothed line reaches past the window it is drawn for', async ({
@@ -867,6 +914,35 @@ test('the smoothed line reaches past the window it is drawn for', async ({
   await page.getByLabel('Smoothing').fill('14')
   await page.waitForTimeout(500)
   expect(ranges.length, 'smoothing refetched the summary').toBe(before)
+})
+
+test('untagged time is reported below the total, not inside the charts', async ({
+  page,
+  account,
+}) => {
+  const work = await makeTag(account, 'Work')
+  const tagged = await makeProject(account, 'Backend', { tag_ids: [work.id] })
+  const loose = await makeProject(account, 'Reading')
+  await recordSession(account, tagged.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  await recordSession(account, loose.id, `${TODAY}T13:00:00`, `${TODAY}T14:00:00`)
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'By tag' }).click()
+
+  // Not a tag, so not a row, not a slice and not a share: a legend entry called
+  // "Untagged" makes every percentage a share of tagged-plus-untagged.
+  await expect(page.locator('[data-group="Untagged"]')).toHaveCount(0)
+  await expect(page.locator('[data-group="Work"]')).toContainText('3h 00m')
+  await expect(page.locator('[data-total]')).toContainText('3h 00m')
+
+  // Still reported, though: an hour nobody filed is an hour that was worked.
+  await expect(page.locator('[data-untagged]')).toContainText('1h 00m')
+  await expect(page.locator('[data-untagged]')).toContainText('not counted')
+
+  // And by project it is just another project, because there is nothing absent.
+  await page.getByRole('button', { name: 'By project' }).click()
+  await expect(page.locator('[data-group="Reading"]')).toContainText('1h 00m')
+  await expect(page.locator('[data-untagged]')).toHaveCount(0)
 })
 
 test('a tag rule turns tracked time into reported time', async ({ page, account }) => {
@@ -936,6 +1012,38 @@ test('weekdays narrow the hours', async ({ page, account }) => {
   await page.getByRole('button', { name: 'Sat', exact: true }).click()
   // Only the Saturday counts now.
   await expect(page.locator('[data-group="The rewrite"]')).toContainText('1h 00m')
+
+  // And the filters come off in one move rather than one chip at a time.
+  await page.getByRole('button', { name: 'Clear all' }).click()
+  await expect(page.locator('[data-group="The rewrite"]')).toContainText('4h 00m')
+})
+
+test('a filter narrows the strip, not only the numbers beside it', async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  // The week before the pinned Monday: the 9th is a Tuesday, the 13th a
+  // Saturday, and both are behind today so the window holds them whole.
+  await recordSession(account, project.id, '2026-06-09T09:00:00', '2026-06-09T12:00:00')
+  await recordSession(account, project.id, '2026-06-13T09:00:00', '2026-06-13T10:00:00')
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'Week', exact: true }).click()
+  await page.getByRole('button', { name: '← Previous' }).click()
+  await expect(page.locator('[data-lane]')).toHaveCount(2)
+
+  await page.getByRole('button', { name: /Only days where/ }).click()
+  await page.getByRole('button', { name: 'Sat', exact: true }).click()
+
+  // The strip answers *when* rather than *how much*, and was reading the whole
+  // window while every number beside it read the filtered one.
+  await expect(page.locator('[data-group="The rewrite"]')).toContainText('1h 00m')
+  await expect(page.locator('[data-lane]')).toHaveCount(1)
+  await expect(page.locator('[data-lane="2026-06-13"]')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Clear all' }).click()
+  await expect(page.locator('[data-lane]')).toHaveCount(2)
 })
 
 test('every reactive view settles instead of re-triggering itself', async ({
@@ -1102,6 +1210,25 @@ test('the landing page reports both halves and routes into them', async ({
 
   await page.locator('[data-card=wellbeing]').click()
   await expect(page).toHaveURL(/\/answer/)
+})
+
+test('the mark names the half you are in, and nothing when you are in neither', async ({
+  page,
+  account,
+}) => {
+  const header = page.getByRole('banner')
+
+  await page.goto('/time')
+  await expect(header).toContainText('Time')
+
+  await page.goto('/answer')
+  await expect(header).toContainText('Wellbeing')
+
+  // The chooser belongs to neither half, so there is no half to name.
+  await page.goto('/')
+  await expect(header).not.toContainText('Time')
+  await expect(header).not.toContainText('Wellbeing')
+  await expect(header).not.toContainText('Tracker')
 })
 
 test('the two halves do not link to each other', async ({ page, account }) => {

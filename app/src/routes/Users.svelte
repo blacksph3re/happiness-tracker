@@ -1,9 +1,14 @@
 <script>
+  import AdminOffline from '../lib/AdminOffline.svelte'
   import { attempt, unwrap } from '../lib/api.js'
   import { resource } from '../lib/resource.svelte.js'
   import { createUser as createUserCall, deleteUser, listUsers, resetUserPassword, updateUser } from '../lib/generated/sdk.gen'
   import { ensureCatalogues, ensureMe } from '../lib/store.js'
+  import { connection } from '../lib/sync.js'
   import { pushToast } from '../lib/toasts.js'
+
+  /** Accounts are the server's alone: nothing here queues, so nothing here is offered without it. */
+  const offline = $derived($connection !== 'online')
 
   let draft = $state({ username: '', password: '', is_admin: false, is_editor: false })
 
@@ -94,6 +99,8 @@
   <p class="meta">Who can sign in</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">People</h1>
 
+  <AdminOffline does="Accounts belong to the server rather than to this device" />
+
   {#if loading}
     <p class="meta">Loading…</p>
   {:else}
@@ -116,20 +123,24 @@
             </p>
           </div>
           <div class="flex shrink-0 flex-wrap items-center gap-2">
-            <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-              onclick={() => toggle(user, 'is_admin')}>
+            <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                           disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={offline} onclick={() => toggle(user, 'is_admin')}>
               {user.is_admin ? 'Revoke people' : 'Grant people'}
             </button>
-            <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-              onclick={() => toggle(user, 'is_editor')}>
+            <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                           disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={offline} onclick={() => toggle(user, 'is_editor')}>
               {user.is_editor ? 'Revoke questions' : 'Grant questions'}
             </button>
-            <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-              onclick={() => resetPassword(user)}>Reset password</button>
+            <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                           disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={offline} onclick={() => resetPassword(user)}>Reset password</button>
             {#if user.id !== me?.id}
               <button class="meta rounded-md border border-ember/40 px-3 py-2 text-ember
-                             hover:border-ember"
-                onclick={() => remove(user)}>Delete</button>
+                             hover:border-ember disabled:cursor-not-allowed
+                             disabled:opacity-40"
+                disabled={offline} onclick={() => remove(user)}>Delete</button>
             {/if}
           </div>
         </li>
@@ -166,7 +177,12 @@
           Can edit questions
         </label>
       </div>
-      <button type="submit" class="mt-5 rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift">
+      <button
+        type="submit"
+        disabled={offline}
+        class="mt-5 rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift
+               disabled:cursor-not-allowed disabled:opacity-40"
+      >
         Add person
       </button>
     </form>

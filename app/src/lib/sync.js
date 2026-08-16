@@ -83,19 +83,43 @@ let flushing = null
  *   must then say so rather than pretend the write is safe.
  */
 export async function enqueue(intent) {
-  const seq = await appendIntent({
-    ...intent,
-    account: tokenHolder(),
-    // The device's own clock, at the moment of the tap. Stamping this at flush
-    // time instead would make a fortnight-old queued answer look newer than a
-    // correction made yesterday on another device.
-    client_updated_at: new Date().toISOString().slice(0, 23),
-  })
-  if (seq === null) return false
+  return (await enqueueAll([intent])) === 1
+}
 
-  await loadQueue()
-  flush()
-  return true
+/**
+ * Record a run of writes locally, as one, and try to send them.
+ *
+ * The batch is not a convenience: every `enqueue` re-reads the whole queue from
+ * the device and reprojects each cached collection over it, so a thousand of
+ * them is a thousand passes over a list that is itself growing. This pays that
+ * cost once, which is what makes an import of a year's sessions a write rather
+ * than a stall.
+ *
+ * @param {Array<{kind: string, payload?: object, client_id?: string}>} intents
+ *   In the order they should reach the server; "check in, then correct the start
+ *   time" replayed backwards is a different afternoon.
+ * @returns {Promise<number>} How many reached the device. Short of what was
+ *   asked for means the rest are not saved, and the caller must say so.
+ */
+export async function enqueueAll(intents) {
+  const account = tokenHolder()
+  // The device's own clock, at the moment of the tap. Stamping this at flush
+  // time instead would make a fortnight-old queued answer look newer than a
+  // correction made yesterday on another device.
+  const client_updated_at = new Date().toISOString().slice(0, 23)
+
+  let stored = 0
+  for (const intent of intents) {
+    const seq = await appendIntent({ ...intent, account, client_updated_at })
+    if (seq === null) break
+    stored += 1
+  }
+
+  if (stored) {
+    await loadQueue()
+    flush()
+  }
+  return stored
 }
 
 /**
@@ -124,6 +148,25 @@ export async function loadQueue() {
 export function flush() {
   if (!flushing) flushing = drain().finally(() => (flushing = null))
   return flushing
+}
+
+/**
+ * Send what is queued and wait for it to land.
+ *
+ * For the one caller that has to know: an import reports how many sessions it
+ * wrote, and "wrote" has to mean the server has them. `flush` alone will not do
+ * — it hands back whichever drain is already in flight, and that one read the
+ * queue before these intents were on it.
+ *
+ * Two passes at most. A third would be a retry loop, and a queue that will not
+ * empty is a lost connection rather than something to keep hammering.
+ *
+ * @returns {Promise<boolean>} Whether the queue is empty afterwards.
+ */
+export async function settle() {
+  await flush()
+  if (get(pending) > 0) await flush()
+  return get(pending) === 0
 }
 
 async function drain() {

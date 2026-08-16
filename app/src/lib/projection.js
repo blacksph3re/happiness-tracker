@@ -1,4 +1,4 @@
-import { systemValues } from './wellbeing/derive.js'
+import { scoreForDay, systemValues } from './wellbeing/derive.js'
 
 /**
  * What the screen shows: the server's last word, with this device's queue on top.
@@ -34,7 +34,65 @@ export function overlayAnswers(rows, queue, catalogues = {}) {
       intent.payload,
     ]
   }
-  return withSystemAnswers(out, local, catalogues)
+  return withScores(
+    withSystemAnswers(out, local, catalogues),
+    local.map((intent) => intent.payload.day),
+    catalogues
+  )
+}
+
+/**
+ * Rework the scores over days whose answers have changed here.
+ *
+ * A score is not stored anywhere: the server works it out whenever answers are
+ * read and sends it back looking like an ordinary answer, so the number on
+ * screen is only ever as fresh as the last fetch. Answer one of its components
+ * and the score beside it keeps the old figure — and nothing refetches, because
+ * the day is re-read only when it is *opened*, and because every view after the
+ * first reads from the store by design.
+ *
+ * Called from both sides of that, and it has to be: the queue covers a write
+ * still waiting, and `rememberAnswer` covers one that has already drained,
+ * where there is nothing left to lay over and the fetched copy is stale.
+ *
+ * Only the days named. Reworking the rest would mean recomputing the whole
+ * history on every tap, and the server's figure for a day nothing has touched
+ * is already the right one.
+ *
+ * @param {Array<object>} rows Answers, as the screen should read them.
+ * @param {Array<string>} days The `YYYY-MM-DD` keys this device has changed.
+ * @param {Record<number, object>} catalogues Catalogue detail by id, for the
+ *   score definitions.
+ * @returns {Array<object>}
+ */
+export function withScores(rows, days, catalogues = {}) {
+  if (!days.length) return rows
+  const scores = Object.values(catalogues)
+    .flatMap((detail) => detail.questions ?? [])
+    .filter((question) => question.origin === 'computed' && question.components?.length)
+  if (!scores.length) return rows
+
+  const touched = new Set(days)
+  const ids = new Set(scores.map((score) => score.id))
+
+  // The components as they now stand, which is the point: the new answer is
+  // already in `rows`, so this reads what the screen is showing rather than
+  // what the server last knew.
+  const values = {}
+  for (const row of rows) {
+    if (!touched.has(row.day) || ids.has(row.question_id) || row.value == null) continue
+    values[row.day] ??= {}
+    values[row.day][row.question_id] = row.value
+  }
+
+  const out = rows.filter((row) => !(touched.has(row.day) && ids.has(row.question_id)))
+  for (const day of touched) {
+    for (const score of scores) {
+      const value = scoreForDay(score, values[day] ?? {})
+      if (value !== null) out.push({ day, question_id: score.id, value, option_id: null })
+    }
+  }
+  return out
 }
 
 /**

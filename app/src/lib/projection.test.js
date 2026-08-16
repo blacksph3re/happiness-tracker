@@ -90,6 +90,92 @@ describe('answers', () => {
   })
 })
 
+/**
+ * Scores over what has just been answered.
+ *
+ * The server computes these on read and sends them back looking like ordinary
+ * answers, which is what lets the record and the stats page show them without
+ * knowing they exist. The consequence is that a score is only ever as fresh as
+ * the last fetch: answer a component and the score beside it keeps the old
+ * number until the page is reloaded. So the projection has to recompute them,
+ * the same way it already fills in the auto-tracked columns.
+ */
+describe('scores', () => {
+  /** One score over two questions, as a catalogue exposes it. */
+  const catalogues = {
+    1: {
+      questions: [
+        { id: 1 },
+        { id: 2 },
+        {
+          id: 50,
+          origin: 'computed',
+          aggregate: 'mean',
+          require_all: false,
+          components: [
+            { source_question_id: 1, weight: 1 },
+            { source_question_id: 2, weight: 1 },
+          ],
+        },
+      ],
+    },
+  }
+
+  test('a score is recomputed over an answer the server has not seen', () => {
+    const stored = [
+      { day: '2026-06-15', question_id: 1, value: 2 },
+      { day: '2026-06-15', question_id: 2, value: 2 },
+      { day: '2026-06-15', question_id: 50, value: 2 },
+    ]
+    const shown = overlayAnswers(stored, [answer('2026-06-15', 2, 4)], catalogues)
+
+    // The mean of 2 and 4, not the 2 the server last worked out.
+    expect(shown.find((row) => row.question_id === 50).value).toBe(3)
+  })
+
+  test('a day whose first answer is queued gains its score', () => {
+    const shown = overlayAnswers([], [answer('2026-06-15', 1, 5)], catalogues)
+
+    // One component of two, and the score does not require all of them.
+    expect(shown.find((row) => row.question_id === 50).value).toBe(5)
+  })
+
+  test('a score requiring every component stays absent until it has them', () => {
+    const strict = {
+      1: {
+        questions: [
+          {
+            ...catalogues[1].questions[2],
+            require_all: true,
+          },
+        ],
+      },
+    }
+    const shown = overlayAnswers([], [answer('2026-06-15', 1, 5)], strict)
+
+    expect(shown.find((row) => row.question_id === 50)).toBeUndefined()
+  })
+
+  test('days the queue never touched keep the score the server sent', () => {
+    // Recomputing those would mean recomputing the whole history on every
+    // answer, and the server's number for a settled day is already right.
+    const stored = [
+      { day: '2026-06-14', question_id: 1, value: 1 },
+      { day: '2026-06-14', question_id: 50, value: 1 },
+    ]
+    const shown = overlayAnswers(stored, [answer('2026-06-15', 1, 5)], catalogues)
+
+    expect(shown.find((row) => row.day === '2026-06-14' && row.question_id === 50).value)
+      .toBe(1)
+  })
+
+  test('a score is left alone when nothing is queued at all', () => {
+    const stored = [{ day: '2026-06-15', question_id: 50, value: 9 }]
+
+    expect(overlayAnswers(stored, [], catalogues)).toEqual(stored)
+  })
+})
+
 describe('sessions', () => {
   const upsert = (client_id, payload) => ({ kind: 'entry.upsert', client_id, payload })
   const remove = (client_id) => ({ kind: 'entry.delete', client_id })

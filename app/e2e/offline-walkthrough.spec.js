@@ -195,16 +195,56 @@ test('the administrative views are the ones that say no', async ({
   await page.reload()
 
   // The page still opens — it is precached like every other — and what it
-  // cannot do is write. A refusal that is visible beats a button that looks
-  // like it worked.
+  // cannot do it does not offer. A control
+  // that looks live and then fails is the same dead end as one that silently
+  // does nothing — so every write on it is out, with one line saying why.
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Projects')
-  await page.getByPlaceholder('New project').fill('Made while away')
-  await page.getByRole('button', { name: 'Add', exact: true }).first().click()
-  await expect(page.locator('[data-toast]')).toBeVisible()
+  await expect(page.locator('[data-admin-offline]')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Add', exact: true }).first()).toBeDisabled()
+  await expect(page.locator('[data-import-open]').first()).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Archive' }).first()).toBeDisabled()
 
-  // And nothing was queued for it: administration is online-only by design, so
-  // there is no pretence that it will arrive later.
+  // Nothing is queued for any of it: administration is online-only by design,
+  // so there is no pretence that it will arrive later.
   await expect(page.locator('[data-sync]')).not.toHaveAttribute('data-pending', '1')
+
+  // The same on every other page that changes the account rather than records
+  // on it. Opened directly rather than through the menu: Questions lives in the
+  // other half, and the two halves deliberately do not link to each other.
+  for (const [path, name, control] of [
+    ['/questions', 'Questions', 'New catalogue'],
+    ['/people', 'People', null],
+    ['/settings', 'Settings', null],
+  ]) {
+    await page.goto(path)
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(name)
+    await expect(page.locator('[data-admin-offline]')).toBeVisible()
+    if (control) await expect(page.getByPlaceholder(control)).toBeDisabled()
+  }
+  await expect(page.getByRole('button', { name: 'Change password' })).toBeDisabled()
+})
+
+test('recording still works while administration is refused', async ({
+  page,
+  account,
+  context,
+}) => {
+  const backend = await makeProject(account, 'Backend')
+
+  await page.goto('/time')
+  await expect(page.locator(`[data-project="${backend.id}"]`)).toBeVisible()
+  await installed(page)
+  await context.setOffline(true)
+  await page.reload()
+
+  // The point of greying the other pages out is that this one is not greyed
+  // out: a timer is a record of what happened, and it needs nobody's agreement.
+  await page.getByRole('button', { name: `Start ${backend.name}`, exact: true }).click()
+  await expect(page.locator(`[data-project="${backend.id}"]`)).toHaveAttribute(
+    'data-running',
+    'yes'
+  )
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '1')
 })
 
 test('the day view survives sessions this device has only just recorded', async ({

@@ -23,6 +23,7 @@
     ontoggle,
     onresume,
     disabled = false,
+    focused = false,
   } = $props()
 
   const live = $derived(running !== null)
@@ -69,13 +70,16 @@
 
 <div
   data-project={project.id}
+  data-focused={focused ? 'yes' : 'no'}
   data-running={live ? 'yes' : 'no'}
   style:transition-duration="{SETTLE}ms"
   class="group relative flex min-h-20 w-full flex-wrap items-center justify-between gap-x-4
          gap-y-2 overflow-hidden rounded-lg border px-5 py-4 text-left transition ease-out
          {live
     ? 'border-ember bg-dusk/30 ring-2 ring-ember/60'
-    : 'border-white/10 bg-ink-soft hover:border-white/30 hover:bg-dusk/10'}"
+    : focused
+      ? 'border-white/30 bg-dusk/10 ring-2 ring-white/25'
+      : 'border-white/10 bg-ink-soft hover:border-white/30 hover:bg-dusk/10'}"
 >
   <!-- The hover lift is a colour, not a `brightness` filter: the filter was
        still at 1.25 under the cursor at the moment of the click, so turning a

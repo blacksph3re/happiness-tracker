@@ -8,7 +8,7 @@
   import { daysIn, period, stepPeriod } from '../../lib/time/period.js'
   import { formatDuration, hours, nowUtc } from '../../lib/time/duration.js'
   import DayTimeline from '../../lib/time/DayTimeline.svelte'
-  import { movingAverage } from '../../lib/series.js'
+  import { smoothSeries } from '../../lib/series.js'
   import {
     barOptions,
     lineOptions,
@@ -163,7 +163,21 @@
     )
   })
 
-  const tracked = $derived(groups.reduce((sum, group) => sum + group.total, 0))
+  /**
+   * Time on projects carrying no tag at all.
+   *
+   * Held apart from `groups` rather than counted as one: "Untagged" is the
+   * absence of the thing being grouped by, and letting it into the charts makes
+   * every share a share of *tagged plus not-tagged* — which is a share of
+   * nothing in particular. It is still reported, under the total and outside it,
+   * because time nobody has filed is worth knowing about.
+   */
+  const untagged = $derived(by === 'tag' ? groups.find((one) => one.key === null) : null)
+
+  /** The groups every chart, legend and table row is drawn from. */
+  const filed = $derived(groups.filter((group) => group.key !== null))
+
+  const tracked = $derived(filed.reduce((sum, group) => sum + group.total, 0))
 
   /**
    * Whether a rule actually took something off what is shown.
@@ -172,12 +186,14 @@
    * this decides whether the page calls them reported or tracked, so a figure
    * that has had an hour removed never reads as the hours worked.
    */
-  const deducted = $derived(rows.some((row) => (row.deduction ?? 0) > 0))
+  const deducted = $derived(
+    rows.some((row) => (row.deduction ?? 0) > 0 && (by !== 'tag' || row.key !== null))
+  )
 
   const overlapping = $derived(
     days.some(
       (day) =>
-        groups.reduce((sum, group) => sum + (group.byDay.get(day) ?? 0), 0) > 86_400
+        filed.reduce((sum, group) => sum + (group.byDay.get(day) ?? 0), 0) > 86_400
     )
   )
 
@@ -236,17 +252,20 @@
   const seriesInput = $derived({
     days: plotted,
     smoothed: smoothing > 1,
-    series: groups.map((group) => {
+    series: filed.map((group) => {
       const value = (day) =>
         group.byDay.has(day) ? hours(group.byDay.get(day)) : showGaps ? null : 0
       if (smoothing <= 1) {
         return { name: group.name, colour: swatch(group.colour), data: plotted.map(value) }
       }
-      // Smoothing reads through a gap, which is the point of the control: a
-      // wider window closes the holes a sparse week leaves.
-      const averaged = movingAverage(
-        padded.days.map((day) => value(day) ?? 0),
-        smoothing
+      // The nulls are passed through rather than flattened to zero, which is
+      // what makes the toggle mean anything once smoothing is on: flattening
+      // first made the two settings identical, because every gap had already
+      // become a zero before the average saw it.
+      const averaged = smoothSeries(
+        padded.days.map((day) => value(day)),
+        smoothing,
+        { breakGaps: showGaps }
       )
       return {
         name: group.name,
@@ -259,7 +278,7 @@
   })
 
   const shareInput = $derived({
-    slices: groups.map((group) => ({
+    slices: filed.map((group) => ({
       name: group.name,
       value: hours(group.total),
       colour: swatch(group.colour),
@@ -268,7 +287,7 @@
 
   const weekdayInput = $derived({
     labels: WEEKDAYS,
-    series: groups.map((group) => ({
+    series: filed.map((group) => ({
       name: group.name,
       colour: swatch(group.colour),
       data: WEEKDAYS.map((_, index) => {
@@ -526,6 +545,16 @@
 
       {#if filtersOpen}
         <div class="flex flex-col gap-4 border-t border-white/10 p-4">
+          {#if activeFilters}
+            <!-- Undoing a narrowing one chip at a time means remembering which
+                 ones are on, across facets that may be scrolled out of view. -->
+            <button
+              class="meta self-start underline underline-offset-4 hover:text-paper"
+              onclick={() => (filters = {})}
+            >
+              Clear all
+            </button>
+          {/if}
           {#each facets as facet (facet.key)}
             <div class="flex flex-col gap-2">
               <p class="meta">{facet.label}</p>
@@ -557,13 +586,17 @@
 
   {#if strip}
     <div class="mb-4">
-      <DayTimeline bind:day={anchor} bind:fullDay days={dayView ? null : days} />
+      <!-- `plotted`, not `days`: the strip answers *when* rather than *how
+           much*, but it answers it about the same days every number beside it
+           is computed over. Reading the whole window here made "only days
+           where" look as though it had done nothing. -->
+      <DayTimeline bind:day={anchor} bind:fullDay days={dayView ? null : plotted} />
     </div>
   {/if}
 
   {#if loading}
     <p class="meta">Loading…</p>
-  {:else if groups.length === 0}
+  {:else if filed.length === 0}
     <!-- Every card the window would have, empty. Sliding past the end of the
          history should not rearrange the page under the control being moved. -->
     {#if asLine}
@@ -674,7 +707,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each groups as group (group.key ?? 'untagged')}
+        {#each filed as group (group.key)}
           <tr class="border-b border-white/5" data-group={group.name}>
             <td class="flex items-center gap-2 py-2">
               <span
@@ -706,7 +739,7 @@
             {by === 'tag' ? 'Total across tags' : 'Total'}
           </td>
           <td class="numeral py-2 text-right font-medium tabular-nums">
-            {formatDuration(groups.reduce((sum, group) => sum + group.trackedTotal, 0))}
+            {formatDuration(filed.reduce((sum, group) => sum + group.trackedTotal, 0))}
           </td>
           {#if deducted}
             <td class="numeral py-2 text-right font-medium tabular-nums">
@@ -717,6 +750,24 @@
                per row and would read 99% or 101% often enough to look wrong. -->
           <td class="numeral py-2 text-right tabular-nums text-haze">100%</td>
         </tr>
+        {#if untagged}
+          <!-- Below the total and outside it. Time on projects with no tag is
+               not a tag, so it is in none of the charts and none of the shares —
+               but it is still time, and a page that simply dropped it would be
+               quietly reporting a smaller day than was worked. -->
+          <tr data-untagged>
+            <td class="py-2 text-haze">Untagged, not counted above</td>
+            <td class="numeral py-2 text-right tabular-nums text-haze">
+              {formatDuration(untagged.trackedTotal)}
+            </td>
+            {#if deducted}
+              <td class="numeral py-2 text-right tabular-nums text-haze">
+                {formatDuration(untagged.total)}
+              </td>
+            {/if}
+            <td class="numeral py-2 text-right tabular-nums text-haze">—</td>
+          </tr>
+        {/if}
       </tfoot>
     </table>
   {/if}
