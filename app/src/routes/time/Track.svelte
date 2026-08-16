@@ -1,4 +1,5 @@
 <script>
+  import { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
   import ProjectCard from '../../lib/time/ProjectCard.svelte'
   import { attempt } from '../../lib/api.js'
   import {
@@ -22,9 +23,21 @@
     timeEntries,
   } from '../../lib/store.js'
   import { link, query } from '../../lib/router.js'
+  import { connection } from '../../lib/sync.js'
   import { pushToast } from '../../lib/toasts.js'
 
   let loading = $state(true)
+  /**
+   * Whether a project can be created at all right now.
+   *
+   * Tracking is the one thing on this page that works without a connection;
+   * *creating what to track* is administration, and belongs with the rest of
+   * it. No banner here — one line about administration on the page whose whole
+   * job is to keep working offline would say the wrong thing about it.
+   */
+  const offline = $derived($connection !== 'online')
+  const hint = $derived(offline ? OFFLINE_HINT : undefined)
+
   let newName = $state('')
   // Per project, not one lock for the page. A single flag disabled every other
   // card for the length of the request, which flashed them all on a tap that
@@ -216,11 +229,14 @@
           bind:value={newName}
           placeholder="The rewrite"
           aria-label="Project name"
+          disabled={offline}
+          title={hint}
           class="min-w-0 flex-1 rounded-lg border border-white/15 bg-ink px-4 py-3"
         />
         <button
           type="submit"
-          disabled={!newName.trim()}
+          disabled={offline || !newName.trim()}
+          title={hint}
           class="rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift
                  disabled:cursor-not-allowed disabled:opacity-30"
         >
@@ -254,11 +270,14 @@
           bind:value={newName}
           placeholder="Another project"
           aria-label="Project name"
+          disabled={offline}
+          title={hint}
           class="min-w-0 flex-1 rounded-lg border border-white/15 bg-ink-soft px-4 py-2.5 text-sm"
         />
         <button
           type="submit"
-          disabled={!newName.trim()}
+          disabled={offline || !newName.trim()}
+          title={hint}
           class="meta rounded-md border border-white/15 px-4 py-2.5 hover:border-white/40
                  disabled:cursor-not-allowed disabled:opacity-30"
         >

@@ -23,7 +23,10 @@
     ensureTags,
     ensureTimeEntries,
     ensureTrackedRange,
+    ensurePreferences,
     ensureVariables,
+    persistPreferences,
+    preferenceSection,
     projects as projectStore,
     tags as tagStore,
     trackedDays,
@@ -63,6 +66,7 @@
   let unit = $state('month')
   let anchor = $state(today())
   let customDays = $state(30)
+
   const dayView = $derived(unit === 'day')
 
   const shown = $derived(period(unit, anchor, customDays))
@@ -311,6 +315,70 @@
   let showGaps = $state(false)
   let filters = $state({})
   let filtersOpen = $state(false)
+
+  /** Whether the remembered view has been applied, so saving may begin. */
+  let ready = $state(false)
+
+  const UNITS = ['day', 'week', 'month', 'quarter', 'custom']
+  const GROUPINGS = ['project', 'tag']
+
+  // Nothing reactive is read before the first await, so this effect has no
+  // dependencies and runs once — which is what keeps a function that assigns
+  // the state of half this page from re-triggering itself.
+  $effect(() => {
+    restore()
+  })
+
+  /**
+   * Put the page back the way it was last left.
+   *
+   * The shape of the view, never the position in it: `anchor` stays at today.
+   * Coming back to the app should show the present in the arrangement you chose,
+   * not the fortnight you were reading about on Tuesday.
+   */
+  async function restore() {
+    const stored = preferenceSection(await ensurePreferences(), 'time')
+    if (GROUPINGS.includes(stored.by)) by = stored.by
+    if (UNITS.includes(stored.unit)) unit = stored.unit
+    if (Number.isFinite(stored.customDays)) customDays = stored.customDays
+    if (Number.isFinite(stored.smoothing)) smoothing = stored.smoothing
+    if (typeof stored.showGaps === 'boolean') showGaps = stored.showGaps
+    if (typeof stored.fullDay === 'boolean') fullDay = stored.fullDay
+    if (stored.filters && typeof stored.filters === 'object') {
+      filters = Object.fromEntries(
+        Object.entries(stored.filters)
+          .filter(([, values]) => Array.isArray(values) && values.length)
+          .map(([key, values]) => [key, new Set(values)])
+      )
+    }
+    ready = true
+  }
+
+  /** The view state worth remembering, in a stable shape for comparison. */
+  function snapshot() {
+    return {
+      by,
+      unit,
+      customDays,
+      smoothing,
+      showGaps,
+      fullDay,
+      filters: Object.fromEntries(
+        Object.entries(filters)
+          .filter(([, values]) => values.size)
+          .map(([key, values]) => [key, [...values].sort()])
+          .sort(([a], [b]) => (a < b ? -1 : 1))
+      ),
+    }
+  }
+
+  $effect(() => {
+    // Reading the snapshot is what subscribes this effect to each control.
+    const current = snapshot()
+    // The store drops a save that matches what is already stored, so arriving
+    // here and applying the state just loaded writes nothing.
+    if (ready) persistPreferences('time', current)
+  })
 
   /**
    * What a day can be filtered on.

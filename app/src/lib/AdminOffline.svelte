@@ -1,3 +1,15 @@
+<script module>
+  /**
+   * What a control says for itself when the connection is why it is dead.
+   *
+   * The notice below explains a whole page at once; this is for the pointer
+   * that arrives at one button having scrolled past it. Deliberately the same
+   * sentence everywhere — a control that explains itself differently from the
+   * one beside it reads as a different kind of refusal.
+   */
+  export const OFFLINE_HINT = 'Not available without a connection'
+</script>
+
 <script>
   import { connection } from './sync.js'
 

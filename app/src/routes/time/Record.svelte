@@ -459,6 +459,29 @@
   }
 
   /**
+   * Fill in the default project once the list of them actually arrives.
+   *
+   * `startAdding` reads `$projectStore` too, but only once, at the moment the
+   * panel opens — and on a page just navigated to, `ensureProjects()` can
+   * still be in flight then. Nothing afterward revisited that snapshot, so a
+   * click a beat too early left the form permanently on no project: the
+   * select had nothing to preselect, `project_id` stayed null, and the submit
+   * button — disabled on exactly that — never had a reason to reconsider.
+   *
+   * Guarded by the field it writes, not looped by it: once a project lands,
+   * the condition is false and every further run of this effect is a no-op.
+   * The same shape as `maxSmoothing` clamping `smoothing` elsewhere, and safe
+   * for the same reason — a synchronous write inside the same effect that
+   * reads it, not the async round-trip that made effects like this loop
+   * silently elsewhere in this app.
+   */
+  $effect(() => {
+    if (!adding || adding.project_id) return
+    const first = ($projectStore ?? []).find((p) => p.active)?.id
+    if (first) adding.project_id = first
+  })
+
+  /**
    * Save a correction.
    *
    * Queued rather than sent: the session is corrected on the device now, and

@@ -3,7 +3,20 @@ from datetime import timedelta
 
 import pytest
 
-PUBLIC_PATHS = {"/api/version", "/api/login", "/api/refresh"}
+PUBLIC_PATHS = {"/api/version", "/api/login", "/api/refresh", "/api/login/totp"}
+"""Every endpoint reachable without a bearer token.
+
+Deliberately a literal list rather than something derived: adding to it is the
+kind of change that should have to be typed out on purpose. `/api/login/totp`
+is here because a second factor is presented *before* there is a session to
+present it with — it is authorised by the short-lived token the password step
+handed out, and refuses everything else.
+
+Note what keeps this test able to tell public from protected: an endpoint that
+answers 401 to bad *credentials in the body* looks exactly like one demanding a
+bearer token. Both login steps are therefore called with no body at all, so they
+answer 422 and are counted as reachable. That is why neither appears in
+`SAMPLE_BODIES`."""
 DOCS_PATHS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
 SAMPLE_BODIES = {
@@ -86,6 +99,38 @@ def bad_tokens():
     }
 
 
+def test_docs_are_not_routed_without_the_env_var(client):
+    import main
+
+    routed = {getattr(route, "path", None) for route in main.app.routes}
+    assert routed.isdisjoint(DOCS_PATHS)
+
+
+# Asserted on the body rather than the status code because the SPA is mounted at
+# "/" and answers an unknown path with index.html, so a disabled /docs is a 200
+# rather than a 404 - and only when `backend/static` has been built, which is
+# gitignored and therefore absent in a fresh clone. The marker strings hold
+# either way.
+def test_docs_are_not_served_without_the_env_var(client):
+    assert '"openapi"' not in client.get("/openapi.json").text
+    assert "swagger-ui" not in client.get("/docs").text.lower()
+    assert "redoc" not in client.get("/redoc").text.lower()
+
+
+def test_docs_are_served_when_the_env_var_is_set(docs_client):
+    assert '"openapi"' in docs_client.get("/openapi.json").text
+    assert "swagger-ui" in docs_client.get("/docs").text.lower()
+    assert "redoc" in docs_client.get("/redoc").text.lower()
+
+
+def test_the_schema_is_still_generated_for_codegen_when_docs_are_off(client):
+    # `pnpm api:generate` calls app.openapi() directly rather than fetching the
+    # endpoint, so switching the route off must not switch codegen off with it.
+    import main
+
+    assert "/api/login" in main.app.openapi()["paths"]
+
+
 def test_every_protected_endpoint_rejects_bad_credentials(client):
     import main
 
@@ -112,7 +157,7 @@ def test_token_for_deleted_user_is_rejected(client, admin_headers):
     assert client.get("/api/me", headers=headers).status_code == 401
 
 
-def test_public_endpoint_list_is_exactly_three(client):
+def test_the_public_endpoints_are_exactly_the_listed_ones(client):
     import main
 
     public = set()
@@ -357,3 +402,45 @@ def test_oversized_preferences_are_refused(client, admin_headers):
     assert client.get("/api/me/preferences", headers=admin_headers).json() == {
         "view": "line"
     }
+
+
+# The two below are a pair, and the order matters. The suite shares one
+# application between tests and swaps the database under it, which is worth
+# about forty seconds — and which is only safe while every piece of
+# process-wide state is reset in between. These make a leak fail here, loudly,
+# rather than somewhere else as a test that quietly stopped testing anything.
+
+
+def test_a_test_may_leave_the_world_dirty(client, admin_headers):
+    """Fill the failure budget, enrol a factor, and leave both behind."""
+    import pyotp
+
+    started = client.post("/api/me/totp", headers=admin_headers)
+    secret = started.json()["secret"]
+    client.post(
+        "/api/me/totp/confirm",
+        json={"code": pyotp.TOTP(secret).at(__import__("time").time() - 30)},
+        headers=admin_headers,
+    )
+    for _ in range(5):
+        client.post("/api/login", json={"username": "admin", "password": "wrong"})
+
+    assert (
+        client.post(
+            "/api/login", json={"username": "admin", "password": "admin-password"}
+        ).status_code
+        == 429
+    )
+
+
+def test_and_the_next_one_finds_it_clean(client):
+    body = client.post(
+        "/api/login", json={"username": "admin", "password": "admin-password"}
+    )
+
+    # Not 429: the login throttle is per process, and a stale one would spend
+    # this test's budget on the last test's guesses.
+    assert body.status_code == 200
+    # Not `totp_required`: the database is this test's own, and an enrolment
+    # from the test above would mean they are sharing one.
+    assert body.json()["status"] == "complete"

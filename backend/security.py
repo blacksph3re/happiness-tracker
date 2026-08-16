@@ -1,3 +1,4 @@
+import secrets
 import threading
 import time
 from collections.abc import Callable
@@ -6,15 +7,41 @@ from functools import lru_cache
 from typing import Any
 
 import jwt
+import pyotp
+from cryptography.fernet import Fernet, InvalidToken
 from passlib.context import CryptContext
 
 from config import get_settings
+from models import User
 
 ACCESS_TOKEN_TYPE = "access"
 """Value of the ``typ`` claim on tokens accepted as bearer credentials."""
 
 REFRESH_TOKEN_TYPE = "refresh"
 """Value of the ``typ`` claim on tokens accepted only by the refresh endpoint."""
+
+TOTP_TOKEN_TYPE = "totp"
+"""Value of the ``typ`` claim on tokens that authorise one thing: presenting a
+second factor.
+
+A third type rather than a reused access token, and the distinction is what
+makes the two-step login safe: `decode_token` already refuses a token whose type
+is not the one asked for, so a half-finished login cannot be spent as a bearer
+credential and a bearer credential cannot be spent to skip the second step."""
+
+TOTP_TOKEN_TTL = timedelta(minutes=5)
+"""How long a challenge stays answerable. Long enough to find a phone, short
+enough that the token is worthless by the time anybody could misuse it."""
+
+TOTP_SKEW_STEPS = 1
+"""Steps either side of now that a code is accepted for.
+
+One step is 30 seconds of tolerance for a phone whose clock has drifted. Wider
+multiplies the codes valid at any moment, which is a real weakening; narrower
+turns ordinary clock drift into a locked account."""
+
+TOTP_ISSUER = "Daily Tracker"
+"""Name shown beside the account in an authenticator app."""
 
 _pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -261,3 +288,163 @@ def get_login_throttle() -> LoginThrottle:
         max_attempts=settings.login_max_attempts,
         window=settings.login_lockout_window_delta,
     )
+
+
+@lru_cache
+def _cipher() -> Fernet:
+    """Return the cipher protecting stored TOTP secrets.
+
+    Returns
+    -------
+    cryptography.fernet.Fernet
+        Built from `TOTP_ENCRYPTION_KEY`, cached for the process the same way
+        the settings are.
+
+    Raises
+    ------
+    RuntimeError
+        If the key is unset or is not a valid Fernet key.
+    """
+    try:
+        return Fernet(get_settings().totp_key.encode())
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "TOTP_ENCRYPTION_KEY is not a valid Fernet key. Generate one with "
+            "`python -c 'from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())'`."
+        ) from exc
+
+
+def new_totp_secret() -> str:
+    """Generate a fresh base32 shared secret.
+
+    Returns
+    -------
+    str
+        A random secret, in the form an authenticator app expects.
+    """
+    return pyotp.random_base32()
+
+
+def seal_totp_secret(secret: str) -> str:
+    """Encrypt a shared secret for storage.
+
+    Encrypted rather than hashed, unlike a password: verifying a code means
+    computing the expected one, which needs the plaintext back.
+
+    Parameters
+    ----------
+    secret : str
+        The base32 secret.
+
+    Returns
+    -------
+    str
+        A Fernet token, safe to persist.
+    """
+    return _cipher().encrypt(secret.encode()).decode()
+
+
+def open_totp_secret(sealed: str | None) -> str | None:
+    """Recover a stored shared secret.
+
+    Parameters
+    ----------
+    sealed : str or None
+        The stored Fernet token, or None when enrolment never began.
+
+    Returns
+    -------
+    str or None
+        The base32 secret, or None when there is nothing stored or the stored
+        value cannot be decrypted with the current key — which is what a
+        rotated `TOTP_ENCRYPTION_KEY` looks like from here. Reported as "no
+        second factor" rather than as a crash, so a rotated key locks nobody
+        out of anything except their own enrolment.
+    """
+    if not sealed:
+        return None
+    try:
+        return _cipher().decrypt(sealed.encode()).decode()
+    except InvalidToken:
+        return None
+
+
+def totp_uri(secret: str, username: str) -> str:
+    """Build the `otpauth://` URI an authenticator app scans.
+
+    Parameters
+    ----------
+    secret : str
+        The base32 shared secret.
+    username : str
+        The account name shown in the app.
+
+    Returns
+    -------
+    str
+        The provisioning URI.
+    """
+    return pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name=TOTP_ISSUER)
+
+
+def verify_totp(secret: str, code: str, last_step: int | None) -> int | None:
+    """Check a code, and report which time-step it belongs to.
+
+    Parameters
+    ----------
+    secret : str
+        The base32 shared secret.
+    code : str
+        The six digits submitted.
+    last_step : int or None
+        The highest step already spent on this account, or None when no code
+        has been accepted yet.
+
+    Returns
+    -------
+    int or None
+        The step the code belongs to, which the caller must store; or None
+        when the code is wrong, already spent, or from a step already passed.
+
+    Notes
+    -----
+    A code stays valid for its whole 30-second step, so anyone who observes one
+    can present it again inside that window. Refusing any step at or below the
+    last one accepted makes each code strictly single-use — and refuses an
+    *earlier* step too, which matters because the skew window means two
+    different codes can be valid at the same moment.
+    """
+    totp = pyotp.TOTP(secret)
+    now = int(time.time())
+    for offset in range(-TOTP_SKEW_STEPS, TOTP_SKEW_STEPS + 1):
+        at = now + offset * totp.interval
+        step = at // totp.interval
+        if last_step is not None and step <= last_step:
+            continue
+        if secrets.compare_digest(totp.at(at), code):
+            return int(step)
+    return None
+
+
+def clear_totp(user: User) -> None:
+    """Strip a second factor from an account and sign its sessions out.
+
+    Every field goes, not only the confirmation: leaving the secret behind
+    would let a later `confirm` turn the same one back on without the person
+    who owns the account ever scanning it again.
+
+    The token version is bumped with it, on the theory that the reason a second
+    factor is coming off might be that something is wrong. It also means an
+    administrator quietly stripping somebody's second factor reaches them as an
+    unexpected logout rather than as nothing at all.
+
+    Parameters
+    ----------
+    user : models.User
+        The account to clear. Not committed here.
+    """
+    user.totp_secret = None
+    user.totp_confirmed_at = None
+    user.totp_last_step = None
+    user.token_version += 1

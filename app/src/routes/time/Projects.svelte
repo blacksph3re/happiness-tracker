@@ -1,5 +1,5 @@
 <script>
-  import AdminOffline from '../../lib/AdminOffline.svelte'
+  import AdminOffline, { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
   import { attempt, unwrap } from '../../lib/api.js'
   import {
     createProject,
@@ -49,8 +49,23 @@
    */
   const offline = $derived($connection !== 'online')
 
+  /** Set on every control the connection is holding down, and on no other. */
+  const hint = $derived(offline ? OFFLINE_HINT : undefined)
+
   /** Which project's import panel is open, if any. */
   let importing = $state(null)
+
+  // A panel left open when the signal goes is a drawer of dead controls, and
+  // the import one is worse than that: it would go on offering to write a file
+  // it cannot send. Reads `offline` and writes only what it closes, so there is
+  // nothing here to feed itself.
+  $effect(() => {
+    if (offline) {
+      editing = null
+      editingBands = null
+      importing = null
+    }
+  })
 
   const projects = $derived($projectStore ?? [])
   const tags = $derived($tagStore ?? [])
@@ -245,6 +260,7 @@
                          disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Move {project.name} earlier"
                   disabled={offline || position === 0}
+                  title={hint}
                   onclick={() => move(project, -1)}
                 >
                   ↑
@@ -254,19 +270,24 @@
                          disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Move {project.name} later"
                   disabled={offline || position === projects.length - 1}
+                  title={hint}
                   onclick={() => move(project, 1)}
                 >
                   ↓
                 </button>
               </span>
               <button
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                disabled={offline}
+                title={hint}
+                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                       disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => (editing = editing === project.id ? null : project.id)}
               >
                 Edit
               </button>
               <button
                 disabled={offline}
+                title={hint}
                 class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                        disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => saveProject(project, { active: !project.active })}
@@ -276,6 +297,7 @@
               <button
                 data-import-open={project.id}
                 disabled={offline}
+                title={hint}
                 class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                        disabled:cursor-not-allowed disabled:opacity-40
                        disabled:hover:border-white/15"
@@ -303,6 +325,7 @@
                   value={project.name}
                   maxlength="80"
                   disabled={offline}
+                  title={hint}
                   class="rounded-lg border border-white/15 bg-ink px-4 py-2.5
                          disabled:cursor-not-allowed disabled:opacity-40"
                   onchange={(e) => saveProject(project, { name: e.currentTarget.value })}
@@ -317,7 +340,9 @@
                       aria-label="Colour {colour}"
                       aria-pressed={project.colour === colour}
                       disabled={offline}
+                      title={hint}
                       class="size-8 rounded-full border-2 transition
+                             disabled:cursor-not-allowed disabled:opacity-30
                              {project.colour === colour
                         ? 'border-paper'
                         : 'border-transparent hover:border-white/40'}"
@@ -339,6 +364,7 @@
                       <button
                         aria-pressed={on}
                         disabled={offline}
+                        title={hint}
                         class="meta rounded-md border px-3 py-2 transition
                                {on
                           ? 'border-ember bg-dusk/30 text-paper'
@@ -354,6 +380,7 @@
 
               <button
                 disabled={offline}
+                title={hint}
                 class="meta self-start rounded-md border border-white/15 px-3 py-2
                        hover:border-ember disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => removeProject(project)}
@@ -383,6 +410,7 @@
       <button
         type="submit"
         disabled={offline || !newProject.trim()}
+        title={hint}
         class="meta rounded-md border border-white/15 px-4 py-2.5 hover:border-white/40
                disabled:cursor-not-allowed disabled:opacity-30"
       >
@@ -424,7 +452,9 @@
                 <button
                   aria-label="Colour {colour} for {tag.name}"
                   disabled={offline}
+                  title={hint}
                   class="size-6 rounded-full border-2 transition
+                         disabled:cursor-not-allowed disabled:opacity-30
                          {tag.colour === colour
                     ? 'border-paper'
                     : 'border-transparent hover:border-white/40'}"
@@ -437,6 +467,7 @@
               {/each}
               <button
                 disabled={offline}
+                title={hint}
                 class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                        disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => (editingBands === tag.id ? (editingBands = null) : openBands(tag))}
@@ -445,6 +476,7 @@
               </button>
               <button
                 disabled={offline}
+                title={hint}
                 class="meta rounded-md border border-white/15 px-3 py-2 hover:border-ember
                        disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => removeTag(tag)}
@@ -589,6 +621,7 @@
         <button
           type="submit"
           disabled={offline || !newTag.trim()}
+          title={hint}
           class="meta rounded-md border border-white/15 px-4 py-2.5 hover:border-white/40
                  disabled:cursor-not-allowed disabled:opacity-30"
         >

@@ -2,6 +2,7 @@ import {
   catalogueOf,
   expect,
   grant,
+  installed,
   makeProject,
   makeTag,
   realQuestions,
@@ -57,26 +58,6 @@ async function seed(account) {
     }
   }
   return { backend, reading, work }
-}
-
-/**
- * Wait for the worker, so going offline is a test of the app and not of Chrome.
- *
- * Without this the reload races the worker's first install and fails as
- * `ERR_INTERNET_DISCONNECTED` — which looks like a broken app and is really a
- * test that cut the connection a moment too early.
- */
-async function installed(page) {
-  await expect
-    .poll(
-      () =>
-        page.evaluate(async () => {
-          const regs = await navigator.serviceWorker.getRegistrations()
-          return regs.some((one) => Boolean(one.active))
-        }),
-      { message: 'the service worker never activated', timeout: 15_000 }
-    )
-    .toBe(true)
 }
 
 /**
@@ -203,6 +184,29 @@ test('the administrative views are the ones that say no', async ({
   await expect(page.getByRole('button', { name: 'Add', exact: true }).first()).toBeDisabled()
   await expect(page.locator('[data-import-open]').first()).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Archive' }).first()).toBeDisabled()
+  // Edit too: it opens a drawer in which nothing can be changed, and a project
+  // has nothing about it that is editable without a connection.
+  await expect(page.getByRole('button', { name: 'Edit' }).first()).toBeDisabled()
+
+  // And each one says why for itself, for the pointer that arrives at a button
+  // having scrolled past the line above.
+  await expect(page.getByRole('button', { name: 'Archive' }).first()).toHaveAttribute(
+    'title',
+    /without a connection/
+  )
+
+  // A tag's colour swatches were the exception, and invisibly so: a coloured
+  // circle carries no text to grey and no border to dim, so `disabled` alone
+  // left them looking exactly as live as they had been. Read after the
+  // transition settles — sampled during one, the value is an interpolation.
+  const swatch = page.locator('[data-tag-row] button[aria-label^="Colour"]').first()
+  await expect(swatch).toBeDisabled()
+  await expect
+    .poll(
+      () => swatch.evaluate((node) => getComputedStyle(node).opacity),
+      { message: 'a disabled swatch still looked available' }
+    )
+    .not.toBe('1')
 
   // Nothing is queued for any of it: administration is online-only by design,
   // so there is no pretence that it will arrive later.
@@ -222,6 +226,29 @@ test('the administrative views are the ones that say no', async ({
     if (control) await expect(page.getByPlaceholder(control)).toBeDisabled()
   }
   await expect(page.getByRole('button', { name: 'Change password' })).toBeDisabled()
+
+  // Track is not administration and keeps working — but naming a new project
+  // is, and it sits on that page. The one control there that is not tracking.
+  await page.goto('/time')
+  await expect(page.getByLabel('Project name')).toBeDisabled()
+  await expect(page.getByLabel('Project name')).toHaveAttribute(
+    'title',
+    /without a connection/
+  )
+})
+
+test('a control disabled for its own reasons does not blame the connection', async ({
+  page,
+  account,
+}) => {
+  await makeProject(account, 'Backend')
+  await page.goto('/time/projects')
+
+  // Add is disabled on an empty name, online. Saying "not available without a
+  // connection" there would be the app explaining the wrong thing.
+  const add = page.getByRole('button', { name: 'Add', exact: true }).first()
+  await expect(add).toBeDisabled()
+  await expect(add).not.toHaveAttribute('title', /connection/)
 })
 
 test('recording still works while administration is refused', async ({

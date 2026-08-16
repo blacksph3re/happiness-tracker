@@ -154,11 +154,13 @@ To install everything, just build the Dockerfile and run through docker. You may
 - `ADMIN_PASSWORD` - **Required on a fresh install.** The password of the initial admin account. There is no default: an installation that forgets it fails to start rather than coming up with a guessable administrator. Only consulted while that account does not yet exist.
 - `BOOTSTRAP_QUESTION_CATALOGUE` - If you want to bootstrap an initial catalogue of questions as a default (0/1)
 - `JWT_SECRET` - **Required.** The key used to sign session tokens. The server refuses to start without one, because a generated key would sign every user out on each restart and give each worker of a multi-worker deployment a different key. Generate one with `python -c 'import secrets; print(secrets.token_urlsafe(48))'`.
+- `TOTP_ENCRYPTION_KEY` - **Required.** The key protecting stored two-factor secrets. Deliberately separate from `JWT_SECRET`: rotating the signing key is a routine act that signs everyone out, and if the two were one key it would also destroy every enrolment on the system. Demanded at startup rather than at first enrolment, so a deployment that forgets it fails loudly rather than at the moment somebody is trying to secure their account. Generate one with `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`. Losing it does not lock anybody out — the enrolments simply stop being recognised, and everyone signs in with their password and enrols again.
 - `ACCESS_TOKEN_TTL` - How long a session token stays valid before it has to be refreshed, by default 1h
 - `REFRESH_TOKEN_TTL` - How long a user stays logged in without re-entering their password, by default 30d
 - `PASSWORD_MIN_LENGTH` - Minimum length of a user password, by default 8
 - `LOGIN_MAX_ATTEMPTS` - Failed logins allowed for one username within `LOGIN_LOCKOUT_WINDOW` before further attempts are refused with `429`, by default 5
 - `LOGIN_LOCKOUT_WINDOW` - How long a failed login counts against a username, by default 15m. The counter lives in process memory, so a restart clears it
+- `DOCS_ENABLED` - Serve `/docs`, `/redoc` and `/openapi.json` (0/1), **off by default**. A deployment that leaves them on publishes its whole API surface to anyone who asks; set it in development, leave it unset in production. Code generation is unaffected either way, because `pnpm api:generate` reads the schema through `app.openapi()` rather than over HTTP
 
 After installation, you want to define the questions that will be answering regularly. Questions are grouped in catalogues and every user has a default catalogue that will be automatically opened when he/she logs in.
 
@@ -186,10 +188,30 @@ Prerequisites: [uv](https://docs.astral.sh/uv/) for the backend and [pnpm](https
 cd backend
 uv sync                      # first time only
 uv run alembic upgrade head  # first time, and after pulling new migrations
-JWT_SECRET=dev-secret ADMIN_PASSWORD=dev-admin-password uv run fastapi dev
+JWT_SECRET=dev-secret ADMIN_PASSWORD=dev-admin-password \
+  TOTP_ENCRYPTION_KEY=$(uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())') \
+  DOCS_ENABLED=1 uv run fastapi dev
 ```
 
-Both variables are required. `JWT_SECRET` has no default because a generated one would sign every user out on each restart and give each worker of a multi-worker deployment a different key. `ADMIN_PASSWORD` has none because an installation that forgets it should fail loudly rather than come up with a guessable administrator; it is only consulted when the account does not yet exist.
+`DOCS_ENABLED=1` puts the interactive API documentation back on http://localhost:8000/docs. It is off by default so that a deployment does not publish its API surface; development is the case it exists for.
+
+All three are required. `JWT_SECRET` has no default because a generated one would sign every user out on each restart and give each worker of a multi-worker deployment a different key. `ADMIN_PASSWORD` has none because an installation that forgets it should fail loudly rather than come up with a guessable administrator; it is only consulted when the account does not yet exist. `TOTP_ENCRYPTION_KEY` has none for the same reason as the signing key, and is checked at startup so the failure arrives at a moment somebody can do something about it.
+
+### Losing a second factor
+
+There are no recovery codes, by decision. An ordinary user who loses their phone is cleared by an administrator — **People → Clear second factor**, which also signs them out. An administrator who loses their own phone has nobody above them, so the way back in is a script run where the database lives:
+
+```bash
+cd backend && DB_STORAGE=/srv/database.db uv run python scripts/clear_totp.py <username>
+```
+
+Against the deployed container, whose runtime image has no shell, override the entrypoint to the interpreter:
+
+```bash
+docker compose run --rm --entrypoint /srv/.venv/bin/python app scripts/clear_totp.py <username>
+```
+
+It grants nothing new: anybody able to run it already has the database file. What it saves is doing surgery on that file by hand.
 
 The server does not create tables on its own either — starting against an unmigrated database fails with `no such table`, rather than quietly building a schema no migration accounts for. The admin account and the default catalogue *are* created on first start, once the tables exist.
 

@@ -1,9 +1,13 @@
 import {
+  catalogueOf,
   expect,
   expectSettled,
   makeProject,
   makeTag,
+  realQuestions,
   recordSession,
+  savesView,
+  seedAnswers,
   test,
   TODAY,
 } from './fixtures.js'
@@ -413,6 +417,36 @@ test('a session is added by naming its day', async ({ page, account }) => {
   await expect(page.locator('[data-day="2026-06-10"]')).toContainText(project.name)
 })
 
+test('clicking Add before the project list arrives still gets a project', async ({
+  page,
+  account,
+}) => {
+  await makeProject(account, 'The rewrite')
+
+  // Deterministic version of a race a heavily loaded machine hit on its own:
+  // `startAdding` reads `$projectStore` once, at the moment the panel opens,
+  // to preselect a project. Nothing revisited that snapshot afterward, so a
+  // click landing before `ensureProjects()` resolved left the panel on no
+  // project — and, with it, "Add session" permanently disabled, since that is
+  // exactly what its own guard reads. Held back here on purpose, rather than
+  // waiting for it to happen by chance.
+  let release
+  const held = new Promise((resolve) => (release = resolve))
+  await page.route('**/api/projects', async (route) => {
+    await held
+    await route.continue()
+  })
+
+  await page.goto('/time/record')
+  await page.locator('[data-add-session]').click()
+  await page.getByLabel('Day', { exact: true }).fill('2026-05-06')
+  await page.getByLabel('From', { exact: true }).fill('09:00')
+  await page.getByLabel('To', { exact: true }).fill('10:00')
+
+  release()
+  await expect(page.getByRole('button', { name: 'Add session' })).toBeEnabled()
+})
+
 test('a session added outside the loaded weeks brings its day into view', async ({
   page,
   account,
@@ -428,7 +462,13 @@ test('a session added outside the loaded weeks brings its day into view', async 
   await page.getByLabel('To', { exact: true }).fill('10:00')
   await page.getByRole('button', { name: 'Add session' }).click()
 
-  await expect(page.locator('[data-day-total="2026-05-06"]')).toHaveText('1h 00m')
+  // A real round trip, not a race with no defined end: widening the window
+  // asks the server for that summary fresh, and under a fully loaded machine
+  // running every worker's backend at once this occasionally outran the
+  // default budget. Sized for that, not for an unknown flake.
+  await expect(page.locator('[data-day-total="2026-05-06"]')).toHaveText('1h 00m', {
+    timeout: 15_000,
+  })
 })
 
 test('scrolling stops at the first day tracked', async ({ page, account }) => {
@@ -1210,6 +1250,91 @@ test('the landing page reports both halves and routes into them', async ({
 
   await page.locator('[data-card=wellbeing]').click()
   await expect(page).toHaveURL(/\/answer/)
+})
+
+test('a filter that leaves no days does not break the page', async ({ page, account }) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  const broken = []
+  page.on('pageerror', (error) => broken.push(error.message))
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'Week', exact: true }).click()
+  await page.getByRole('button', { name: /Only days where/ }).click()
+  // The pinned clock is Monday, so this week holds one day and it is not a
+  // Tuesday. The strip is then asked to draw a range with no ends to it.
+  await page.getByRole('button', { name: 'Tue', exact: true }).click()
+
+  await expect(page.getByText('Nothing tracked on these days.')).toBeVisible()
+  await expect.poll(() => broken, 'the page threw').toEqual([])
+  // Still answering, rather than half-rendered behind an exception.
+  await expect(page.getByRole('button', { name: /Only days where/ })).toContainText(
+    '0 of 1 days'
+  )
+})
+
+test('the time patterns come back the way they were left', async ({ page, account }) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  await recordSession(account, project.id, '2026-06-09T09:00:00', '2026-06-09T12:00:00')
+
+  await page.goto('/time/patterns')
+  await expect(page.locator('[data-period]')).toBeVisible()
+  // The first visit stores the defaults it just chose; let that settle so what
+  // follows is a change rather than a race with it.
+  await page.waitForTimeout(900)
+
+  await page.getByRole('button', { name: 'By tag' }).click()
+  await page.getByRole('button', { name: 'Week', exact: true }).click()
+  await page.getByRole('button', { name: /Only days where/ }).click()
+  await savesView(page, () =>
+    page.getByRole('button', { name: 'Tue', exact: true }).click()
+  )
+
+  await page.reload()
+  await expect(page.locator('[data-period]')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Week', exact: true })).toHaveClass(
+    /border-ember/
+  )
+  await expect(page.getByRole('button', { name: 'By tag' })).toHaveClass(/border-ember/)
+  await expect(page.getByRole('button', { name: /Only days where/ })).toContainText(
+    'of 1 days'
+  )
+
+  // The shape of the view, not the position in it: reopening shows the present,
+  // which is the week that has no week after it.
+  await expect(page.getByRole('button', { name: 'Next →' })).toBeDisabled()
+})
+
+test('the two halves remember their views without overwriting each other', async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  // The stats page needs something to plot before it offers a view to choose.
+  const catalogue = await catalogueOf(account.api)
+  await seedAnswers(account.api, realQuestions(catalogue).slice(0, 2), [TODAY])
+
+  await page.goto('/time/patterns')
+  await expect(page.locator('[data-period]')).toBeVisible()
+  await savesView(page, () =>
+    page.getByRole('button', { name: 'Week', exact: true }).click()
+  )
+
+  // One document per account, so a page that wrote the whole of it would throw
+  // away what the other half had put there.
+  await page.goto('/stats')
+  await expect(page.getByRole('button', { name: 'Spread' })).toBeVisible()
+  await savesView(page, () => page.getByRole('button', { name: 'Spread' }).click())
+
+  await page.goto('/time/patterns')
+  await expect(page.getByRole('button', { name: 'Week', exact: true })).toHaveClass(
+    /border-ember/
+  )
+  await page.goto('/stats')
+  await expect(page.getByRole('button', { name: 'Spread' })).toHaveClass(/border-ember/)
 })
 
 test('the mark names the half you are in, and nothing when you are in neither', async ({

@@ -1,6 +1,6 @@
 import { test as base, expect, request } from '@playwright/test'
 
-import { ADMIN, BASE_URL, DEFAULT_CATALOGUE, NOW, TODAY } from '../playwright.config.js'
+import { ADMIN, DEFAULT_CATALOGUE, NOW, TODAY, baseUrlFor } from '../playwright.config.js'
 
 export { expect, TODAY }
 
@@ -14,21 +14,34 @@ export async function login(context, username, password) {
 }
 
 /** Build an API context that authenticates as the given token holder. */
-async function contextFor(token) {
+async function contextFor(baseURL, token) {
   return request.newContext({
-    baseURL: BASE_URL,
+    baseURL,
     extraHTTPHeaders: token ? { Authorization: `Bearer ${token}` } : {},
   })
 }
 
 export const test = base.extend({
+  /**
+   * Which worker's backend this test talks to.
+   *
+   * Overrides Playwright's own `baseURL` fixture, which is what makes a
+   * relative `page.goto('/time')` and every fixture below land on the right
+   * server without each having to ask for a port. One server per worker, not
+   * per test, is what `global-setup.js` built — this is the other half of
+   * that: routing each test to the one its worker owns.
+   */
+  baseURL: async ({}, use, testInfo) => {
+    await use(baseUrlFor(testInfo.parallelIndex))
+  },
+
   /** An API context signed in as the bootstrapped administrator. */
-  admin: async ({}, use) => {
-    const anonymous = await request.newContext({ baseURL: BASE_URL })
+  admin: async ({ baseURL }, use) => {
+    const anonymous = await request.newContext({ baseURL })
     const tokens = await login(anonymous, ADMIN.username, ADMIN.password)
     await anonymous.dispose()
 
-    const context = await contextFor(tokens.access_token)
+    const context = await contextFor(baseURL, tokens.access_token)
     await use(context)
     await context.dispose()
   },
@@ -37,9 +50,12 @@ export const test = base.extend({
    * A freshly created account, unique to this test.
    *
    * Answers are per-user, so giving every test its own account is what lets
-   * them share one database without seeing each other's data.
+   * them share one database without seeing each other's data. Named with the
+   * worker index too, even though each worker now has its own database: a
+   * worker that crashes and restarts keeps the slot but starts this counter
+   * over, and the index is what stops the two generations colliding.
    */
-  account: async ({ admin }, use, testInfo) => {
+  account: async ({ admin, baseURL }, use, testInfo) => {
     sequence += 1
     const username = `e2e-${testInfo.workerIndex}-${sequence}`
     const password = 'e2e-user-password'
@@ -61,11 +77,11 @@ export const test = base.extend({
     })
     expect(created.ok(), await created.text()).toBeTruthy()
 
-    const anonymous = await request.newContext({ baseURL: BASE_URL })
+    const anonymous = await request.newContext({ baseURL })
     const tokens = await login(anonymous, username, password)
     await anonymous.dispose()
 
-    const api = await contextFor(tokens.access_token)
+    const api = await contextFor(baseURL, tokens.access_token)
     await use({ ...(await created.json()), username, password, tokens, api })
     await api.dispose()
   },
@@ -243,6 +259,28 @@ export function recentDays(count, end = TODAY) {
 }
 
 /**
+ * Wait for the worker, so going offline is a test of the app and not of Chrome.
+ *
+ * Without this the reload races the worker's first install and fails as
+ * `ERR_INTERNET_DISCONNECTED` — which looks like a broken app and is really a
+ * test that cut the connection a moment too early.
+ *
+ * @param {import('@playwright/test').Page} page
+ */
+export async function installed(page) {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async () => {
+          const regs = await navigator.serviceWorker.getRegistrations()
+          return regs.some((one) => Boolean(one.active))
+        }),
+      { message: 'the service worker never activated', timeout: 15_000 }
+    )
+    .toBe(true)
+}
+
+/**
  * Create a project for the signed-in account and return it.
  *
  * Projects are per-user, so unlike catalogues there is nothing shared to
@@ -296,6 +334,30 @@ export async function recordSession(account, projectId, startedAt, endedAt, offs
   const [result] = (await response.json()).results
   expect(result.outcome, JSON.stringify(result)).toBe('applied')
   return { ...result.entry, client_id }
+}
+
+/**
+ * Run something and wait for the view state it changes to reach the server.
+ *
+ * The save is debounced by 600ms, so every caller used to sleep for 900 and
+ * hope. Waiting for the request itself is both quicker and steadier: it returns
+ * the moment the save lands rather than always burning the worst case, and it
+ * cannot pass by accident on a slow machine where 900ms was not enough.
+ *
+ * Only for asserting that a save *happened*. A test claiming nothing was sent
+ * has to wait out a real interval — there is no event for the absence of one.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {() => Promise<void>} act What changes the view state.
+ */
+export async function savesView(page, act) {
+  const landed = page.waitForResponse(
+    (response) =>
+      response.url().includes('/api/me/preferences') &&
+      response.request().method() === 'PUT'
+  )
+  await act()
+  await landed
 }
 
 /**

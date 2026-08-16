@@ -98,10 +98,36 @@ class User(Base):
     adding a control there does not require a migration here.
     """
 
-    default_catalogue: Mapped["Catalogue | None"] = relationship()
+    totp_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    """Encrypted base32 shared secret, or None when enrolment has never begun.
+
+    Encrypted rather than hashed, unlike a password: the server has to recover
+    the plaintext to compute the code it expects. Long enough for a Fernet
+    token, which is substantially larger than the secret it wraps.
+    """
+
+    totp_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When enrolment was completed by proving a code.
+
+    Separate from `totp_secret` on purpose, and load-bearing: the secret is
+    written the moment enrolment *starts*. If its presence gated login, someone
+    who generated a QR code and closed the tab would be locked out of their own
+    account. NULL means the secret exists but must not be demanded.
+    """
+
+    totp_last_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Highest time-step already spent, so a code cannot be replayed.
+
+    A 30-second code stays valid for 30 seconds, and anyone who observes one
+    can present it again inside that window. Recording the step it belongs to
+    makes each code strictly single-use. State rather than a derivation, so the
+    rule about computing on read does not apply.
+    """
+
+    default_catalogue: Mapped[Catalogue | None] = relationship()
     """The catalogue referenced by `default_catalogue_id`."""
 
-    answers: Mapped[list["Answer"]] = relationship(
+    answers: Mapped[list[Answer]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
     """Every answer this user has recorded. Deleted along with the user."""
@@ -123,7 +149,7 @@ class Catalogue(Base):
     )
     """Timestamp set by the database when the row is inserted."""
 
-    questions: Mapped[list["Question"]] = relationship(
+    questions: Mapped[list[Question]] = relationship(
         back_populates="catalogue",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -206,10 +232,10 @@ class Question(Base):
     max_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     """Description of the upper bound, such as ``"High"``."""
 
-    catalogue: Mapped["Catalogue"] = relationship(back_populates="questions")
+    catalogue: Mapped[Catalogue] = relationship(back_populates="questions")
     """The catalogue this question belongs to."""
 
-    options: Mapped[list["QuestionOption"]] = relationship(
+    options: Mapped[list[QuestionOption]] = relationship(
         back_populates="question",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -217,7 +243,7 @@ class Question(Base):
     )
     """Choices for an enum question, in display order."""
 
-    components: Mapped[list["ScoreComponent"]] = relationship(
+    components: Mapped[list[ScoreComponent]] = relationship(
         back_populates="score",
         foreign_keys="ScoreComponent.score_question_id",
         cascade="all, delete-orphan",
@@ -278,7 +304,7 @@ class QuestionOption(Base):
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     """Sort order within the question."""
 
-    question: Mapped["Question"] = relationship(back_populates="options")
+    question: Mapped[Question] = relationship(back_populates="options")
     """The question this option belongs to."""
 
 
@@ -308,12 +334,12 @@ class ScoreComponent(Base):
     weight: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     """Multiplier applied to the answer before combining."""
 
-    score: Mapped["Question"] = relationship(
+    score: Mapped[Question] = relationship(
         back_populates="components", foreign_keys=[score_question_id]
     )
     """The score this component belongs to."""
 
-    source: Mapped["Question"] = relationship(foreign_keys=[source_question_id])
+    source: Mapped[Question] = relationship(foreign_keys=[source_question_id])
     """The question this component reads."""
 
 
@@ -384,13 +410,13 @@ class Answer(Base):
     is the time it actually arrived.
     """
 
-    user: Mapped["User"] = relationship(back_populates="answers")
+    user: Mapped[User] = relationship(back_populates="answers")
     """The user who gave this answer."""
 
-    question: Mapped["Question"] = relationship()
+    question: Mapped[Question] = relationship()
     """The question this answer responds to."""
 
-    option: Mapped["QuestionOption | None"] = relationship()
+    option: Mapped[QuestionOption | None] = relationship()
     """The option chosen, for enum questions."""
 
 
@@ -439,10 +465,10 @@ class Project(Base):
     )
     """Timestamp set by the database when the row is inserted."""
 
-    user: Mapped["User"] = relationship()
+    user: Mapped[User] = relationship()
     """The owner."""
 
-    tags: Mapped[list["Tag"]] = relationship(
+    tags: Mapped[list[Tag]] = relationship(
         secondary="project_tags", back_populates="projects"
     )
     """Labels covering this project. Several are allowed."""
@@ -471,12 +497,12 @@ class Tag(Base):
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     """Sort order in the tag grouping."""
 
-    projects: Mapped[list["Project"]] = relationship(
+    projects: Mapped[list[Project]] = relationship(
         secondary="project_tags", back_populates="tags"
     )
     """Projects this tag covers."""
 
-    bands: Mapped[list["DeductionBand"]] = relationship(
+    bands: Mapped[list[DeductionBand]] = relationship(
         cascade="all, delete-orphan", passive_deletes=True
     )
     """The rule turning this tag's tracked time into reported time."""
@@ -643,5 +669,5 @@ class TimeEntry(Base):
     )
     """Timestamp set on insert and refreshed on every update."""
 
-    project: Mapped["Project"] = relationship()
+    project: Mapped[Project] = relationship()
     """The project this session counts towards."""

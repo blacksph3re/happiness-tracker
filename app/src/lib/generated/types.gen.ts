@@ -169,6 +169,42 @@ export type LoginRequest = {
 };
 
 /**
+ * LoginResult
+ *
+ * What a username and password bought: either tokens, or a challenge.
+ *
+ * One model with a ``status`` discriminator rather than a union of two: the
+ * TypeScript client is generated from this schema, and a union survives
+ * codegen far less cleanly than a field the caller switches on.
+ */
+export type LoginResult = {
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Access Token
+     */
+    access_token?: string | null;
+    /**
+     * Refresh Token
+     */
+    refresh_token?: string | null;
+    /**
+     * Token Type
+     */
+    token_type?: string | null;
+    /**
+     * Expires In
+     */
+    expires_in?: number | null;
+    /**
+     * Totp Token
+     */
+    totp_token?: string | null;
+};
+
+/**
  * MeOut
  *
  * The signed-in account, plus the rules its own forms have to obey.
@@ -201,6 +237,10 @@ export type MeOut = {
      * Password Min Length
      */
     password_min_length: number;
+    /**
+     * Totp Enabled
+     */
+    totp_enabled: boolean;
 };
 
 /**
@@ -851,6 +891,50 @@ export type TokenPair = {
 };
 
 /**
+ * TotpChallenge
+ *
+ * The second step of a login.
+ */
+export type TotpChallenge = {
+    /**
+     * Totp Token
+     */
+    totp_token: string;
+    /**
+     * Code
+     */
+    code: string;
+};
+
+/**
+ * TotpCode
+ *
+ * A code proving possession of the enrolled device.
+ */
+export type TotpCode = {
+    /**
+     * Code
+     */
+    code: string;
+};
+
+/**
+ * TotpEnrolment
+ *
+ * What an authenticator app needs to start holding an account.
+ */
+export type TotpEnrolment = {
+    /**
+     * Secret
+     */
+    secret: string;
+    /**
+     * Otpauth Uri
+     */
+    otpauth_uri: string;
+};
+
+/**
  * TrackedRange
  *
  * The first and last local day a user has any session on.
@@ -1077,10 +1161,35 @@ export type LoginResponses = {
     /**
      * Successful Response
      */
-    200: TokenPair;
+    200: LoginResult;
 };
 
 export type LoginResponse = LoginResponses[keyof LoginResponses];
+
+export type LoginTotpData = {
+    body: TotpChallenge;
+    path?: never;
+    query?: never;
+    url: '/api/login/totp';
+};
+
+export type LoginTotpErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type LoginTotpError = LoginTotpErrors[keyof LoginTotpErrors];
+
+export type LoginTotpResponses = {
+    /**
+     * Successful Response
+     */
+    200: TokenPair;
+};
+
+export type LoginTotpResponse = LoginTotpResponses[keyof LoginTotpResponses];
 
 export type RefreshAccessTokenData = {
     body: RefreshRequest;
@@ -1214,6 +1323,72 @@ export type SetMyDefaultCatalogueResponses = {
 
 export type SetMyDefaultCatalogueResponse = SetMyDefaultCatalogueResponses[keyof SetMyDefaultCatalogueResponses];
 
+export type DisableTotpData = {
+    body: TotpCode;
+    path?: never;
+    query?: never;
+    url: '/api/me/totp';
+};
+
+export type DisableTotpErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DisableTotpError = DisableTotpErrors[keyof DisableTotpErrors];
+
+export type DisableTotpResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DisableTotpResponse = DisableTotpResponses[keyof DisableTotpResponses];
+
+export type BeginTotpEnrolmentData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/me/totp';
+};
+
+export type BeginTotpEnrolmentResponses = {
+    /**
+     * Successful Response
+     */
+    200: TotpEnrolment;
+};
+
+export type BeginTotpEnrolmentResponse = BeginTotpEnrolmentResponses[keyof BeginTotpEnrolmentResponses];
+
+export type ConfirmTotpEnrolmentData = {
+    body: TotpCode;
+    path?: never;
+    query?: never;
+    url: '/api/me/totp/confirm';
+};
+
+export type ConfirmTotpEnrolmentErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ConfirmTotpEnrolmentError = ConfirmTotpEnrolmentErrors[keyof ConfirmTotpEnrolmentErrors];
+
+export type ConfirmTotpEnrolmentResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type ConfirmTotpEnrolmentResponse = ConfirmTotpEnrolmentResponses[keyof ConfirmTotpEnrolmentResponses];
+
 export type ListUsersData = {
     body?: never;
     path?: never;
@@ -1346,6 +1521,36 @@ export type ResetUserPasswordResponses = {
 };
 
 export type ResetUserPasswordResponse = ResetUserPasswordResponses[keyof ResetUserPasswordResponses];
+
+export type ClearUserTotpData = {
+    body?: never;
+    path: {
+        /**
+         * User Id
+         */
+        user_id: number;
+    };
+    query?: never;
+    url: '/api/users/{user_id}/totp';
+};
+
+export type ClearUserTotpErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ClearUserTotpError = ClearUserTotpErrors[keyof ClearUserTotpErrors];
+
+export type ClearUserTotpResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type ClearUserTotpResponse = ClearUserTotpResponses[keyof ClearUserTotpResponses];
 
 export type ListCataloguesData = {
     body?: never;

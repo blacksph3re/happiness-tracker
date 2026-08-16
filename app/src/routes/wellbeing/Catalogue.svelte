@@ -1,5 +1,5 @@
 <script>
-  import AdminOffline from '../../lib/AdminOffline.svelte'
+  import AdminOffline, { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
   import QuestionForm from '../../lib/wellbeing/QuestionForm.svelte'
   import ScoreForm from '../../lib/wellbeing/ScoreForm.svelte'
   import { attempt, unwrap } from '../../lib/api.js'
@@ -27,6 +27,9 @@
   let detail = $state(null)
   /** Questions are shared by everyone, so none of this queues — see AdminOffline. */
   const offline = $derived($connection !== 'online')
+
+  /** Set on every control the connection is holding down, and on no other. */
+  const hint = $derived(offline ? OFFLINE_HINT : undefined)
 
   let loading = $state(true)
   let newName = $state('')
@@ -384,6 +387,7 @@
           class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                  disabled:opacity-30"
           disabled={offline || !renameValue.trim()}
+          title={hint}
           onclick={renameCatalogue}
         >
           Save
@@ -410,6 +414,7 @@
           {#if selectedId}
             <button
               disabled={offline}
+              title={hint}
               class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                      disabled:cursor-not-allowed disabled:opacity-40"
               onclick={startRename}
@@ -421,12 +426,14 @@
             bind:value={newName}
             placeholder="New catalogue"
             disabled={offline}
+            title={hint}
             class="rounded-md border border-white/15 bg-ink-soft px-3 py-2 text-sm"
           />
           <button
             class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                    disabled:opacity-30"
             disabled={offline || !newName.trim()}
+            title={hint}
             onclick={addCatalogue}
           >
             Add
@@ -453,6 +460,7 @@
                        disabled:cursor-not-allowed disabled:opacity-30"
                 aria-label="Move {question.prompt} earlier"
                 disabled={offline || position === 0}
+                title={hint}
                 onclick={() => move(question, -1)}
               >
                 ↑
@@ -462,6 +470,7 @@
                        disabled:cursor-not-allowed disabled:opacity-30"
                 aria-label="Move {question.prompt} later"
                 disabled={offline || position === questions.length - 1}
+                title={hint}
                 onclick={() => move(question, 1)}
               >
                 ↓
@@ -469,6 +478,7 @@
             </span>
             <button
               disabled={offline}
+              title={hint}
               class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                      disabled:cursor-not-allowed disabled:opacity-40"
               onclick={() => edit(question)}
@@ -477,6 +487,7 @@
             </button>
             <button
               disabled={offline}
+              title={hint}
               class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                      disabled:cursor-not-allowed disabled:opacity-40"
               onclick={() => setActive(question, !question.active)}
@@ -524,6 +535,7 @@
             <div class="flex shrink-0 items-center gap-2">
               <button
                 disabled={offline}
+                title={hint}
                 class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                      disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => {
@@ -535,6 +547,7 @@
               </button>
               <button
                 disabled={offline}
+                title={hint}
                 class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                      disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => setScoreActive(score, !score.active)}
@@ -543,6 +556,7 @@
               </button>
               <button
                 disabled={offline}
+                title={hint}
                 class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                      disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => removeScore(score)}
@@ -578,6 +592,7 @@
           class="meta mt-3 rounded-md border border-white/15 px-4 py-2 hover:border-white/40
                  disabled:cursor-not-allowed disabled:opacity-30"
           disabled={offline || scorable.length === 0}
+          title={hint}
           onclick={() => {
             editingScore = null
             scoreDraft = toScoreDraft(null)

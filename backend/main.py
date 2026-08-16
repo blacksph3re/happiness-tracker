@@ -36,9 +36,11 @@ async def lifespan(app: FastAPI):
         Control returns to the server for the lifetime of the application.
     """
     settings = get_settings()
-    # Touched here so a missing signing key stops the server on startup rather
-    # than surfacing as a 500 on whoever tries to log in first.
+    # Touched here so a missing key stops the server on startup rather than
+    # surfacing as a 500 on whoever tries to log in — or, worse for the second
+    # one, on whoever tries to enrol a second factor.
     settings.signing_key  # noqa: B018  - the read itself is the check
+    settings.totp_key  # noqa: B018  - the read itself is the check
     with SessionLocal() as db:
         bootstrap(db, settings)
     yield
@@ -72,7 +74,19 @@ API_TAGS = [
 ]
 """Tag descriptions, in the order the documentation should present them."""
 
+_DOCS_ENABLED = get_settings().docs_enabled
+"""Whether this process serves its own API documentation.
+
+Read once, here, because the routes are declared when the application object is
+built: a later change to the environment could not take effect anyway.
+"""
+
 app = FastAPI(
+    # None removes the route entirely rather than guarding it, so there is no
+    # handler left to reach by a path the guard did not anticipate.
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
     title="Daily Tracker API",
     version=auth.APP_VERSION,
     summary="Track satisfaction with work, life or whatever in regular questionnaires.",

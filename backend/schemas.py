@@ -48,6 +48,66 @@ class TokenPair(BaseModel):
     """Seconds until `access_token` expires."""
 
 
+class LoginResult(BaseModel):
+    """What a username and password bought: either tokens, or a challenge.
+
+    One model with a ``status`` discriminator rather than a union of two: the
+    TypeScript client is generated from this schema, and a union survives
+    codegen far less cleanly than a field the caller switches on.
+    """
+
+    status: str
+    """``complete`` when the tokens are here, ``totp_required`` when they are not."""
+
+    access_token: str | None = None
+    """Bearer token presented on subsequent requests. Null while a factor is due."""
+
+    refresh_token: str | None = None
+    """Token accepted only by the refresh endpoint. Null while a factor is due."""
+
+    token_type: str | None = None
+    """Always ``bearer`` when tokens are present."""
+
+    expires_in: int | None = None
+    """Seconds until `access_token` expires."""
+
+    totp_token: str | None = None
+    """Short-lived proof that the password step was passed.
+
+    Authorises exactly one thing: presenting a second factor. Worthless as a
+    bearer credential, and worthless at all after five minutes."""
+
+
+class TotpChallenge(BaseModel):
+    """The second step of a login."""
+
+    totp_token: str
+    """The token handed out by the password step."""
+
+    code: str = Field(min_length=1, max_length=16)
+    """The digits from the authenticator app."""
+
+
+class TotpEnrolment(BaseModel):
+    """What an authenticator app needs to start holding an account."""
+
+    secret: str
+    """The base32 shared secret, for typing in where a camera is not available."""
+
+    otpauth_uri: str
+    """The `otpauth://` URI, rendered as a QR code by the browser.
+
+    Rendered client-side on purpose: an image built by the server is an image
+    of the secret, and one the browser may keep."""
+
+
+class TotpCode(BaseModel):
+    """A code proving possession of the enrolled device."""
+
+    code: str = Field(min_length=1, max_length=16)
+    """The digits from the authenticator app."""
+
+
 class AccessToken(BaseModel):
     """A newly minted access token returned by the refresh endpoint."""
 
@@ -91,6 +151,12 @@ class MeOut(UserOut):
 
     password_min_length: int
     """Shortest password the server will accept, so forms can say so up front."""
+
+    totp_enabled: bool
+    """Whether a confirmed second factor is in force on this account.
+
+    Enrolment begun and abandoned reads as False, which is the same thing login
+    believes — one answer about a half-finished enrolment, not two."""
 
 
 def _password_field() -> FieldInfo:
@@ -178,7 +244,7 @@ class Preferences(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     @model_validator(mode="after")
-    def _within_size_limit(self) -> "Preferences":
+    def _within_size_limit(self) -> Preferences:
         """Reject a document too large to be view state.
 
         Returns

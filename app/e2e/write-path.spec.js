@@ -81,8 +81,21 @@ test('an unreachable server is reported as such, not as a null dereference', asy
   // response at all to hand back. Reading `.status` off that reported
   // "Cannot read properties of undefined" to the user, which names an internal
   // mistake rather than the thing that actually went wrong.
+  //
+  // Waited for by name, not just by the heading: the heading renders before
+  // `ensureProjects`/`ensureTags` settle, and on a loaded machine those can
+  // still be in flight when the route below goes in. Installed then, it
+  // catches the page's own mount fetches along with the one this test means
+  // to abort — the app reports itself offline before the click even happens,
+  // and the Add button is disabled for a true but different reason than the
+  // one under test.
+  const initialLoad = Promise.all([
+    page.waitForResponse((response) => response.url().includes('/api/projects')),
+    page.waitForResponse((response) => response.url().includes('/api/tags')),
+  ])
   await page.goto('/time/projects')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Projects')
+  await initialLoad
 
   await page.route('**/api/**', (route) => route.abort('connectionrefused'))
   await page.getByLabel('New project').fill('Offline project')

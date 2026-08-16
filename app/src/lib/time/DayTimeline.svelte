@@ -231,13 +231,20 @@
   const loaded = resource(
     () => ({ from: shown[0], to: shown.at(-1) }),
     ({ from, to }) =>
-      Promise.all([
-        ensureProjects(),
-        ensureTimeEntries({
-          start: shiftDay(from, -NEIGHBOURS),
-          end: shiftDay(to, NEIGHBOURS),
-        }),
-      ]),
+      // A run of days can be empty — a filter narrowing a week to a weekday it
+      // does not contain leaves nothing at all — and a range with no ends is
+      // not a range. Asking anyway threw inside `shiftDay`, mid-render, which
+      // left the page half drawn behind an exception rather than showing the
+      // empty week it was asked for.
+      from === undefined
+        ? ensureProjects()
+        : Promise.all([
+            ensureProjects(),
+            ensureTimeEntries({
+              start: shiftDay(from, -NEIGHBOURS),
+              end: shiftDay(to, NEIGHBOURS),
+            }),
+          ]),
     { name: 'timeline' }
   )
 

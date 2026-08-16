@@ -89,6 +89,17 @@ summary {
   cursor: pointer;
 }
 
+/* A disabled control still has to be able to say why it is disabled. Browsers
+   suppress pointer events on disabled form controls, and with them the `title`
+   tooltip — so a button explaining itself offline would explain itself to
+   nobody. Restored only where a title is actually set, so nothing else about a
+   disabled control changes. */
+button[title]:disabled,
+input[title]:disabled,
+select[title]:disabled {
+  pointer-events: auto;
+}
+
 /* Metadata, labels and anything tabular reads as instrument output. */
 .meta {
   font-family: var(--font-meta);

@@ -9,13 +9,15 @@
     scatterOptions,
   } from '../../lib/chart-options.js'
   import { fiveNumberSummary, movingAverage, tallyPairs } from '../../lib/series.js'
+  import { plotWindow } from '../../lib/timeline.js'
   import {
     ensureAnswers,
     ensurePreferences,
+    preferenceSection,
     ensureVariables,
     persistPreferences,
   } from '../../lib/store.js'
-  import { dayLabel, shiftDay } from '../../lib/day.js'
+  import { dayLabel } from '../../lib/day.js'
 
   let variables = $state([])
   let rows = $state([])
@@ -88,7 +90,7 @@
     scatterY = axes[1]?.key ?? axes[0]?.key ?? ''
     chosen = new Set(axes.filter((v) => v.origin === 'asked').map((v) => v.key))
 
-    const stored = (await ensurePreferences()) ?? {}
+    const stored = preferenceSection(await ensurePreferences(), 'stats')
     if (stored.view) view = stored.view
     if (Array.isArray(stored.chosen)) chosen = new Set(stored.chosen)
     if (Number.isFinite(stored.windowDays)) windowDays = stored.windowDays
@@ -129,7 +131,7 @@
     const current = snapshot()
     // The store drops a save that matches what is already stored, so arriving
     // on this page and applying the state it just loaded writes nothing.
-    if (ready) persistPreferences(current)
+    if (ready) persistPreferences('stats', current)
   })
 
   /** Map a variable to {day: value}, merging every question id behind it. */
@@ -243,63 +245,33 @@
     )
   })
 
-  // `days` holds only the days that carry answers, which is what the other
-  // views and the counters want. The timeline needs every calendar day in
-  // between as well: without them a fortnight of not tracking collapses into a
-  // single tick and the axis reads as though no time passed.
-  const timelineDays = $derived.by(() => {
-    if (days.length === 0) return []
-    const all = []
-    for (let cursor = days[0]; cursor <= days.at(-1); cursor = shiftDay(cursor, 1)) {
-      all.push(cursor)
-    }
-    return all
-  })
-
-  // Half a span, which is how far past each edge a centred average has to see.
+  // Half a span, which is how far past each edge a centred average has to see —
+  // counted in readings, not in calendar days. See `plotWindow`.
   const smoothingPad = $derived(smoothing > 1 ? Math.floor((smoothing - 1) / 2) : 0)
 
-  /**
-   * The timeline with half a span of real days added at each end.
-   *
-   * The average is computed over this and the padding is then cut off, so the
-   * value drawn at the edge of the window is a full average of the days either
-   * side of it rather than an average of the half that happens to be visible.
-   */
-  const paddedTimeline = $derived.by(() => {
-    if (timelineDays.length === 0) return []
-    const all = []
-    const last = shiftDay(timelineDays.at(-1), smoothingPad)
-    for (
-      let cursor = shiftDay(timelineDays[0], -smoothingPad);
-      cursor <= last;
-      cursor = shiftDay(cursor, 1)
-    ) {
-      all.push(cursor)
-    }
-    return all
-  })
+  /** Whether the filters in force admit a day at all. */
+  const admits = $derived(
+    (day) => activeFilters.every(([key, values]) => values.has(facetTags[key]?.[day]))
+  )
 
   /**
-   * Which days the average may draw on: the window, plus any day in the padding
-   * that carries an answer and passes the filters.
+   * The axis, and the run of readings the average is taken over.
    *
-   * Days excluded by a filter stay excluded beyond the edge too, or "weekends
-   * only" would quietly average in the weekdays around them.
+   * `days` holds only the days that carry answers, which is what the other
+   * views and the counters want. The line needs the days between them as well,
+   * so a fortnight of not answering keeps its width — but only the days the
+   * filters are asking about, or an average over "Saturdays" is really an
+   * average over one Saturday and six days it was told to ignore.
    */
-  const smoothingReach = $derived.by(() => {
-    const reach = new Set(days)
-    if (smoothingPad === 0 || paddedTimeline.length === 0) return reach
-    const first = paddedTimeline[0]
-    const last = paddedTimeline.at(-1)
-    for (const day of allDays) {
-      if (day < first || day > last || reach.has(day)) continue
-      if (activeFilters.every(([key, values]) => values.has(facetTags[key]?.[day]))) {
-        reach.add(day)
-      }
-    }
-    return reach
-  })
+  const timeline = $derived(
+    plotWindow({ days, allDays, admits, pad: smoothingPad })
+  )
+
+  const timelineDays = $derived(timeline.shown)
+  const paddedTimeline = $derived(timeline.padded)
+
+  /** Which days the average may draw on: everything the padded run holds. */
+  const smoothingReach = $derived(new Set(paddedTimeline))
 
   $effect(() => {
     if (smoothing > maxSmoothing) smoothing = maxSmoothing
@@ -323,9 +295,10 @@
       const averaged = movingAverage(raw, smoothing)
       return {
         name: variable.label,
-        data: smoothingPad
-          ? averaged.slice(smoothingPad, raw.length - smoothingPad)
-          : averaged,
+        // Trimmed by what was actually added, which is not always half a span:
+        // at the start of the history there is nothing before the first day to
+        // pad with, and slicing a fixed amount off cut into the data instead.
+        data: averaged.slice(timeline.lead, averaged.length - timeline.tail),
       }
     })
   )
@@ -560,8 +533,16 @@
         </label>
         {#if view === 'line'}
           <label class="flex flex-col gap-2">
+            <!-- Named for what it actually averages. With a filter on, the
+                 seven days are seven Saturdays rather than a week, and calling
+                 that a seven-day average would be the page saying something
+                 that is not true of the line beside it. -->
             <span class="meta">
-              Smoothing · {smoothing === 1 ? 'every answer' : `${smoothing}-day average`}
+              Smoothing · {smoothing === 1
+                ? 'every answer'
+                : activeFilters.length
+                  ? `${smoothing} kept days averaged`
+                  : `${smoothing}-day average`}
             </span>
             <input
               type="range"

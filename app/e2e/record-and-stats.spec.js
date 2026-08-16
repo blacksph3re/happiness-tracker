@@ -3,6 +3,7 @@ import {
   expect,
   realQuestions,
   recentDays,
+  savesView,
   seedAnswers,
   test,
   TODAY,
@@ -144,9 +145,12 @@ test('every stats view renders, and the controls survive a reload', async ({
   }
 
   // The chosen view is remembered across a reload.
-  await page.getByRole('button', { name: 'Correlation' }).click()
-  await expect(page.getByRole('button', { name: 'Correlation' })).toHaveClass(/border-ember/)
-  await page.waitForTimeout(900) // the preference save is debounced
+  await savesView(page, () =>
+    page.getByRole('button', { name: 'Correlation' }).click()
+  )
+  await expect(page.getByRole('button', { name: 'Correlation' })).toHaveClass(
+    /border-ember/
+  )
   await page.reload()
   await expect(page.getByRole('button', { name: 'Correlation' })).toHaveClass(/border-ember/)
 })
@@ -216,8 +220,7 @@ test('revisiting the stats page makes no requests, and saves only on a change', 
   expect(calls, 'a revisit should cost nothing').toEqual([])
 
   // An actual change is saved, once.
-  await page.getByRole('button', { name: 'Spread' }).click()
-  await page.waitForTimeout(900)
+  await savesView(page, () => page.getByRole('button', { name: 'Spread' }).click())
   expect(calls).toEqual(['PUT /api/me/preferences'])
 
   // And it survives a reload.

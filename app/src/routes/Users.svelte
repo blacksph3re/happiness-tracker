@@ -1,14 +1,24 @@
 <script>
-  import AdminOffline from '../lib/AdminOffline.svelte'
+  import AdminOffline, { OFFLINE_HINT } from '../lib/AdminOffline.svelte'
   import { attempt, unwrap } from '../lib/api.js'
   import { resource } from '../lib/resource.svelte.js'
-  import { createUser as createUserCall, deleteUser, listUsers, resetUserPassword, updateUser } from '../lib/generated/sdk.gen'
+  import {
+    clearUserTotp,
+    createUser as createUserCall,
+    deleteUser,
+    listUsers,
+    resetUserPassword,
+    updateUser,
+  } from '../lib/generated/sdk.gen'
   import { ensureCatalogues, ensureMe } from '../lib/store.js'
   import { connection } from '../lib/sync.js'
   import { pushToast } from '../lib/toasts.js'
 
   /** Accounts are the server's alone: nothing here queues, so nothing here is offered without it. */
   const offline = $derived($connection !== 'online')
+
+  /** Set on every control the connection is holding down, and on no other. */
+  const hint = $derived(offline ? OFFLINE_HINT : undefined)
 
   let draft = $state({ username: '', password: '', is_admin: false, is_editor: false })
 
@@ -81,6 +91,28 @@
     }
   }
 
+  /**
+   * Strip someone's second factor after they have lost the device holding it.
+   *
+   * The whole of the recovery story for an ordinary user: there are no recovery
+   * codes, by decision, so this is the only way back in. Confirmed first
+   * because it is the one action here that removes a protection rather than
+   * granting one, and it signs them out — which is deliberate, so it cannot be
+   * done to somebody without them noticing.
+   */
+  async function clearSecondFactor(user) {
+    const warning = `Remove the second factor from ${user.username}? They will be signed out.`
+    if (!confirm(warning)) return
+    try {
+      await unwrap(() => clearUserTotp({ path: { user_id: user.id } }))
+    } catch (error) {
+      pushToast(error.message)
+      return
+    }
+    revision += 1
+    pushToast(`${user.username} can sign in with their password alone`, 'ok')
+  }
+
   async function resetPassword(user) {
     const new_password = prompt(`New password for ${user.username}`)
     if (!new_password) return
@@ -125,22 +157,33 @@
           <div class="flex shrink-0 flex-wrap items-center gap-2">
             <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                            disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={offline} onclick={() => toggle(user, 'is_admin')}>
+              disabled={offline}
+              title={hint} onclick={() => toggle(user, 'is_admin')}>
               {user.is_admin ? 'Revoke people' : 'Grant people'}
             </button>
             <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                            disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={offline} onclick={() => toggle(user, 'is_editor')}>
+              disabled={offline}
+              title={hint} onclick={() => toggle(user, 'is_editor')}>
               {user.is_editor ? 'Revoke questions' : 'Grant questions'}
             </button>
             <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                            disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={offline} onclick={() => resetPassword(user)}>Reset password</button>
+              disabled={offline}
+              title={hint} onclick={() => resetPassword(user)}>Reset password</button>
+            <button
+              data-clear-totp={user.id}
+              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                     disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={offline}
+              title={hint}
+              onclick={() => clearSecondFactor(user)}>Clear second factor</button>
             {#if user.id !== me?.id}
               <button class="meta rounded-md border border-ember/40 px-3 py-2 text-ember
                              hover:border-ember disabled:cursor-not-allowed
                              disabled:opacity-40"
-                disabled={offline} onclick={() => remove(user)}>Delete</button>
+                disabled={offline}
+                title={hint} onclick={() => remove(user)}>Delete</button>
             {/if}
           </div>
         </li>
@@ -180,6 +223,7 @@
       <button
         type="submit"
         disabled={offline}
+        title={hint}
         class="mt-5 rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift
                disabled:cursor-not-allowed disabled:opacity-40"
       >

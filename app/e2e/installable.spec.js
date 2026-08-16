@@ -1,4 +1,11 @@
-import { expect, makeProject, recordSession, test, TODAY } from './fixtures.js'
+import {
+  expect,
+  installed,
+  makeProject,
+  recordSession,
+  test,
+  TODAY,
+} from './fixtures.js'
 
 /**
  * The app as something installed.
@@ -7,27 +14,6 @@ import { expect, makeProject, recordSession, test, TODAY } from './fixtures.js'
  * connection is the app rather than the browser's error page. Everything before
  * this phase could keep data offline; none of it could survive a reload.
  */
-
-/**
- * Wait for the worker to be installed and active.
- *
- * Active, not *controlling*: with a prompted update the worker deliberately
- * does not claim the page that registered it — that is the difference between
- * asking and taking over mid-session. The next navigation is controlled, which
- * is exactly the case these tests care about.
- */
-async function installed(page) {
-  await expect
-    .poll(
-      () =>
-        page.evaluate(async () => {
-          const regs = await navigator.serviceWorker.getRegistrations()
-          return regs.some((one) => Boolean(one.active))
-        }),
-      { message: 'the service worker never activated', timeout: 15_000 }
-    )
-    .toBe(true)
-}
 
 test('the app opens with no connection once it is installed', async ({
   page,

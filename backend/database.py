@@ -39,7 +39,7 @@ class Base(DeclarativeBase):
     """
 
 
-def get_db() -> Generator[Session, None, None]:
+def get_db() -> Generator[Session]:
     """Provide a database session for the lifetime of a single request.
 
     Intended for use as a FastAPI dependency. The session is closed once the

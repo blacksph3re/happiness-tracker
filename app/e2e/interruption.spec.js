@@ -1,4 +1,11 @@
-import { expect, makeProject, recordSession, test, TODAY } from './fixtures.js'
+import {
+  expect,
+  installed,
+  makeProject,
+  recordSession,
+  test,
+  TODAY,
+} from './fixtures.js'
 
 /**
  * Losing the connection at every point in every ordinary workflow.
@@ -14,20 +21,6 @@ import { expect, makeProject, recordSession, test, TODAY } from './fixtures.js'
  * server that ends up missing something — and in either case, at exactly the
  * step that needs it.
  */
-
-/** Wait for the worker, so a reload mid-workflow is the app and not an error. */
-async function installed(page) {
-  await expect
-    .poll(
-      () =>
-        page.evaluate(async () => {
-          const regs = await navigator.serviceWorker.getRegistrations()
-          return regs.some((one) => Boolean(one.active))
-        }),
-      { message: 'the service worker never activated', timeout: 15_000 }
-    )
-    .toBe(true)
-}
 
 const badge = (page) => page.locator('[data-sync]')
 

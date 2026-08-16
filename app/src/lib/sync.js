@@ -9,7 +9,7 @@ import {
   retireIntents,
   writeVerdicts,
 } from './local.js'
-import { syncIntents } from './generated/sdk.gen'
+import { getVersion, syncIntents } from './generated/sdk.gen'
 
 /**
  * The queue of writes made here, and what became of them.
@@ -70,6 +70,55 @@ export const syncState = derived(
 )
 
 let flushing = null
+
+/**
+ * How often an unreachable server is asked again, in milliseconds.
+ *
+ * Only ever while it is unreachable. Polling a server that is answering would
+ * be asking a question every read already answers, on a device that is usually
+ * a phone.
+ */
+const PROBE_EVERY = 30_000
+
+let probing = null
+
+/**
+ * Find out whether the server is reachable, one question at a time.
+ *
+ * Every other way the app learns this is a side effect of a request it was
+ * going to make anyway — a read, or the queue draining. A device with nothing
+ * queued makes neither, so it never finds out the signal came back and sits
+ * there refusing administration until somebody reloads.
+ *
+ * At most one in flight, and that is the whole of the rate limiting: a
+ * connection too slow to answer within the interval must not collect a queue of
+ * identical requests, which would make it slower still. A tick arriving while
+ * the last question is unanswered joins it rather than asking again.
+ *
+ * @returns {Promise<void>} When the outstanding question has been answered.
+ */
+export function probe() {
+  if (!probing) probing = ask().finally(() => (probing = null))
+  return probing
+}
+
+async function ask() {
+  // A queue is its own probe: sending it learns the same thing and does the
+  // work as well, so asking first would be a wasted round trip on exactly the
+  // connection least able to afford one.
+  if (hasPending()) {
+    await flush()
+    return
+  }
+
+  // Public, and the smallest thing the server will say. Through the same client
+  // as everything else, so a proxy in front of the app is answering the same
+  // question the real requests ask.
+  const { response } = await getVersion()
+  if (!response) connection.set('offline')
+  else if (response.status === 401 || response.status === 403) connection.set('blocked')
+  else connection.set('online')
+}
 
 /**
  * Record a write locally and try to send it.
@@ -261,11 +310,13 @@ function remember() {
 }
 
 /**
- * Start flushing on the events that mean it might work now.
+ * Start flushing on the events that mean it might work now, and keep asking.
  *
  * `visibilitychange` is the important one and the reason this is not only the
  * `online` event: iOS has no Background Sync, so on a phone "sync when the
  * connection returns" means "sync next time the app is opened".
+ *
+ * And a timer behind both, because neither event is reliable — see `probe`.
  */
 export function watch() {
   if (typeof window === 'undefined') return
@@ -278,14 +329,24 @@ export function watch() {
     notices.set(held.notices ?? [])
   })
   loadQueue()
-  window.addEventListener('online', () => {
-    connection.set('online')
-    flush()
-  })
+  // The event is a hint to go and look, not an answer in itself — `probe` sets
+  // the state from what actually happened to a request. Claiming to be online
+  // here was the same mistake as trusting `navigator.onLine`, one layer along:
+  // an interface came up, which is not the same as the server being there.
+  window.addEventListener('online', probe)
   window.addEventListener('offline', () => connection.set('offline'))
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') flush()
+    if (document.visibilityState === 'visible') probe()
   })
+
+  // The one thing no event covers. `online` does not fire for every way a
+  // connection comes back — a proxy returning, a captive portal let go of, a
+  // laptop whose interface never dropped — and on a phone the app is usually
+  // not even running to hear it.
+  setInterval(() => {
+    if (get(connection) !== 'online') probe()
+  }, PROBE_EVERY)
+
   // `navigator.onLine` is not consulted: it says whether there is an interface,
   // not whether anything answers on it. The reads in `store.js` set this from
   // what actually happened to a request.

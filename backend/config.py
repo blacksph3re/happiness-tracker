@@ -68,8 +68,26 @@ class Settings(BaseSettings):
     bootstrap_question_catalogue: bool = True
     """Whether to seed the default catalogue with the three starter questions."""
 
+    docs_enabled: bool = False
+    """Whether to serve `/docs`, `/redoc` and the OpenAPI schema.
+
+    Off unless asked for, so a deployment does not publish its entire API
+    surface to anyone who asks. Code generation is unaffected either way:
+    `scripts/dump_openapi.py` reads the document through `app.openapi()`
+    rather than over HTTP.
+    """
+
     jwt_secret: str = ""
     """Signing key for both token types. Required; startup fails without it."""
+
+    totp_encryption_key: str = ""
+    """Fernet key protecting stored TOTP secrets. Required; startup fails without it.
+
+    Deliberately not derived from `jwt_secret`. Rotating the signing key is a
+    routine act that signs everyone out; if the two were one key it would also
+    destroy every enrolment on the system, which is a poor surprise to leave
+    lying about for the sake of one line in `.env`.
+    """
 
     jwt_algorithm: str = "HS256"
     """Algorithm used to sign and verify tokens."""
@@ -163,6 +181,31 @@ class Settings(BaseSettings):
                 "and pass it to the server."
             )
         return self.jwt_secret
+
+    @property
+    def totp_key(self) -> str:
+        """Return the key protecting stored TOTP secrets.
+
+        Returns
+        -------
+        str
+            The configured `totp_encryption_key`.
+
+        Raises
+        ------
+        RuntimeError
+            If `TOTP_ENCRYPTION_KEY` is unset. Demanded at startup rather than
+            at first enrolment: a loud failure at boot is worth more than a
+            quiet one at the moment somebody is trying to secure their account.
+        """
+        if not self.totp_encryption_key:
+            raise RuntimeError(
+                "TOTP_ENCRYPTION_KEY is not set. Generate one with "
+                "`python -c 'from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())'` "
+                "and pass it to the server."
+            )
+        return self.totp_encryption_key
 
 
 @lru_cache

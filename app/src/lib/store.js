@@ -500,6 +500,7 @@ export async function ensurePreferences({ force = false } = {}) {
   if (!force && cached && fetched.has('preferences')) return cached
   return once('preferences', async () => {
     const loaded = (await quietly(() => getMyPreferences())) ?? get(preferences) ?? {}
+    held = loaded
     preferences.set(loaded)
     fetched.add('preferences')
     persisted = JSON.stringify(loaded)
@@ -510,17 +511,31 @@ export async function ensurePreferences({ force = false } = {}) {
 let persisted = null
 let saveTimer = null
 
+/** The preferences document as this module last knew it, for merging into. */
+let held = null
+
 /**
- * Save view state, but only when it actually differs from what is stored.
+ * Save one page's view state, but only when it actually differs from what is stored.
  *
- * Opening the stats page applies the state it just loaded, which would
+ * Opening a patterns page applies the state it just loaded, which would
  * otherwise look like a change and write it straight back on every visit. The
  * comparison is against the last known server copy, so revisiting a page
  * costs nothing and dragging a slider costs one request rather than thirty.
  *
- * @param {object} next The complete document to store.
+ * Merged under a section rather than written whole: there is one document per
+ * account and now more than one page keeping state in it, and a page that saved
+ * the lot would throw away whatever the other one had put there.
+ *
+ * @param {string} section Which page's state this is — `stats`, `time`.
+ * @param {object} values The state that section wants remembered.
  */
-export function persistPreferences(next) {
+export function persistPreferences(section, values) {
+  // From the module's own copy rather than `get(preferences)`: this is called
+  // from inside the caller's `$effect`, and reading a store there that the same
+  // call then writes is the shape of feedback this app has been caught by
+  // before. Nothing here depends on it being a store read, so it is not one.
+  const next = { ...(held ?? {}), [section]: values }
+  held = next
   const serialised = JSON.stringify(next)
   if (serialised === persisted) return
 
@@ -534,6 +549,21 @@ export function persistPreferences(next) {
       // View state is a convenience; a failed save must not interrupt reading.
     })
   }, 600)
+}
+
+/**
+ * One page's remembered view state.
+ *
+ * @param {object} stored The whole preferences document.
+ * @param {string} section Which page's state to read.
+ * @returns {object} What that section holds, or nothing.
+ */
+export function preferenceSection(stored, section) {
+  // The document used to be the stats page's state at the top level, because
+  // that page was the only one keeping any. Read through to it so an account
+  // that has not saved since does not arrive to a view it never chose.
+  if (stored?.[section]) return stored[section]
+  return section === 'stats' && stored?.view ? stored : {}
 }
 
 /**

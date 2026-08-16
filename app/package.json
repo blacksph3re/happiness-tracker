@@ -14,23 +14,25 @@
     "e2e:report": "playwright show-report e2e-report",
     "api:generate": "cd ../backend && JWT_SECRET=codegen ADMIN_PASSWORD=codegen uv run python scripts/dump_openapi.py ../app/openapi.json && cd ../app && openapi-ts"
   },
+  "//": "The split is 'needed to produce the bundle' against 'needed to develop it'. Nothing here is published, so the usual dependencies/devDependencies distinction has no meaning - but `pnpm install --prod` does, and it is what keeps Playwright and its browser binaries out of the Docker image.",
   "devDependencies": {
     "@hey-api/openapi-ts": "^0.99.0",
     "@playwright/test": "^1.62.1",
-    "@sveltejs/vite-plugin-svelte": "^7.2.0",
-    "@tailwindcss/vite": "^4.3.3",
-    "flowbite": "^4.0.2",
-    "svelte": "^5.56.8",
-    "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
-    "vite": "^8.2.0",
-    "vite-plugin-pwa": "^1.3.0",
-    "vitest": "^4.1.10",
-    "workbox-window": "^7.4.1"
+    "vitest": "^4.1.10"
   },
   "dependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@tailwindcss/vite": "^4.3.3",
     "echarts": "^6.1.0",
+    "flowbite": "^4.0.2",
     "idb": "^8.0.3",
-    "svelte-spa-router": "^5.1.1"
+    "qrcode-generator": "^2.0.4",
+    "svelte": "^5.56.8",
+    "svelte-spa-router": "^5.1.1",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.0",
+    "vite-plugin-pwa": "^1.3.0",
+    "workbox-window": "^7.4.1"
   }
 }

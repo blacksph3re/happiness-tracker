@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from deps import AdminUser, DbSession
 from models import Catalogue, User
 from schemas import PasswordReset, UserCreate, UserOut, UserUpdate
-from security import hash_password
+from security import clear_totp, hash_password
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -221,6 +221,40 @@ def reset_password(
     user.password_hash = hash_password(payload.new_password)
     # A reset exists to lock someone out; leaving their tokens alive would not.
     user.token_version += 1
+    db.commit()
+
+
+@router.delete(
+    "/{user_id}/totp",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="clearUserTotp",
+    summary="Remove someone's second factor",
+    description=(
+        "Strip the second factor from an account that has lost the device "
+        "holding it. There is no self-service recovery, so this is the whole "
+        "of it - and it is the one path that bypasses the second factor, "
+        "which is why it is gated on managing users. Signs the account out "
+        "everywhere, so it cannot be done to somebody silently."
+    ),
+)
+def clear_user_totp(user_id: int, admin: AdminUser, db: DbSession) -> None:
+    """Remove another account's second factor.
+
+    Parameters
+    ----------
+    user_id : int
+        The account to clear.
+    admin : User
+        The authenticated administrator.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 404 when the user does not exist.
+    """
+    clear_totp(_get_user(db, user_id))
     db.commit()
 
 

@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListDeductionsData, ListDeductionsErrors, ListDeductionsResponses, ListProjectsData, ListProjectsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetDeductionsData, SetDeductionsErrors, SetDeductionsResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, SyncIntentsData, SyncIntentsErrors, SyncIntentsResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, TrackedRangeData, TrackedRangeResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
+import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, BeginTotpEnrolmentData, BeginTotpEnrolmentResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, ClearUserTotpData, ClearUserTotpErrors, ClearUserTotpResponses, ConfirmTotpEnrolmentData, ConfirmTotpEnrolmentErrors, ConfirmTotpEnrolmentResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, DisableTotpData, DisableTotpErrors, DisableTotpResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListDeductionsData, ListDeductionsErrors, ListDeductionsResponses, ListProjectsData, ListProjectsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, LoginTotpData, LoginTotpErrors, LoginTotpResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetDeductionsData, SetDeductionsErrors, SetDeductionsResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, SyncIntentsData, SyncIntentsErrors, SyncIntentsResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, TrackedRangeData, TrackedRangeResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -28,10 +28,24 @@ export const getVersion = <ThrowOnError extends boolean = false>(options?: Optio
 /**
  * Sign in
  *
- * Exchange a username and password for an access and a refresh token. Unknown usernames and wrong passwords are answered identically, and take the same time to answer. Too many failures for one username within the lockout window are refused with `429` until it passes.
+ * Exchange a username and password for tokens, or - when the account carries a second factor - for a short-lived token to present one with. Unknown usernames and wrong passwords are answered identically, and take the same time to answer. Too many failures for one username within the lockout window are refused with `429` until it passes.
  */
 export const login = <ThrowOnError extends boolean = false>(options: Options<LoginData, ThrowOnError>): RequestResult<LoginResponses, LoginErrors, ThrowOnError> => (options.client ?? client).post<LoginResponses, LoginErrors, ThrowOnError>({
     url: '/api/login',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Present a second factor
+ *
+ * Complete a login by presenting a code from the enrolled authenticator. Takes the short-lived token the password step handed out; an access token is refused here. Wrong codes count against the same per-username budget as wrong passwords.
+ */
+export const loginTotp = <ThrowOnError extends boolean = false>(options: Options<LoginTotpData, ThrowOnError>): RequestResult<LoginTotpResponses, LoginTotpErrors, ThrowOnError> => (options.client ?? client).post<LoginTotpResponses, LoginTotpErrors, ThrowOnError>({
+    url: '/api/login/totp',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -121,6 +135,47 @@ export const setMyDefaultCatalogue = <ThrowOnError extends boolean = false>(opti
 });
 
 /**
+ * Remove my second factor
+ *
+ * Turn off the second factor, proving possession of the enrolled device first. Every session signs out, including this one.
+ */
+export const disableTotp = <ThrowOnError extends boolean = false>(options: Options<DisableTotpData, ThrowOnError>): RequestResult<DisableTotpResponses, DisableTotpErrors, ThrowOnError> => (options.client ?? client).delete<DisableTotpResponses, DisableTotpErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/me/totp',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Begin enrolling a second factor
+ *
+ * Generate a shared secret and the URI an authenticator app scans. Nothing is demanded at login until the enrolment is confirmed, so abandoning this page cannot lock anybody out. Calling it again replaces an unconfirmed secret.
+ */
+export const beginTotpEnrolment = <ThrowOnError extends boolean = false>(options?: Options<BeginTotpEnrolmentData, ThrowOnError>): RequestResult<BeginTotpEnrolmentResponses, unknown, ThrowOnError> => (options?.client ?? client).post<BeginTotpEnrolmentResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/me/totp',
+    ...options
+});
+
+/**
+ * Finish enrolling a second factor
+ *
+ * Prove the authenticator holds the secret. Only after this is a code demanded at login.
+ */
+export const confirmTotpEnrolment = <ThrowOnError extends boolean = false>(options: Options<ConfirmTotpEnrolmentData, ThrowOnError>): RequestResult<ConfirmTotpEnrolmentResponses, ConfirmTotpEnrolmentErrors, ThrowOnError> => (options.client ?? client).post<ConfirmTotpEnrolmentResponses, ConfirmTotpEnrolmentErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/me/totp/confirm',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * List accounts
  *
  * List every account. Requires the user-management permission.
@@ -185,6 +240,17 @@ export const resetUserPassword = <ThrowOnError extends boolean = false>(options:
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Remove someone's second factor
+ *
+ * Strip the second factor from an account that has lost the device holding it. There is no self-service recovery, so this is the whole of it - and it is the one path that bypasses the second factor, which is why it is gated on managing users. Signs the account out everywhere, so it cannot be done to somebody silently.
+ */
+export const clearUserTotp = <ThrowOnError extends boolean = false>(options: Options<ClearUserTotpData, ThrowOnError>): RequestResult<ClearUserTotpResponses, ClearUserTotpErrors, ThrowOnError> => (options.client ?? client).delete<ClearUserTotpResponses, ClearUserTotpErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/users/{user_id}/totp',
+    ...options
 });
 
 /**
