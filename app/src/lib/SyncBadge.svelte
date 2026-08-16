@@ -23,6 +23,32 @@
 
   let open = $state(false)
 
+  let panel = $state(null)
+
+  /**
+   * Close on anything that means "not this".
+   *
+   * A panel with no way out but the one control that opened it is a panel
+   * people end up reloading the page to be rid of. Anywhere else, and Escape,
+   * both close it — the badge's own click keeps toggling, because that is what
+   * a reader tries first.
+   */
+  $effect(() => {
+    if (!open) return
+    const away = (event) => {
+      if (!panel?.contains(event.target)) open = false
+    }
+    const escape = (event) => {
+      if (event.key === 'Escape') open = false
+    }
+    window.addEventListener('pointerdown', away)
+    window.addEventListener('keydown', escape)
+    return () => {
+      window.removeEventListener('pointerdown', away)
+      window.removeEventListener('keydown', escape)
+    }
+  })
+
   const LOOK = {
     synced: { label: 'Everything is on the server', tone: 'text-haze' },
     pending: { label: 'waiting to sync', tone: 'text-paper' },
@@ -56,6 +82,7 @@
   aria-live="polite"
   aria-label={spoken}
   title={spoken}
+  onpointerdown={(event) => event.stopPropagation()}
   onclick={(event) => {
     event.preventDefault()
     event.stopPropagation()
@@ -89,6 +116,7 @@
   <!-- Anchored to the header rather than to the badge: at 320px a panel hung
        off an 18px icon is either off-screen or squeezed into nothing. -->
   <div
+    bind:this={panel}
     data-sync-panel
     class="absolute top-16 left-4 z-50 w-80 rounded-xl border border-white/15
            bg-ink-soft p-4 shadow-xl"
@@ -106,6 +134,14 @@
         when there is a connection.
       </p>
     {/if}
+
+    <button
+      class="meta absolute top-3 right-3 rounded-md px-2 py-1 hover:text-paper"
+      aria-label="Close"
+      onclick={() => (open = false)}
+    >
+      ×
+    </button>
 
     {#if $conflicts.length || $notices.length}
       <ul class="mt-3 flex flex-col gap-2" data-sync-notices>

@@ -315,3 +315,58 @@ test('a refusal survives the reload that follows it', async ({ page, account }) 
   await badge(page).click()
   await expect(page.locator('[data-sync-notices]')).toContainText('project')
 })
+
+test('the sync panel closes the way anyone would expect', async ({ page, account }) => {
+  await makeProject(account, 'The rewrite')
+  await page.goto('/time')
+  await expect(badge(page)).toBeVisible()
+
+  // Opened, then closed by the badge itself.
+  await badge(page).click()
+  await expect(page.locator('[data-sync-panel]')).toBeVisible()
+  await badge(page).click()
+  await expect(page.locator('[data-sync-panel]')).toHaveCount(0)
+
+  // Opened, then closed by clicking anywhere else — the case that had no way
+  // out at all, and sent people to the reload button.
+  await badge(page).click()
+  await expect(page.locator('[data-sync-panel]')).toBeVisible()
+  await page.locator('h1').click()
+  await expect(page.locator('[data-sync-panel]')).toHaveCount(0)
+
+  // And by Escape.
+  await badge(page).click()
+  await expect(page.locator('[data-sync-panel]')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-sync-panel]')).toHaveCount(0)
+
+  // And by its own close control.
+  await badge(page).click()
+  await page.locator('[data-sync-panel]').getByRole('button', { name: 'Close' }).click()
+  await expect(page.locator('[data-sync-panel]')).toHaveCount(0)
+})
+
+test('answering offline says nothing about the server', async ({
+  page,
+  account,
+  context,
+}) => {
+  const catalogue = await catalogueOf(account.api)
+  const [question] = realQuestions(catalogue)
+  expect(question).toBeTruthy()
+
+  await page.goto('/answer')
+  await expect(page.getByRole('group')).toBeVisible()
+
+  await context.setOffline(true)
+  // The day's first answer re-reads that day, to pick up the auto-tracked
+  // values the server writes beside it. With no connection that read cannot
+  // land — and it used to say so, out loud, once per day answered.
+  await page.getByRole('group').getByRole('button').first().click()
+  await expect(badge(page)).toHaveAttribute('data-pending', '1')
+  await page.waitForTimeout(800)
+
+  await expect(page.locator('[data-toast]')).toHaveCount(0)
+  // The badge is the one thing that speaks, and it is already saying it.
+  await expect(badge(page)).toHaveAttribute('data-sync', 'offline')
+})

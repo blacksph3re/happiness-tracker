@@ -22,12 +22,21 @@ export function localHour() {
   return new Date().getHours()
 }
 
-/** Render a day key as a short human label, e.g. "Tue 4 Mar". */
-export function dayLabel(key) {
+/**
+ * Render a day key as a short human label, e.g. "Tue 4 Mar".
+ *
+ * @param {string} key A `YYYY-MM-DD` key.
+ * @param {{withYear?: boolean}} [options] `withYear` adds it, for the controls
+ *   that can slide out of the current one — a window ending "Sat 16 Aug" says
+ *   nothing about which August once the slider has gone back far enough to
+ *   reach another.
+ */
+export function dayLabel(key, { withYear = false } = {}) {
   const [year, month, day] = key.split('-').map(Number)
   return new Date(year, month - 1, day).toLocaleDateString(undefined, {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
+    ...(withYear ? { year: 'numeric' } : {}),
   })
 }

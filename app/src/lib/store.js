@@ -1,7 +1,8 @@
 import { get, writable } from 'svelte/store'
 
-import { attempt, tokenHolder, unwrap } from './api.js'
+import { tokenHolder, unwrap } from './api.js'
 import { overlayAnswers, overlayEntries } from './projection.js'
+import { startingDay } from './time/duration.js'
 import { summaryRows, trackedEdges } from './time/summary.js'
 import { connection, enqueue, loadQueue, notices, queued } from './sync.js'
 import {
@@ -168,8 +169,33 @@ async function quietly(call) {
 /** Forget the cached totals, after anything that changes what they count. */
 export function forgetSummaries() {
   summaries.clear()
-  // A new session can extend the history past what a slider currently allows.
-  trackedDays.set(null)
+}
+
+/**
+ * Widen the tracked range to include a day, if it does not already.
+ *
+ * A new session can reach past what the sliders currently allow, and this used
+ * to be handled by throwing the range away and refetching it. That was wrong in
+ * a way only visible offline: with nothing to refetch from, the range stayed
+ * null, and the controls that read it fell back to "a year" — so tracking a
+ * single minute made the custom window offer to slide back through months that
+ * hold nothing.
+ *
+ * Widening only. A deletion can leave the range a day longer than the history,
+ * which costs a slider one position it will find empty; the alternative is
+ * recomputing from a cache that may hold a narrower range than the account has,
+ * which costs the slider days that do exist.
+ *
+ * @param {string} day A `YYYY-MM-DD` key the account now has time on.
+ */
+function reachTrackedRange(day) {
+  trackedDays.update((held) => {
+    if (!held) return held
+    return {
+      first: !held.first || day < held.first ? day : held.first,
+      last: !held.last || day > held.last ? day : held.last,
+    }
+  })
 }
 
 /**
@@ -356,6 +382,12 @@ export async function ensureMe({ force = false } = {}) {
     if (loaded) {
       me.set(loaded)
       fetched.add('me')
+      // The questions this account answers, fetched on the way in rather than
+      // when the questionnaire is first opened. Answering with no connection is
+      // the headline of the offline work, and it was quietly conditional on
+      // having opened that page while there was one — a device that had only
+      // ever looked at its patterns had nothing to answer.
+      ensureCatalogue(loaded.default_catalogue_id)
     }
     return loaded ?? get(me)
   })
@@ -437,7 +469,11 @@ export async function ensureAnswers({ force = false } = {}) {
  * @param {string} day The `YYYY-MM-DD` key to re-read.
  */
 export async function refreshDay(day) {
-  const rows = await attempt(() => listAnswers({ query: { from: day, to: day } }))
+  // Quietly: this runs after every day's first answer, and with no connection
+  // it is a read the app already has a local answer for. Toasting "could not
+  // reach the server" at someone who is deliberately offline, once per day they
+  // answer, is the app complaining about the thing it was built to survive.
+  const rows = await quietly(() => listAnswers({ query: { from: day, to: day } }))
   if (!rows) return
   fromServer = [...fromServer.filter((row) => row.day !== day), ...rows]
   reproject()
@@ -463,7 +499,7 @@ export async function ensurePreferences({ force = false } = {}) {
   const cached = get(preferences)
   if (!force && cached && fetched.has('preferences')) return cached
   return once('preferences', async () => {
-    const loaded = (await attempt(() => getMyPreferences())) ?? {}
+    const loaded = (await quietly(() => getMyPreferences())) ?? get(preferences) ?? {}
     preferences.set(loaded)
     fetched.add('preferences')
     persisted = JSON.stringify(loaded)
@@ -534,8 +570,12 @@ export async function saveAnswer(answer) {
  */
 export function rememberAnswer(answer) {
   // A new answer can bring a variable into play that had no data before, so the
-  // server's view of what is plottable is no longer current.
-  variables.set(null)
+  // server's view of what is plottable is out of date — but *out of date* is not
+  // *gone*. Discarding the list left the stats page with nothing to plot the
+  // moment anything was answered with no connection, which is the one time it
+  // cannot ask for a new one. Marked stale instead: the next `ensureVariables`
+  // fetches where it can, and answers from the last known list where it cannot.
+  fetched.delete('variables')
   // Folded into the baseline, not only laid over it. The queue empties as soon
   // as it drains, and a projection that then fell back to the last *fetched*
   // answers would undo the correction on screen — the server has it, this
@@ -608,7 +648,9 @@ export async function ensureDeductionRules({ force = false } = {}) {
     const pairs = await Promise.all(
       known.map(async (tag) => [
         tag.id,
-        (await attempt(() => listDeductions({ path: { tag_id: tag.id } }))) ?? [],
+        (await quietly(() => listDeductions({ path: { tag_id: tag.id } }))) ??
+          (get(deductionRules) ?? {})[tag.id] ??
+          [],
       ])
     )
     const rules = Object.fromEntries(pairs)
@@ -704,6 +746,7 @@ export async function removeEntry(client_id) {
  */
 export function rememberEntry(entry) {
   forgetSummaries()
+  reachTrackedRange(startingDay(entry))
   // Matched on the device's own identity first: a session recorded here has no
   // server id until it syncs, so `id` cannot be what tells two rows apart.
   timeEntries.update((all) => [

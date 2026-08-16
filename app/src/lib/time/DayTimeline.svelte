@@ -299,7 +299,12 @@
             ></span>
           {/each}
 
-          {#each lane.spans as span_ (span_.entry.id + span_.from)}
+          <!-- Keyed on the identity the device gave the session, not on the row
+               id: a session recorded here has no row id until it syncs, so two
+               of them in one lane would both key as `undefined` — and Svelte
+               refuses duplicate keys by throwing, mid-render, leaving half the
+               page showing the window it was on before. -->
+          {#each lane.spans as span_ (`${span_.entry.client_id ?? span_.entry.id}:${span_.from}`)}
             <!-- A quarter-hour session is a sliver at day scale, so every bar
                  keeps a floor width: a session that happened must be visible. -->
             {@const drawnTo = Math.min(span_.to, window.to)}
@@ -311,7 +316,7 @@
             <span
               role="img"
               aria-label="{span_.project.name} · {label(span_).detail}"
-              data-span={span_.entry.id}
+              data-span={span_.entry.client_id ?? span_.entry.id}
               class="absolute inset-y-1 rounded-sm {clipped ? 'rounded-r-none' : ''}"
               style:left="{position(span_.from)}%"
               style:width="{Math.max(0, position(drawnTo) - position(span_.from))}%"

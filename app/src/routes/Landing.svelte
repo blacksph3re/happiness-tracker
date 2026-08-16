@@ -129,7 +129,9 @@
           <p class="mt-3 text-2xl font-semibold">…</p>
         {:else if running.length}
           <ul class="mt-3 flex flex-col gap-1.5">
-            {#each running as row (row.entry.id)}
+            <!-- Keyed on the device's own identity: a timer started with no
+                 connection has no row id yet, so two of them would key alike. -->
+            {#each running as row (row.entry.client_id ?? row.entry.id)}
               <li class="flex items-baseline justify-between gap-3">
                 <span class="flex min-w-0 items-center gap-2">
                   <span

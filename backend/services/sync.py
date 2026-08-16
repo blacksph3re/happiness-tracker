@@ -126,16 +126,25 @@ def apply_answer(
     if stored is not None and not _is_newer(claimed, stored.client_updated_at):
         return SyncOutcome.SUPERSEDED, "A newer answer for that day is already stored"
 
-    if stored is None:
+    fresh = stored is None
+    if fresh:
         stored = Answer(
             user_id=user_id, question_id=payload.question_id, day=payload.day
         )
-        db.add(stored)
 
     stored.value = payload.value
     stored.option_id = payload.option_id
     stored.client_updated_at = claimed
     stored.server_received_at = now
+
+    if fresh:
+        db.add(stored)
+    # Flushed before the next intent looks — and after the row is complete, or
+    # the constraint that an answer carries exactly one of a value and an option
+    # refuses a half-built one. With `autoflush=False`, a queue holding an
+    # answer and a correction to it would not find the first when the second
+    # went looking, and would insert the same day twice.
+    db.flush()
 
     # The day's auto-tracked answers are written by the same rule as an online
     # answer, so a day first answered offline is not missing its weekday.

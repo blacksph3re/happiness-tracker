@@ -702,7 +702,7 @@ test('patterns steps through named periods', async ({ page, account }) => {
   await expect(page.getByRole('button', { name: 'Next →' })).toBeDisabled()
 })
 
-test('the timeline is a lane per project, and is not drawn by tag', async ({
+test('the timeline is a lane per project, whichever grouping is chosen', async ({
   page,
   account,
 }) => {
@@ -718,14 +718,17 @@ test('the timeline is a lane per project, and is not drawn by tag', async ({
   await expect(page.locator(`[data-lane="${reviews.id}"]`)).toBeVisible()
 
   // A lane says when something ran, and a tag does not run — its projects do.
-  // Grouping by tag takes the strip away rather than relabelling it.
+  // So grouping by tag regroups the totals and the table while the strip keeps
+  // its project lanes: taking it away instead left "Day" as a donut of one day,
+  // which is the short windows losing the only thing they are for.
   await page.getByRole('button', { name: 'By tag' }).click()
-  await expect(page.locator('[data-timeline]')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Week', exact: true }).click()
-  await expect(page.locator('[data-timeline]')).toHaveCount(0)
+  await expect(page.locator('[data-timeline]')).toBeVisible()
+  await expect(page.locator(`[data-lane="${backend.id}"]`)).toBeVisible()
+  await expect(page.locator(`[data-lane="${reviews.id}"]`)).toBeVisible()
+  // The table beside it is by tag, which is what was asked for.
+  await expect(page.locator('[data-group="Work"]')).toBeVisible()
 
-  // And it comes back with the projects, in both windows that draw one.
-  await page.getByRole('button', { name: 'By project' }).click()
+  await page.getByRole('button', { name: 'Week', exact: true }).click()
   await expect(page.locator('[data-timeline]')).toBeVisible()
 })
 
@@ -1002,6 +1005,55 @@ test('a session running past midnight stays inside its lane', async ({
       bounds.x + bounds.width + 1
     )
   }
+})
+
+test('the custom sliders stop where the history does, even after tracking', async ({
+  page,
+  account,
+  context,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  // Five days of history and nothing before it.
+  for (let back = 0; back <= 4; back += 1) {
+    const day = new Date(Date.parse(`${TODAY}T00:00:00Z`) - back * 86400000)
+      .toISOString()
+      .slice(0, 10)
+    await recordSession(account, project.id, `${day}T09:00:00`, `${day}T12:00:00`)
+  }
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'Custom', exact: true }).click()
+  const length = page.getByLabel('Window length')
+  const ends = page.getByLabel('Ends on')
+  await expect(length).toHaveAttribute('max', '5')
+  await expect(ends).toHaveAttribute('min', '-4')
+
+  // Tracking a minute must not make the sliders offer a year of nothing. They
+  // used to: every write threw the tracked range away, and the controls fell
+  // back to "365 days" until something refetched it — which, with no connection
+  // to refetch from, is never. Offline is where this was visible, and it is
+  // also where the sliders are least able to correct themselves.
+  await context.setOffline(true)
+  await page.getByRole('link', { name: 'Track' }).click()
+  await page.getByRole('button', { name: `Start ${project.name}`, exact: true }).click()
+  await page.getByRole('link', { name: 'Patterns' }).click()
+  await page.getByRole('button', { name: 'Custom', exact: true }).click()
+
+  await expect(page.getByLabel('Window length')).toHaveAttribute('max', '5')
+  await expect(page.getByLabel('Ends on')).toHaveAttribute('min', '-4')
+})
+
+test('the custom window says which year it is showing', async ({ page, account }) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'Custom', exact: true }).click()
+
+  // A window that slides freely can leave the year it started in, and "30 days
+  // to Sat 15 Aug" is the same sentence whichever August it means.
+  await expect(page.getByText(/Ends on · .*2026/)).toBeVisible()
+  await expect(page.locator('[data-period]')).toContainText('2026')
 })
 
 test('a custom window is framed by length and end', async ({ page, account }) => {

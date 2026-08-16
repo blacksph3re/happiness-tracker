@@ -375,3 +375,53 @@ def test_a_session_carries_its_identity_back(client, admin_headers):
 
     rows = sessions(client, admin_headers)
     assert [row["client_id"] for row in rows] == ["abc"]
+
+
+def test_a_day_answered_twice_in_one_queue_is_not_a_collision(client, admin_headers):
+    # Two answers for the same day, replayed together: exactly what a device
+    # holds after answering a questionnaire with no connection. Each one asks
+    # for the day's auto-tracked answers, and the second must see what the first
+    # wrote — in the same transaction, before either has been committed.
+    question = scaled_question(client, admin_headers)
+    me = client.get("/api/me", headers=admin_headers).json()
+    catalogue = client.get(
+        f"/api/catalogues/{me['default_catalogue_id']}", headers=admin_headers
+    ).json()
+    other = next(
+        one
+        for one in catalogue["questions"]
+        if one["origin"] == "asked"
+        and one["kind"] != "enum"
+        and one["id"] != question["id"]
+    )
+
+    results = sync(
+        client,
+        admin_headers,
+        [
+            answer_intent(1, question["id"], EARLIER, 4),
+            answer_intent(2, other["id"], EARLIER, 3),
+        ],
+    )
+
+    assert results[1]["outcome"] == "applied"
+    assert results[2]["outcome"] == "applied"
+
+
+def test_an_answer_and_its_correction_in_one_queue(client, admin_headers):
+    # Answered, then thought better of — both offline, both in the same queue.
+    # The second has to find the first, which nothing in the session guarantees
+    # until it has been flushed.
+    question = scaled_question(client, admin_headers)
+    results = sync(
+        client,
+        admin_headers,
+        [
+            answer_intent(1, question["id"], EARLIER, 2),
+            answer_intent(2, question["id"], LATER, 5),
+        ],
+    )
+
+    assert results[1]["outcome"] == "applied"
+    assert results[2]["outcome"] == "applied"
+    assert stored_answer(client, admin_headers, question["id"]) == 5

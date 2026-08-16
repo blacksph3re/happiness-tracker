@@ -334,11 +334,12 @@
    * lanes would be thirty rows of slivers, so the long windows answer "how
    * much" and leave "when" to the shorter ones.
    *
-   * Never by tag. A lane says when something ran, and a tag does not run —
-   * its projects do, several of them at once and each already drawn in its own
-   * colour, so the tag lane was the same blocks with the row labels taken away.
+   * Always by project, whichever grouping the rest of the page is using. A lane
+   * says when something ran, and a tag does not run — its projects do. Taking
+   * the strip away entirely in tag mode was the wrong conclusion from that: the
+   * short windows *are* the strip, and without it "Day" is a donut of one day.
    */
-  const strip = $derived(!asLine && by !== 'tag')
+  const strip = $derived(!asLine)
 
   // The page reads its totals; it does not own them. A component that cannot
   // assign to `rows` or `loading` cannot feed them back into the query, which
@@ -445,7 +446,7 @@
         />
       </label>
       <label class="flex flex-col gap-2">
-        <span class="meta">Ends on · {dayLabel(anchor)}</span>
+        <span class="meta">Ends on · {dayLabel(anchor, { withYear: true })}</span>
         <input
           type="range"
           min={earliest}

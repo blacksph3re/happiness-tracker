@@ -406,6 +406,12 @@ def sync_system_answers(
         .all()
     )
     values = _system_values(day, local_hour)
+    # Flushed at the end of this function, and the reason is the session: it is
+    # created with `autoflush=False`, so a later call in the same transaction
+    # would not see what this one added and would write the day's auto-tracked
+    # answers a second time. One request now carries a whole queue — several
+    # answers for one day arrive together — where it used to carry one write
+    # that committed before the next arrived.
     for question in system_questions:
         computed = values[question.system_key]
         if question.kind == "enum":
@@ -432,7 +438,7 @@ def sync_system_answers(
                 value=computed,
             )
         )
-
+    db.flush()
 
 def check_answer(question, option, day_value, day_option_id) -> None:
     """Check that a response fits the question it answers.

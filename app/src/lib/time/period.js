@@ -111,7 +111,13 @@ export function period(unit, anchor, length = 30) {
   if (unit === 'custom') {
     // The anchor is the last day; `length` decides how far back it reaches.
     const start = shiftDay(anchor, -(Math.max(1, length) - 1))
-    return { start, end: anchor, label: `${length} days to ${dayLabel(anchor)}` }
+    // With the year, because this is the one window that slides freely: two
+    // "30 days to Sat 16 Aug" a year apart are otherwise the same sentence.
+    return {
+      start,
+      end: anchor,
+      label: `${length} days to ${dayLabel(anchor, { withYear: true })}`,
+    }
   }
 
   if (unit === 'week') {
