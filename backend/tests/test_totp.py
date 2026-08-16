@@ -353,3 +353,77 @@ def test_a_sealed_secret_survives_the_round_trip_and_a_rotated_key_does_not():
     # enrolment, which they can simply do again.
     assert open_totp_secret("not-a-fernet-token") is None
     assert open_totp_secret(None) is None
+
+
+def run_clear_totp_script(db_path, username):
+    """Run `scripts/clear_totp.py` as a real subprocess against `db_path`.
+
+    Invoked out of process on purpose. The break-glass fails in ways an
+    in-process call cannot reproduce - a bad `sys.path` insert, an import that
+    only resolves under pytest, a required environment variable - and it is run
+    exactly once, at the worst possible moment, by somebody who cannot debug it.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    environment = dict(os.environ, DB_STORAGE=str(db_path))
+    # Cleared to prove the script's claim that it needs neither: nothing in it
+    # signs or decrypts, and a lockout is a poor moment to find a key missing.
+    environment.pop("JWT_SECRET", None)
+    environment.pop("TOTP_ENCRYPTION_KEY", None)
+    return subprocess.run(
+        [sys.executable, str(backend / "scripts" / "clear_totp.py"), username],
+        capture_output=True,
+        text=True,
+        cwd=backend,
+        env=environment,
+    )
+
+
+def test_the_break_glass_script_clears_an_enrolled_account(
+    client, admin_headers, enrolled, tmp_path
+):
+    assert sign_in(client).json()["status"] == "totp_required"
+
+    result = run_clear_totp_script(tmp_path / "test.db", "admin")
+
+    assert result.returncode == 0, result.stderr
+    assert "Cleared the second factor" in result.stdout
+    # The point of the whole exercise: the password alone gets you back in.
+    assert sign_in(client).json()["status"] == "complete"
+
+
+def test_the_break_glass_script_signs_the_account_out_everywhere(
+    client, admin_headers, enrolled, tmp_path
+):
+    before = sqlite3.connect(tmp_path / "test.db")
+    version = before.execute("SELECT token_version FROM users WHERE id=1").fetchone()[0]
+    before.close()
+
+    run_clear_totp_script(tmp_path / "test.db", "admin")
+
+    after = sqlite3.connect(tmp_path / "test.db")
+    bumped = after.execute("SELECT token_version FROM users WHERE id=1").fetchone()[0]
+    after.close()
+    # So this cannot be done to somebody quietly.
+    assert bumped > version
+
+
+def test_the_break_glass_script_reports_an_unknown_account(client, tmp_path):
+    result = run_clear_totp_script(tmp_path / "test.db", "nobody-by-that-name")
+
+    assert result.returncode == 1
+    assert "No account named" in result.stderr
+
+
+def test_the_break_glass_script_is_harmless_on_an_unenrolled_account(
+    client, admin_headers, tmp_path
+):
+    result = run_clear_totp_script(tmp_path / "test.db", "admin")
+
+    assert result.returncode == 0, result.stderr
+    assert "nothing to clear" in result.stdout
+    assert sign_in(client).json()["status"] == "complete"
