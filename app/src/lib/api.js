@@ -121,8 +121,19 @@ export function whenHoldingWrites(ask) {
 
 let refreshing = null
 
-/** Refresh at most once at a time, however many calls hit 401 together. */
-function refreshOnce() {
+/**
+ * Refresh at most once at a time, however many calls hit 401 together.
+ *
+ * Exported for `sync.js`'s own queue drain, which talks to the same endpoint
+ * this refreshes the token for but cannot go through `unwrap` — it needs the
+ * raw response to tell a merge from a conflict, where `unwrap` would just
+ * throw. An access token is only good for an hour by default, so without this
+ * a queue flushing after a quiet stretch read an ordinary, silently-fixable
+ * expiry as the server refusing the device outright.
+ *
+ * @returns {Promise<boolean>} True when a usable access token is now stored.
+ */
+export function refreshOnce() {
   refreshing ??= ensureFreshToken().finally(() => {
     refreshing = null
   })

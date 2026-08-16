@@ -1,4 +1,6 @@
 <script>
+  import { clearTokens } from './api.js'
+  import { navigate } from './router.js'
   import {
     conflicts,
     connection,
@@ -8,6 +10,22 @@
     pending,
     syncState,
   } from './sync.js'
+
+  /**
+   * Leave for the sign-in form, on purpose rather than by the redirect the app
+   * would eventually make on its own.
+   *
+   * `unwrap` already clears tokens and replaces the page when a *read* meets a
+   * dead session — but never while this device is holding writes, since doing
+   * that silently would cut the one route the queue has back to the server.
+   * `blocked` is exactly that state, held open until a person says go. This is
+   * the going: same two calls `signOut` in `App.svelte` makes, because leaving
+   * for the login form is leaving for the login form, however it was reached.
+   */
+  function signInAgain() {
+    clearTokens()
+    navigate('/login')
+  }
 
   /**
    * A cloud beside the mark, saying where this device's writes are.
@@ -128,6 +146,13 @@
         Signing in again is what fixes this. Nothing on this device is lost by
         doing so — the queue is kept and sent once the server knows you again.
       </p>
+      <button
+        class="meta mt-3 rounded-md border border-ember px-3 py-2 text-paper
+               hover:bg-ember/10"
+        onclick={signInAgain}
+      >
+        Sign in again
+      </button>
     {:else if $syncState === 'offline'}
       <p class="mt-2 text-sm text-haze">
         Everything recorded here is safe on this device and goes up by itself

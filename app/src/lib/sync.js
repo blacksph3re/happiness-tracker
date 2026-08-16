@@ -1,6 +1,6 @@
 import { derived, get, writable } from 'svelte/store'
 
-import { tokenHolder, whenHoldingWrites } from './api.js'
+import { refreshOnce, tokenHolder, whenHoldingWrites } from './api.js'
 import {
   appendIntent,
   askToPersist,
@@ -103,6 +103,14 @@ export function probe() {
 }
 
 async function ask() {
+  // Blocked means the refresh token itself is the one that no longer means
+  // anything — `drain` only reaches this state after already trying to renew
+  // it once and being refused. Nothing about the connection returning changes
+  // that answer, so asking again on a timer would just repeat a refusal for
+  // ever, once every `PROBE_EVERY`, until somebody actually signs in again
+  // through the control `SyncBadge` offers for exactly this.
+  if (get(connection) === 'blocked') return
+
   // A queue is its own probe: sending it learns the same thing and does the
   // work as well, so asking first would be a wasted round trip on exactly the
   // connection least able to afford one.
@@ -233,17 +241,30 @@ async function drain() {
     return
   }
 
-  const { data, error, response } = await syncIntents({
-    body: {
-      intents: waiting.map(({ seq, kind, client_id, payload, client_updated_at }) => ({
-        seq,
-        kind,
-        client_id,
-        payload,
-        client_updated_at,
-      })),
-    },
-  })
+  const send = () =>
+    syncIntents({
+      body: {
+        intents: waiting.map(({ seq, kind, client_id, payload, client_updated_at }) => ({
+          seq,
+          kind,
+          client_id,
+          payload,
+          client_updated_at,
+        })),
+      },
+    })
+
+  let { data, error, response } = await send()
+
+  // A 401 here is what an hour of use looks like, not a revoked session: the
+  // access token is short-lived by design, and a read hitting the same thing
+  // already refreshes and moves on without anyone noticing. Sending straight
+  // to `blocked` skipped that step for writes alone, so a queue flushing after
+  // a quiet stretch reported the server refusing the device outright, for the
+  // most ordinary reason there is.
+  if (response?.status === 401 && (await refreshOnce())) {
+    ;({ data, error, response } = await send())
+  }
 
   // No response at all: the request never reached a server. Everything stays
   // queued, and the next trigger tries again.
@@ -252,6 +273,9 @@ async function drain() {
     return
   }
   if (response.status === 401 || response.status === 403) {
+    // Still refused after a fresh access token: the refresh token itself is
+    // the one that no longer means anything, and there is no third thing left
+    // to try silently.
     connection.set('blocked')
     return
   }
