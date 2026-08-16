@@ -1307,6 +1307,44 @@ test('the time patterns come back the way they were left', async ({ page, accoun
   await expect(page.getByRole('button', { name: 'Next →' })).toBeDisabled()
 })
 
+test('untracked days are left out of the weekday average by default', async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  // Two Mondays: one worked, the far one left alone. A month-long window holds
+  // both, and dividing by every day in it rather than only the one this project
+  // actually ran on is the bug being guarded against here.
+  await recordSession(account, project.id, '2026-06-01T09:00:00', '2026-06-01T13:00:00')
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'Month', exact: true }).click()
+  await expect(page.locator('[data-period]')).toBeVisible()
+
+  await page.getByRole('button', { name: /Only days where/ }).click()
+  const toggle = page.getByRole('checkbox', {
+    name: 'Untracked days count toward the average',
+  })
+
+  // Off by default, and the panel says so in words too — this is the thing a
+  // reader would otherwise have no way to learn short of the number itself
+  // reading strangely low.
+  await expect(toggle).not.toBeChecked()
+  await expect(page.getByText('is left out of "Average by weekday"')).toBeVisible()
+
+  // Reloaded, not just clicked: the setting is a view preference like the rest
+  // of this panel, and half-remembering the panel's own filters while
+  // forgetting this one would be a strange kind of inconsistent.
+  await savesView(page, () => toggle.check())
+  await expect(page.getByText('counts as zero in "Average by weekday"')).toBeVisible()
+
+  await page.reload()
+  await page.getByRole('button', { name: /Only days where/ }).click()
+  await expect(
+    page.getByRole('checkbox', { name: 'Untracked days count toward the average' })
+  ).toBeChecked()
+})
+
 test('the two halves remember their views without overwriting each other', async ({
   page,
   account,

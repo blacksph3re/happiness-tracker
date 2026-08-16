@@ -7,6 +7,8 @@
  * patterns page therefore build their facets from the same code.
  */
 
+import { weekdayOf } from './day.js'
+
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 /** Most distinct values worth offering as chips before the row is unreadable. */
@@ -25,8 +27,7 @@ export const CHIP_LIMIT = 12
 export function weekdayFacet(days) {
   const byDay = {}
   for (const day of days) {
-    const [year, month, date] = day.split('-').map(Number)
-    byDay[day] = (new Date(year, month - 1, date).getDay() + 6) % 7
+    byDay[day] = weekdayOf(day)
   }
   return {
     key: 'weekday',

@@ -23,6 +23,21 @@ export function localHour() {
 }
 
 /**
+ * Which weekday a day key falls on, Monday first.
+ *
+ * `Date#getDay` counts from Sunday; every weekday-grouped view in this app
+ * reads left to right starting Monday, so this is the one conversion between
+ * the two rather than a `+6) % 7` repeated at each call site.
+ *
+ * @param {string} key A `YYYY-MM-DD` key.
+ * @returns {number} 0 for Monday through 6 for Sunday.
+ */
+export function weekdayOf(key) {
+  const [year, month, day] = key.split('-').map(Number)
+  return (new Date(year, month - 1, day).getDay() + 6) % 7
+}
+
+/**
  * Render a day key as a short human label, e.g. "Tue 4 Mar".
  *
  * @param {string} key A `YYYY-MM-DD` key.

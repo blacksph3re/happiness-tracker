@@ -9,6 +9,7 @@
   import { formatDuration, hours, nowUtc } from '../../lib/time/duration.js'
   import DayTimeline from '../../lib/time/DayTimeline.svelte'
   import { smoothSeries } from '../../lib/series.js'
+  import { weekdayAverages } from '../../lib/time/weekday.js'
   import {
     barOptions,
     lineOptions,
@@ -291,30 +292,24 @@
 
   const weekdayInput = $derived({
     labels: WEEKDAYS,
+    // `plotted`, not `days`: the raw window ignored "Only days where" entirely,
+    // so a facet narrowing the rest of the page did nothing to this one chart.
     series: filed.map((group) => ({
       name: group.name,
       colour: swatch(group.colour),
-      data: WEEKDAYS.map((_, index) => {
-        const matching = days.filter((day) => weekdayIndex(day) === index)
-        const total = matching.reduce(
-          (sum, day) => sum + (group.byDay.get(day) ?? 0),
-          0
-        )
-        return matching.length ? hours(total / matching.length) : 0
-      }),
+      data: weekdayAverages(plotted, group.byDay, { includeUntrackedDays }).map(hours),
     })),
   })
-
-  function weekdayIndex(day) {
-    const [year, month, date] = day.split('-').map(Number)
-    return (new Date(year, month - 1, date).getDay() + 6) % 7
-  }
 
   let fullDay = $state(false)
   let smoothing = $state(1)
   let showGaps = $state(false)
   let filters = $state({})
   let filtersOpen = $state(false)
+  // Off by default: "average by weekday" is expected to answer how long a day
+  // of this usually runs, not how thin the hours spread across every day of
+  // the window including the ones nothing happened on.
+  let includeUntrackedDays = $state(false)
 
   /** Whether the remembered view has been applied, so saving may begin. */
   let ready = $state(false)
@@ -344,6 +339,9 @@
     if (Number.isFinite(stored.smoothing)) smoothing = stored.smoothing
     if (typeof stored.showGaps === 'boolean') showGaps = stored.showGaps
     if (typeof stored.fullDay === 'boolean') fullDay = stored.fullDay
+    if (typeof stored.includeUntrackedDays === 'boolean') {
+      includeUntrackedDays = stored.includeUntrackedDays
+    }
     if (stored.filters && typeof stored.filters === 'object') {
       filters = Object.fromEntries(
         Object.entries(stored.filters)
@@ -363,6 +361,7 @@
       smoothing,
       showGaps,
       fullDay,
+      includeUntrackedDays,
       filters: Object.fromEntries(
         Object.entries(filters)
           .filter(([, values]) => values.size)
@@ -647,6 +646,26 @@
               ? 'Days without a reading for an active filter are left out.'
               : 'Nothing selected, so every day counts.'}
           </p>
+
+          {#if asLine}
+            <hr class="border-white/10" />
+            <!-- Not a facet: nothing here is removed from the window, and every
+                 other number on the page is unaffected. This narrows what one
+                 chart's own average divides by. -->
+            <label class="flex items-center gap-2">
+              <input
+                type="checkbox"
+                bind:checked={includeUntrackedDays}
+                class="accent-dusk"
+              />
+              <span class="meta">Untracked days count toward the average</span>
+            </label>
+            <p class="meta normal-case">
+              {includeUntrackedDays
+                ? 'A day nothing was tracked on counts as zero in "Average by weekday".'
+                : 'A day nothing was tracked on is left out of "Average by weekday".'}
+            </p>
+          {/if}
         </div>
       {/if}
     </div>
