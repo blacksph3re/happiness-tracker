@@ -1,5 +1,6 @@
 import {
   catalogueOf,
+  chartOption,
   expect,
   expectSettled,
   makeProject,
@@ -955,14 +956,6 @@ test('the smoothed line reaches past the window it is drawn for', async ({
   await page.waitForTimeout(500)
   expect(ranges.length, 'smoothing refetched the summary').toBe(before)
 })
-
-/** Read what a mounted chart was actually given, via the seam `chart` leaves for this. */
-async function chartOption(page, selector) {
-  return page.evaluate(
-    (sel) => document.querySelector(sel).__chartForTests.getOption(),
-    selector
-  )
-}
 
 test('a wide smoothing span bridges a gap instead of breaking the line there', async ({
   page,

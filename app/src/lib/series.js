@@ -73,3 +73,20 @@ export function tallyPairs(days, xs, ys) {
     busiest: points.reduce((most, [, , count]) => Math.max(most, count), 1),
   }
 }
+
+/**
+ * Count how many of the given days recorded each choice.
+ *
+ * @param {Array<string>} days Days to consider.
+ * @param {Record<string, string|number>} tagByDay Day to recorded choice id.
+ * @param {Array<{id: string|number}>} choices Choices to count, in display order.
+ * @returns {Array<number>} One count per choice, aligned by index.
+ */
+export function tallyChoices(days, tagByDay, choices) {
+  const counts = new Map(choices.map((choice) => [choice.id, 0]))
+  for (const day of days) {
+    const tag = tagByDay[day]
+    if (counts.has(tag)) counts.set(tag, counts.get(tag) + 1)
+  }
+  return choices.map((choice) => counts.get(choice.id))
+}

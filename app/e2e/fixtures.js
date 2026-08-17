@@ -247,6 +247,14 @@ export async function seedAnswers(api, questions, days, valueFor = () => 3) {
   }
 }
 
+/** Read what a mounted chart was actually given, via the seam `chart` leaves for this. */
+export async function chartOption(page, selector) {
+  return page.evaluate(
+    (sel) => document.querySelector(sel).__chartForTests.getOption(),
+    selector
+  )
+}
+
 /** Calendar days ending on `TODAY`, oldest first. */
 export function recentDays(count, end = TODAY) {
   const days = []
@@ -299,6 +307,41 @@ export async function makeTag(account, name, extra = {}) {
   const response = await account.api.post('/api/tags', { data: { name, ...extra } })
   expect(response.status(), `creating tag ${name}`).toBe(201)
   return response.json()
+}
+
+/**
+ * Create a catalogue of enum questions and point the account at it.
+ *
+ * Named uniquely per account, since catalogues are shared across users and a
+ * fixed name would collide between tests sharing a worker's database.
+ *
+ * @returns {Promise<object>} The catalogue, questions and their options attached.
+ */
+export async function makeEnumCatalogue(admin, account, questions) {
+  const created = await admin.post('/api/catalogues', {
+    data: { name: `enum-only-${account.username}` },
+  })
+  expect(created.status(), await created.text()).toBe(201)
+  const catalogue = await created.json()
+
+  for (const [position, [prompt, labels]] of questions.entries()) {
+    const response = await admin.post(`/api/catalogues/${catalogue.id}/questions`, {
+      data: {
+        kind: 'enum',
+        prompt,
+        position,
+        options: labels.map((label, index) => ({ label, position: index })),
+      },
+    })
+    expect(response.status(), await response.text()).toBe(201)
+  }
+
+  const chosen = await account.api.put('/api/me/default-catalogue', {
+    data: { catalogue_id: catalogue.id },
+  })
+  expect(chosen.ok(), await chosen.text()).toBeTruthy()
+
+  return (await admin.get(`/api/catalogues/${catalogue.id}`)).json()
 }
 
 let seeded = 0

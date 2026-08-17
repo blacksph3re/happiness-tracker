@@ -1,5 +1,6 @@
 <script>
   import * as echarts from 'echarts'
+  import { chart as chartAction } from '../../lib/chart-action.js'
   import {
     PALETTE,
     baseOptions,
@@ -7,8 +8,9 @@
     lineOptions,
     radarOptions,
     scatterOptions,
+    totalsOptions,
   } from '../../lib/chart-options.js'
-  import { fiveNumberSummary, movingAverage, tallyPairs } from '../../lib/series.js'
+  import { fiveNumberSummary, movingAverage, tallyChoices, tallyPairs } from '../../lib/series.js'
   import { plotWindow } from '../../lib/timeline.js'
   import {
     ensureAnswers,
@@ -56,8 +58,8 @@
     ['radar', 'Shape'],
     ['scatter', 'Correlation'],
     ['box', 'Spread'],
+    ['totals', 'Totals'],
   ]
-
 
   const numeric = $derived(variables.filter((v) => v.roles.includes('axis')))
   // Enum answers carry no scale, so they never become an axis. They colour the
@@ -76,6 +78,23 @@
   // though they can never carry a line, a radar spoke or a box.
   const axisChoices = $derived([...numeric, ...groupings])
   const plotted = $derived(numeric.filter((v) => chosen.has(v.key)))
+
+  // Every view but Totals plots a scale, so a catalogue of nothing but enum
+  // questions can only offer that one. Counting answers needs no scale.
+  const views = $derived(
+    numeric.length > 0 ? VIEWS : VIEWS.filter(([key]) => key === 'totals')
+  )
+
+  /**
+   * The view actually being drawn, which is not always the one stored.
+   *
+   * Derived rather than clamped back into `view`, for the same reason
+   * `windowLength` is: an effect that writes the state it reads is the loop
+   * this app has already shipped once, and a stored "Over time" should come
+   * back on its own if the account later answers something with a scale,
+   * rather than being permanently rewritten by one visit.
+   */
+  const activeView = $derived(views.some(([key]) => key === view) ? view : 'totals')
 
   $effect(() => {
     load()
@@ -329,12 +348,33 @@
     ),
   })
 
+  // Every discrete or enum question the account has answered, one bar plot
+  // each - unlike the other views this ignores the "Variables" picker, since
+  // "one plot for every question" is the whole point of Totals. A continuous
+  // question has no small set of answers to bar, so it never appears here.
+  const totalsVariables = $derived(
+    variables.filter(
+      (variable) =>
+        variable.origin === 'asked' &&
+        (variable.kind === 'discrete' || variable.kind === 'enum') &&
+        facetChoices(variable).length > 0
+    )
+  )
+
+  const totalsPlots = $derived(
+    totalsVariables.map((variable) => {
+      const choices = facetChoices(variable)
+      const counts = tallyChoices(days, facetByDay(variable), choices)
+      return { variable, options: totalsOptions({ choices, counts }) }
+    })
+  )
+
   const options = $derived.by(() => {
-    if (view === 'radar') return radarOptions(radarShape)
-    if (view === 'scatter') {
+    if (activeView === 'radar') return radarOptions(radarShape)
+    if (activeView === 'scatter') {
       return scatterPair ? scatterOptions(scatterPair) : baseOptions()
     }
-    if (view === 'box') return boxOptions(boxSummaries)
+    if (activeView === 'box') return boxOptions(boxSummaries)
     return lineOptions({
       days: timelineDays,
       series: lineSeries,
@@ -382,17 +422,17 @@
 
   {#if loading}
     <p class="meta">Loading…</p>
-  {:else if numeric.length === 0}
+  {:else if numeric.length === 0 && totalsVariables.length === 0}
     <div class="rounded-xl border border-white/10 bg-ink-soft p-8">
       <h2 class="text-xl font-bold">Nothing to plot yet</h2>
       <p class="mt-2 text-haze">Answer a few days and your patterns will appear here.</p>
     </div>
   {:else}
     <div class="mb-4 flex flex-wrap gap-2">
-      {#each VIEWS as [key, label] (key)}
+      {#each views as [key, label] (key)}
         <button
           class="meta rounded-md border px-4 py-2 transition
-                 {view === key
+                 {activeView === key
             ? 'border-ember bg-ember/10 text-paper'
             : 'border-white/15 hover:border-white/40'}"
           onclick={() => (view = key)}
@@ -409,7 +449,12 @@
         onclick={() => (showOpen = !showOpen)}
       >
         <span class="meta">
-          Show · {plotted.length} of {numeric.length}
+          {#if activeView === 'totals'}
+            Show · {totalsVariables.length}
+            {totalsVariables.length === 1 ? 'question' : 'questions'}
+          {:else}
+            Show · {plotted.length} of {numeric.length}
+          {/if}
           {#if activeFilters.length > 0}
             · {days.length} of {allDays.length} days
           {/if}
@@ -419,38 +464,40 @@
 
       {#if showOpen}
         <div class="border-t border-white/10 p-4">
-          <div class="mb-3 flex items-center justify-between gap-3">
-            <p class="meta">Variables</p>
-            <span class="flex gap-3">
-              <button
-                class="meta underline underline-offset-4 hover:text-paper"
-                onclick={() => (chosen = new Set(numeric.map((v) => v.key)))}
-              >
-                All
-              </button>
-              <button
-                class="meta underline underline-offset-4 hover:text-paper"
-                onclick={() => (chosen = new Set())}
-              >
-                None
-              </button>
-            </span>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            {#each numeric as variable (variable.key)}
-              <button
-                class="meta rounded-md border px-3 py-2 transition
-                       {chosen.has(variable.key)
-                  ? 'border-dusk-lift bg-dusk/30 text-paper'
-                  : 'border-white/15 hover:border-white/40'}
-                       {variable.origin === 'asked' ? '' : 'italic'}"
-                aria-pressed={chosen.has(variable.key)}
-                onclick={() => toggle(variable.key)}
-              >
-                {variable.label}
-              </button>
-            {/each}
-          </div>
+          {#if activeView !== 'totals'}
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <p class="meta">Variables</p>
+              <span class="flex gap-3">
+                <button
+                  class="meta underline underline-offset-4 hover:text-paper"
+                  onclick={() => (chosen = new Set(numeric.map((v) => v.key)))}
+                >
+                  All
+                </button>
+                <button
+                  class="meta underline underline-offset-4 hover:text-paper"
+                  onclick={() => (chosen = new Set())}
+                >
+                  None
+                </button>
+              </span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              {#each numeric as variable (variable.key)}
+                <button
+                  class="meta rounded-md border px-3 py-2 transition
+                         {chosen.has(variable.key)
+                    ? 'border-dusk-lift bg-dusk/30 text-paper'
+                    : 'border-white/15 hover:border-white/40'}
+                         {variable.origin === 'asked' ? '' : 'italic'}"
+                  aria-pressed={chosen.has(variable.key)}
+                  onclick={() => toggle(variable.key)}
+                >
+                  {variable.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
 
           {#if filterable.length > 0}
             <hr class="my-4 border-white/10" />
@@ -517,7 +564,7 @@
         />
       </label>
 
-      <div class="mt-4 grid gap-4 {view === 'line' ? 'sm:grid-cols-2' : ''}">
+      <div class="mt-4 grid gap-4 {activeView === 'line' ? 'sm:grid-cols-2' : ''}">
         <label class="flex flex-col gap-2">
           <span class="meta">
             Length · {windowLength} {windowLength === 1 ? 'day' : 'days'}
@@ -531,7 +578,7 @@
             class="h-2 w-full cursor-pointer appearance-none rounded-full bg-dusk-deep accent-ember"
           />
         </label>
-        {#if view === 'line'}
+        {#if activeView === 'line'}
           <label class="flex flex-col gap-2">
             <!-- Named for what it actually averages. With a filter on, the
                  seven days are seven Saturdays rather than a week, and calling
@@ -556,7 +603,7 @@
       </div>
     </div>
 
-    {#if view === 'scatter'}
+    {#if activeView === 'scatter'}
       <!-- Stacked and width-constrained: a long prompt in a select must not
            push the control off a narrow screen. -->
       <div class="mb-4 grid gap-3 sm:grid-cols-2">
@@ -587,7 +634,30 @@
       </div>
     {/if}
 
-    {#if plotted.length === 0 && view !== 'scatter'}
+    {#if activeView === 'totals'}
+      {#if totalsPlots.length === 0}
+        <div class="flex h-[26rem] items-center justify-center rounded-xl border border-white/10
+                    bg-ink-soft px-6 text-center">
+          <p class="text-haze">No discrete or enum questions to total yet.</p>
+        </div>
+      {:else}
+        <div class="grid gap-4 sm:grid-cols-2">
+          {#each totalsPlots as plot (plot.variable.key)}
+            <div class="rounded-xl border border-white/10 bg-ink-soft p-4">
+              <p class="meta mb-2 truncate normal-case text-paper" title={plot.variable.label}>
+                {plot.variable.label}
+              </p>
+              <div
+                use:chartAction={plot.options}
+                class="h-64 w-full"
+                data-totals-chart
+                data-question={plot.variable.key}
+              ></div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {:else if plotted.length === 0 && activeView !== 'scatter'}
       <div class="flex h-[26rem] items-center justify-center rounded-xl border border-white/10
                   bg-ink-soft px-6 text-center">
         <p class="text-haze">Choose a variable above to plot it.</p>
@@ -598,7 +668,7 @@
         class="h-[26rem] w-full rounded-xl border border-white/10 bg-ink-soft p-2"
       ></div>
 
-      {#if view === 'box'}
+      {#if activeView === 'box'}
         <ol class="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
           {#each plotted as variable, index (variable.key)}
             <li class="flex min-w-0 items-baseline gap-2 text-sm">

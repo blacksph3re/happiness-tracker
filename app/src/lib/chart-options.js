@@ -205,3 +205,44 @@ export function boxOptions({ labels, summaries }) {
     ],
   }
 }
+
+/**
+ * Count how many days recorded each possible answer to one question.
+ *
+ * @param {{choices: Array<{label: string}>, counts: Array<number>}} input
+ */
+export function totalsOptions({ choices, counts }) {
+  return {
+    ...baseOptions(),
+    legend: undefined,
+    grid: { left: 36, right: 16, top: 16, bottom: choices.length > 5 ? 64 : 32 },
+    tooltip: {
+      trigger: 'item',
+      formatter: ({ dataIndex, value }) =>
+        `${choices[dataIndex]?.label ?? ''}: ${value} ${value === 1 ? 'day' : 'days'}`,
+    },
+    xAxis: {
+      type: 'category',
+      data: choices.map((choice) => choice.label),
+      axisLine: { lineStyle: { color: AXIS_LINE } },
+      axisLabel: {
+        interval: 0,
+        rotate: choices.length > 5 ? 30 : 0,
+        formatter: (v) => (v.length > 14 ? `${v.slice(0, 13)}…` : v),
+      },
+    },
+    yAxis: {
+      type: 'value',
+      minInterval: 1,
+      splitLine: { lineStyle: { color: GRIDLINE } },
+    },
+    series: [
+      {
+        type: 'bar',
+        data: counts,
+        itemStyle: { color: PALETTE[0] },
+        barMaxWidth: 48,
+      },
+    ],
+  }
+}

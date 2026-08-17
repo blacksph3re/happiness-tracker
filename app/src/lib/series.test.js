@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { movingAverage } from './series.js'
+import { movingAverage, tallyChoices } from './series.js'
 
 /**
  * What a day with nothing on it does to a line.
@@ -77,5 +77,30 @@ describe('movingAverage', () => {
     // both readings and averages them; the edges have one apiece and read it
     // back.
     expect(movingAverage([2, null, 4], 3)).toEqual([2, 3, 4])
+  })
+})
+
+describe('tallyChoices', () => {
+  test('counts how many days recorded each choice', () => {
+    const tagByDay = { d1: 'a', d2: 'b', d3: 'a', d4: 'a' }
+    const choices = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+
+    expect(tallyChoices(['d1', 'd2', 'd3', 'd4'], tagByDay, choices)).toEqual([3, 1, 0])
+  })
+
+  test('a day outside the window given does not count', () => {
+    const tagByDay = { d1: 'a', d2: 'a' }
+    const choices = [{ id: 'a' }]
+
+    // d2 recorded the same choice as d1, but only d1 is in the window - proof
+    // the count follows the days given rather than every day the tag exists.
+    expect(tallyChoices(['d1'], tagByDay, choices)).toEqual([1])
+  })
+
+  test('a day with no recorded tag counts toward nothing', () => {
+    const tagByDay = { d1: 'a' }
+    const choices = [{ id: 'a' }]
+
+    expect(tallyChoices(['d1', 'd2'], tagByDay, choices)).toEqual([1])
   })
 })

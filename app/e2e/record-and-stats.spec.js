@@ -1,9 +1,12 @@
 import {
   catalogueOf,
+  chartOption,
   expect,
+  makeEnumCatalogue,
   realQuestions,
   recentDays,
   savesView,
+  seedAnswer,
   seedAnswers,
   test,
   TODAY,
@@ -139,7 +142,7 @@ test('every stats view renders, and the controls survive a reload', async ({
   await page.goto('/stats')
 
   const chart = page.locator('canvas')
-  for (const view of ['Over time', 'Shape', 'Correlation', 'Spread']) {
+  for (const view of ['Over time', 'Shape', 'Correlation', 'Spread', 'Totals']) {
     await page.getByRole('button', { name: view }).click()
     await expect(chart.first()).toBeVisible()
   }
@@ -172,6 +175,78 @@ test('auto-tracked variables filter the data instead of being plotted', async ({
   await expect(page.getByText('Weekday', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Sat', exact: true }).click()
   await expect(page.getByText(/\d+ of \d+ days match/)).toBeVisible()
+})
+
+test('Totals hides the "Variables" picker, since it always plots every question', async ({
+  page,
+  account,
+}) => {
+  await withHistory(account, 21)
+  await page.goto('/stats')
+  await page.getByRole('button', { name: 'Totals' }).click()
+  await page.getByRole('button', { name: /^Show/ }).click()
+
+  await expect(page.getByText('Variables')).toHaveCount(0)
+  await expect(page.getByText('Only days where')).toBeVisible()
+})
+
+test('Totals counts how many days recorded each answer to a question', async ({
+  page,
+  account,
+}) => {
+  const question = realQuestions(await catalogueOf(account.api))[0]
+  const days = recentDays(6)
+  // Three answers of 0, two of 3, one of 5 - a distribution no single count
+  // could pass by accident.
+  const values = [0, 0, 0, 3, 3, 5]
+  for (const [index, day] of days.entries()) {
+    await seedAnswer(account.api, { day, question_id: question.id, value: values[index] })
+  }
+
+  await page.goto('/stats')
+  await page.getByRole('button', { name: 'Totals' }).click()
+  const selector = `[data-totals-chart][data-question="q${question.id}"]`
+  await expect(page.locator(selector)).toBeVisible()
+
+  const option = await chartOption(page, selector)
+  const counts = Object.fromEntries(option.xAxis[0].data.map((label, i) => [label, option.series[0].data[i]]))
+  expect(counts).toMatchObject({ 0: 3, 3: 2, 5: 1 })
+})
+
+test('an enum-only catalogue still gets its Totals', async ({ page, account, admin }) => {
+  // Nothing here has a scale, so there is no line, no radar spoke and no box to
+  // draw - the page used to call that "Nothing to plot yet" and stop. Counting
+  // answers needs no scale, so Totals has something to say where the rest do
+  // not.
+  const catalogue = await makeEnumCatalogue(admin, account, [
+    ['How did you get to work', ['Walked', 'Cycled', 'Drove']],
+  ])
+  const question = realQuestions(catalogue)[0]
+  const [walked, cycled] = question.options
+  const days = recentDays(3)
+  for (const [index, day] of days.entries()) {
+    await seedAnswer(account.api, {
+      day,
+      question_id: question.id,
+      option_id: index === 0 ? cycled.id : walked.id,
+    })
+  }
+
+  await page.goto('/stats')
+
+  // Totals is the only view offered, and it is the one showing. Asserted before
+  // the absences below, which a page still loading would satisfy for free.
+  await expect(page.getByRole('button', { name: 'Totals' })).toHaveClass(/border-ember/)
+  await expect(page.getByText('Nothing to plot yet')).toHaveCount(0)
+  for (const absent of ['Over time', 'Shape', 'Correlation', 'Spread']) {
+    await expect(page.getByRole('button', { name: absent })).toHaveCount(0)
+  }
+
+  const selector = `[data-totals-chart][data-question="q${question.id}"]`
+  await expect(page.locator(selector)).toBeVisible()
+  const option = await chartOption(page, selector)
+  expect(option.xAxis[0].data).toEqual(['Walked', 'Cycled', 'Drove'])
+  expect(option.series[0].data).toEqual([2, 1, 0])
 })
 
 test('deep links open the page they name', async ({ page }) => {
