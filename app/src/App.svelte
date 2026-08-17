@@ -75,8 +75,9 @@
     $route.startsWith('/time') ? 'time' : ACCOUNT_PATHS.includes($route) ? null : 'wellbeing'
   )
 
-  // The editor and admin entries are hidden without the matching flag; the API
-  // enforces it regardless, this only keeps the menu honest.
+  // Questions is offered to everyone: a catalogue belongs to the account that
+  // answers it, so shaping one is not administration. Only People is still
+  // gated, and the API enforces that regardless — this keeps the menu honest.
   const NAV = $derived(
     section === 'time'
       ? [
@@ -90,7 +91,7 @@
             ['/answer', 'Answer'],
             ['/table', 'Record'],
             ['/stats', 'Patterns'],
-            ...($me?.is_editor ? [['/questions', 'Questions']] : []),
+            ['/questions', 'Questions'],
           ]
         : []
   )

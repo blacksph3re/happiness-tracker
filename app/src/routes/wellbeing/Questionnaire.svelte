@@ -89,10 +89,10 @@
       const all = await ensureCatalogues()
       catalogueId = all?.[0]?.id
     }
-    if (!catalogueId) {
-      pushToast('No catalogue is set up yet. Ask an editor to create one.')
-      return
-    }
+    // No toast, and no error: an account with no catalogue is a state a person
+    // can deliberately arrive at by deleting their last one, and the page says
+    // so below rather than reporting it as something gone wrong.
+    if (!catalogueId) return
     catalogue = await ensureCatalogue(catalogueId)
     await loadDay()
   }
@@ -215,13 +215,35 @@
 >
   {#if loading}
     <p class="meta">Loading your questions…</p>
+  {:else if !catalogue}
+    <div class="rounded-xl border border-white/10 bg-ink-soft p-8">
+      <h1 class="text-2xl font-bold">No questions yet</h1>
+      <p class="mt-2 text-haze">
+        Your questions are yours to shape. Build a set from a starting point, or
+        write your own from scratch.
+      </p>
+      <a
+        href="/questions"
+        use:link
+        class="mt-5 inline-block rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift"
+      >
+        Set up your questions
+      </a>
+    </div>
   {:else if !current && !onClosingCard}
     <div class="rounded-xl border border-white/10 bg-ink-soft p-8">
       <h1 class="text-2xl font-bold">Nothing to answer</h1>
       <p class="mt-2 text-haze">
-        This catalogue has no active questions yet. An editor can add some from the
-        catalogue page.
+        This catalogue has no active questions yet. You can add some on the
+        questions page.
       </p>
+      <a
+        href="/questions"
+        use:link
+        class="mt-5 inline-block rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift"
+      >
+        Add questions
+      </a>
     </div>
   {:else}
     <header class="mb-8 flex flex-col gap-2">

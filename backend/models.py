@@ -78,9 +78,6 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     """Whether the user may manage other users. Grants nothing else."""
 
-    is_editor: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    """Whether the user may edit catalogues and questions. Grants nothing else."""
-
     default_catalogue_id: Mapped[int | None] = mapped_column(
         ForeignKey("catalogues.id", ondelete="SET NULL"), nullable=True
     )
@@ -145,8 +142,15 @@ class User(Base):
     first edit to any of them fills it in.
     """
 
-    default_catalogue: Mapped[Catalogue | None] = relationship()
-    """The catalogue referenced by `default_catalogue_id`."""
+    default_catalogue: Mapped[Catalogue | None] = relationship(
+        foreign_keys=[default_catalogue_id]
+    )
+    """The catalogue referenced by `default_catalogue_id`.
+
+    The foreign key is named explicitly because there are now two between these
+    tables — this one, and `catalogues.user_id` pointing back — and SQLAlchemy
+    cannot pick between them on its own.
+    """
 
     answers: Mapped[list[Answer]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
@@ -155,15 +159,31 @@ class User(Base):
 
 
 class Catalogue(Base):
-    """A named group of questions that users answer together."""
+    """A named group of questions, belonging to the person who answers them."""
 
     __tablename__ = "catalogues"
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_catalogue_name_per_user"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     """Surrogate primary key."""
 
-    name: Mapped[str] = mapped_column(String(255), unique=True)
-    """Unique display name."""
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """Whose catalogue this is.
+
+    Deliberately no ORM relationship in either direction. `users` and
+    `catalogues` reference each other — this column one way,
+    `users.default_catalogue_id` the other — and a pair of plain relationships
+    over two foreign key paths is ambiguous to SQLAlchemy. The cascade is the
+    database's job here, which it does without one.
+    """
+
+    name: Mapped[str] = mapped_column(String(255))
+    """Display name, unique among that user's catalogues."""
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
@@ -452,9 +472,7 @@ class Answer(Base):
     )
     """Timestamp set on insert and refreshed on every update."""
 
-    client_updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     """When the device recording this answer says it was given.
 
     Stamped at the moment of the tap rather than at the moment it reached the
@@ -463,9 +481,7 @@ class Answer(Base):
     and for any client that does not send one.
     """
 
-    server_received_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
+    server_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     """When the server accepted the write that last set this row.
 
     Kept beside `client_updated_at` so a device with a wrong clock leaves
@@ -775,14 +791,10 @@ class TimeEntry(Base):
     identity outlives the row.
     """
 
-    client_updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     """When the device says this session was last changed. See `Answer`."""
 
-    server_received_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
+    server_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     """When the server accepted the write that last set this row."""
 
     created_at: Mapped[datetime] = mapped_column(

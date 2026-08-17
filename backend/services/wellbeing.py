@@ -8,12 +8,15 @@ from models import (
     AGGREGATES,
     ORIGIN_ASKED,
     ORIGIN_AUTO,
+    ORIGIN_COMPUTED,
     SYSTEM_KEYS,
     Answer,
     Catalogue,
     Question,
     QuestionOption,
+    ScoreComponent,
 )
+from templates import SCORE_POSITION, Template
 
 WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 """Weekday option labels, ordered so that index 0 is Monday."""
@@ -62,7 +65,7 @@ data, and the remaining three are scales that happen to be recorded for you.
 """
 
 
-def create_catalogue(db: Session, name: str) -> Catalogue:
+def create_catalogue(db: Session, name: str, user_id: int) -> Catalogue:
     """Create a catalogue together with its five auto-tracked questions.
 
     Every catalogue carries its own copy of the system questions, so no code
@@ -74,14 +77,16 @@ def create_catalogue(db: Session, name: str) -> Catalogue:
     db : sqlalchemy.orm.Session
         Active database session. Not committed by this function.
     name : str
-        Unique display name for the catalogue.
+        Display name, unique among that user's catalogues.
+    user_id : int
+        The account the catalogue belongs to.
 
     Returns
     -------
     Catalogue
         The new catalogue, flushed so that its id is populated.
     """
-    catalogue = Catalogue(name=name)
+    catalogue = Catalogue(name=name, user_id=user_id)
     db.add(catalogue)
     db.flush()
     for offset, key in enumerate(SYSTEM_KEYS):
@@ -104,12 +109,107 @@ def create_catalogue(db: Session, name: str) -> Catalogue:
         db.flush()
         for position, label in enumerate(spec.get("options", ())):
             db.add(
-                QuestionOption(
-                    question_id=question.id, label=label, position=position
-                )
+                QuestionOption(question_id=question.id, label=label, position=position)
             )
     db.flush()
     return catalogue
+
+
+def build_from_template(
+    db: Session, template: Template, user_id: int, name: str | None = None
+) -> Catalogue:
+    """Create a catalogue holding a template's questions and its score.
+
+    The questions are copied, not linked: a catalogue built from a template
+    stops having anything to do with it the moment it exists, so changing a
+    template in a later release cannot rewrite somebody's history.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session. Not committed by this function.
+    template : templates.Template
+        The starter set to build from.
+    user_id : int
+        The account the catalogue belongs to.
+    name : str, optional
+        What to call it, overriding the template's own name.
+
+    Returns
+    -------
+    Catalogue
+        The new catalogue, flushed so that its id is populated.
+    """
+    catalogue = create_catalogue(db, name or template.name, user_id)
+    for position, item in enumerate(template.questions):
+        low, high, low_label, high_label = item.bounds
+        db.add(
+            Question(
+                catalogue_id=catalogue.id,
+                kind="discrete",
+                prompt=item.prompt,
+                position=position,
+                active=True,
+                min_value=low,
+                max_value=high,
+                min_label=low_label,
+                max_label=high_label,
+            )
+        )
+    db.flush()
+    if template.score is not None:
+        _add_score(db, catalogue, template.score)
+    return catalogue
+
+
+def _add_score(db: Session, catalogue: Catalogue, name: str) -> Question:
+    """Add a total over every asked question of a catalogue.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    catalogue : Catalogue
+        The catalogue whose asked questions the score reads.
+    name : str
+        What the score is called.
+
+    Returns
+    -------
+    Question
+        The computed question standing for the score.
+    """
+    score = Question(
+        catalogue_id=catalogue.id,
+        kind="continuous",
+        prompt=name,
+        position=SCORE_POSITION,
+        active=True,
+        origin=ORIGIN_COMPUTED,
+        aggregate="sum",
+        require_all=True,
+        # Bounds are worked out from the components on read, so the stored pair
+        # is only there to satisfy the column.
+        min_value=0.0,
+        max_value=1.0,
+    )
+    db.add(score)
+    db.flush()
+
+    sources = db.execute(
+        select(Question).where(
+            Question.catalogue_id == catalogue.id,
+            Question.origin == ORIGIN_ASKED,
+        )
+    ).scalars()
+    for source in sources:
+        db.add(
+            ScoreComponent(
+                score_question_id=score.id, source_question_id=source.id, weight=1.0
+            )
+        )
+    db.flush()
+    return score
 
 
 class QuestionRuleError(ValueError):
@@ -439,6 +539,7 @@ def sync_system_answers(
             )
         )
     db.flush()
+
 
 def check_answer(question, option, day_value, day_option_id) -> None:
     """Check that a response fits the question it answers.

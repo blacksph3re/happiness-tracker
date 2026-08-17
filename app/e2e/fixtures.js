@@ -1,6 +1,6 @@
 import { test as base, expect, request } from '@playwright/test'
 
-import { ADMIN, DEFAULT_CATALOGUE, NOW, TODAY, baseUrlFor } from '../playwright.config.js'
+import { ADMIN, NOW, TEMPLATE, TODAY, baseUrlFor } from '../playwright.config.js'
 
 export { expect, TODAY }
 
@@ -60,20 +60,11 @@ export const test = base.extend({
     const username = `e2e-${testInfo.workerIndex}-${sequence}`
     const password = 'e2e-user-password'
 
-    // By name, never "the first one": the listing is alphabetical, so a test
-    // that creates a catalogue would otherwise change what later tests answer.
-    const catalogues = await (await admin.get('/api/catalogues')).json()
-    const bootstrapped = catalogues.find((c) => c.name === DEFAULT_CATALOGUE)
-    expect(bootstrapped, `no ${DEFAULT_CATALOGUE} catalogue to answer`).toBeTruthy()
-
+    // Built from a starter set rather than pointed at a shared catalogue: every
+    // account owns its questions now, so there is nothing to point at until the
+    // account exists and the server has made it one of its own.
     const created = await admin.post('/api/users', {
-      data: {
-        username,
-        password,
-        is_admin: false,
-        is_editor: false,
-        default_catalogue_id: bootstrapped.id,
-      },
+      data: { username, password, is_admin: false, template: TEMPLATE },
     })
     expect(created.ok(), await created.text()).toBeTruthy()
 
@@ -156,22 +147,28 @@ export async function answerBand(page, index) {
  * @returns {Promise<object>} The catalogue, with its questions attached.
  */
 export async function privateCatalogue(admin, account, questions) {
-  const created = await admin.post('/api/catalogues', {
+  // Created and switched to through the account's own context. Catalogues
+  // belong to whoever makes them, so one the admin created would answer 404 for
+  // the account under test — and `default-catalogue` refuses a catalogue that
+  // is not yours, which is the same rule seen from the other side.
+  const created = await account.api.post('/api/catalogues', {
     data: { name: `spec-${account.username}` },
   })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { id } = await created.json()
 
   for (const question of questions) {
-    const added = await admin.post(`/api/catalogues/${id}/questions`, { data: question })
+    const added = await account.api.post(`/api/catalogues/${id}/questions`, {
+      data: question,
+    })
     expect(added.ok(), await added.text()).toBeTruthy()
   }
-  const moved = await admin.put(`/api/users/${account.id}`, {
-    data: { default_catalogue_id: id },
+  const moved = await account.api.put('/api/me/default-catalogue', {
+    data: { catalogue_id: id },
   })
   expect(moved.ok(), await moved.text()).toBeTruthy()
 
-  return (await admin.get(`/api/catalogues/${id}`)).json()
+  return (await account.api.get(`/api/catalogues/${id}`)).json()
 }
 
 /** Give `account` the named permission flags. */
@@ -318,14 +315,16 @@ export async function makeTag(account, name, extra = {}) {
  * @returns {Promise<object>} The catalogue, questions and their options attached.
  */
 export async function makeEnumCatalogue(admin, account, questions) {
-  const created = await admin.post('/api/catalogues', {
+  // Through the account's own context: a catalogue belongs to whoever creates
+  // it, and one the admin made would be invisible to the account under test.
+  const created = await account.api.post('/api/catalogues', {
     data: { name: `enum-only-${account.username}` },
   })
   expect(created.status(), await created.text()).toBe(201)
   const catalogue = await created.json()
 
   for (const [position, [prompt, labels]] of questions.entries()) {
-    const response = await admin.post(`/api/catalogues/${catalogue.id}/questions`, {
+    const response = await account.api.post(`/api/catalogues/${catalogue.id}/questions`, {
       data: {
         kind: 'enum',
         prompt,
@@ -341,7 +340,7 @@ export async function makeEnumCatalogue(admin, account, questions) {
   })
   expect(chosen.ok(), await chosen.text()).toBeTruthy()
 
-  return (await admin.get(`/api/catalogues/${catalogue.id}`)).json()
+  return (await account.api.get(`/api/catalogues/${catalogue.id}`)).json()
 }
 
 let seeded = 0

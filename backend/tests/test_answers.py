@@ -111,9 +111,7 @@ def test_repeated_answers_upsert_rather_than_duplicate(
     assert rows[0]["value"] == 2.0
 
 
-def test_past_and_future_days_are_unbounded(
-    client, admin_headers, starter_questions
-):
+def test_past_and_future_days_are_unbounded(client, admin_headers, starter_questions):
     question_id = starter_questions[0]["id"]
     for day in ("1999-01-01", "2099-12-31"):
         assert (
@@ -135,9 +133,7 @@ def test_answers_are_filtered_by_range(client, admin_headers, starter_questions)
     assert {row["day"] for row in rows} == {"2026-06-01"}
 
 
-def test_system_questions_reject_direct_writes(
-    client, admin_headers, catalogue_id
-):
+def test_system_questions_reject_direct_writes(client, admin_headers, catalogue_id):
     detail = client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers).json()
     system_id = next(q["id"] for q in detail["questions"] if q["system_key"])
     assert answer(client, admin_headers, system_id, 3)["outcome"] == "conflict"
@@ -174,8 +170,7 @@ def test_enum_answer_requires_a_matching_option(
     # both refused, and refused by the rules rather than by the door, which is
     # why they are still refused now the door has gone.
     assert (
-        answer(client, admin_headers, created["id"], value=1)["outcome"]
-        == "conflict"
+        answer(client, admin_headers, created["id"], value=1)["outcome"] == "conflict"
     )
     assert (
         answer(client, admin_headers, starter_questions[0]["id"], option_id=option_id)[
@@ -184,32 +179,58 @@ def test_enum_answer_requires_a_matching_option(
         == "conflict"
     )
 
-def test_users_cannot_see_or_touch_each_others_answers(
-    client, admin_headers, starter_questions
-):
+
+def own_first_question(client, headers):
+    """Return the id of that account's own first asked question."""
+    me = client.get("/api/me", headers=headers).json()
+    detail = client.get(
+        f"/api/catalogues/{me['default_catalogue_id']}", headers=headers
+    ).json()
+    return next(q["id"] for q in detail["questions"] if q["origin"] == "asked")
+
+
+def test_users_cannot_see_or_touch_each_others_answers(client, admin_headers):
+    # Each account answers its *own* copy of the question now. They cannot share
+    # one: a catalogue belongs to somebody, so the two ids below differ.
     _, alice = make_user(client, admin_headers, "alice")
     _, bob = make_user(client, admin_headers, "bob")
-    question_id = starter_questions[0]["id"]
+    alice_question = own_first_question(client, alice)
+    bob_question = own_first_question(client, bob)
+    assert alice_question != bob_question
 
-    answer(client, alice, question_id, 5)
+    answer(client, alice, alice_question, 5)
     assert client.get("/api/answers", headers=bob).json() == []
 
-    answer(client, bob, question_id, 1)
+    answer(client, bob, bob_question, 1)
     alice_rows = [
         row
         for row in client.get("/api/answers", headers=alice).json()
-        if row["question_id"] == question_id
+        if row["question_id"] == alice_question
     ]
     assert alice_rows[0]["value"] == 5.0
 
     # Bob overwriting his own answer leaves Alice's untouched.
-    answer(client, bob, question_id, 2)
+    answer(client, bob, bob_question, 2)
     alice_after = [
         row
         for row in client.get("/api/answers", headers=alice).json()
-        if row["question_id"] == question_id
+        if row["question_id"] == alice_question
     ]
     assert alice_after[0]["value"] == 5.0
+
+
+def test_answering_another_accounts_question_is_refused(client, admin_headers):
+    # The hole the ownership sweep closed. Nothing in the app offers this, but
+    # the sync queue takes a bare question id and used to look no further than
+    # whether it existed.
+    _, alice = make_user(client, admin_headers, "alice")
+    _, bob = make_user(client, admin_headers, "bob")
+    alice_question = own_first_question(client, alice)
+
+    verdict = answer(client, bob, alice_question, 3)
+
+    assert verdict["outcome"] == "conflict", verdict
+    assert client.get("/api/answers", headers=bob).json() == []
 
 
 def test_stats_variables_report_roles(
@@ -294,6 +315,7 @@ def test_non_finite_values_are_rejected(client, admin_headers, starter_questions
         assert response.status_code == 200, f"{raw} -> {response.status_code}"
         verdict = response.json()["results"][0]
         assert verdict["outcome"] == "conflict", f"{raw} -> {verdict}"
+
 
 def test_one_set_of_system_answers_per_day_across_catalogues(
     client, admin_headers, starter_questions

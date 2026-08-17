@@ -1,33 +1,48 @@
 import { expect, grant, test } from './fixtures.js'
 import { ADMIN } from '../playwright.config.js'
 
-test('the navigation shows only what the flags allow', async ({ page, account, admin }) => {
-  // Neither flag: no editing, no people.
+test('everyone shapes their own questions; only admins see People', async ({
+  page,
+  account,
+  admin,
+}) => {
+  // Questions is no longer a permission. A catalogue belongs to whoever answers
+  // it, so shaping one is not administration and the entry is always there.
   await page.goto('/answer')
   const nav = page.locator('header')
   await expect(nav.getByRole('link', { name: 'Patterns' })).toBeVisible()
-  await expect(nav.getByRole('link', { name: 'Questions' })).toHaveCount(0)
-  await expect(nav.getByRole('link', { name: 'People' })).toHaveCount(0)
-
-  // Editor sees Questions only.
-  await grant(admin, account, { is_editor: true })
-  await page.reload()
   await expect(nav.getByRole('link', { name: 'Questions' })).toBeVisible()
   await expect(nav.getByRole('link', { name: 'People' })).toHaveCount(0)
 
-  // Admin as well sees both.
   await grant(admin, account, { is_admin: true })
   await page.reload()
-  await expect(nav.getByRole('link', { name: 'Questions' })).toBeVisible()
   await expect(nav.getByRole('link', { name: 'People' })).toBeVisible()
 })
 
 test('the server refuses what the navigation hides', async ({ account }) => {
-  // The nav is a convenience; the guard is the API.
-  const created = await account.api.post('/api/catalogues', { data: { name: 'Sneaky' } })
-  expect(created.status()).toBe(403)
+  // The nav is a convenience; the guard is the API. Managing people is still
+  // gated; making a catalogue of your own never was and now is not pretending.
+  const created = await account.api.post('/api/catalogues', { data: { name: 'Mine' } })
+  expect(created.status()).toBe(201)
   const listed = await account.api.get('/api/users')
   expect(listed.status()).toBe(403)
+})
+
+test('one account cannot reach another account questions', async ({
+  account,
+  admin,
+  baseURL,
+}) => {
+  // The ownership sweep, from the browser's side of the wire.
+  const mine = (await (await account.api.get('/api/me')).json()).default_catalogue_id
+  const theirs = (await (await admin.get('/api/me')).json()).default_catalogue_id
+  expect(mine).not.toBe(theirs)
+
+  expect((await account.api.get(`/api/catalogues/${theirs}`)).status()).toBe(404)
+  expect(
+    (await account.api.put(`/api/catalogues/${theirs}`, { data: { name: 'x' } })).status()
+  ).toBe(404)
+  expect((await account.api.delete(`/api/catalogues/${theirs}`)).status()).toBe(404)
 })
 
 test('signing out clears the app and returns to the form', async ({ page }) => {
@@ -99,7 +114,7 @@ test('an administrator can delete an account and reset a password', async ({
   await grant(admin, account, { is_admin: true })
   const victim = `e2e-doomed-${Date.now()}`
   const created = await admin.post('/api/users', {
-    data: { username: victim, password: 'e2e-user-password', is_admin: false, is_editor: false },
+    data: { username: victim, password: 'e2e-user-password', is_admin: false },
   })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { id } = await created.json()

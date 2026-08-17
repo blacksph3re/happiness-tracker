@@ -98,33 +98,5 @@ def require_admin(user: CurrentUser) -> User:
     return user
 
 
-def require_editor(user: CurrentUser) -> User:
-    """Require the catalogue-editing permission.
-
-    Parameters
-    ----------
-    user : User
-        The authenticated user.
-
-    Returns
-    -------
-    User
-        The same user, once the flag is confirmed.
-
-    Raises
-    ------
-    fastapi.HTTPException
-        With status 403 when the user does not hold `is_editor`.
-    """
-    if not user.is_editor:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Editor permission required"
-        )
-    return user
-
-
 AdminUser = Annotated[User, Depends(require_admin)]
 """Dependency yielding the authenticated user, if they may manage users."""
-
-EditorUser = Annotated[User, Depends(require_editor)]
-"""Dependency yielding the authenticated user, if they may edit catalogues."""

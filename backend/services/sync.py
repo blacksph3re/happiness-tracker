@@ -100,7 +100,11 @@ def apply_answer(
         The outcome and, when it is not `applied`, why.
     """
     question = db.get(Question, payload.question_id)
-    if question is None:
+    # Ownership, not merely existence. Catalogues belong to somebody now, and
+    # this is the one write path that reaches a question by bare id — without
+    # the second half, one account could record answers against another's
+    # questions and both would then disagree about whose history it was.
+    if question is None or question.catalogue.user_id != user_id:
         return SyncOutcome.CONFLICT, "That question no longer exists"
 
     # The same bar an answer had to meet when there was an endpoint of its own.

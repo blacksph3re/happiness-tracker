@@ -19,7 +19,6 @@ test('a catalogue can be created, renamed, and filled with questions', async ({
   account,
   admin,
 }) => {
-  await grant(admin, account, { is_editor: true })
   const original = `Evening ${Date.now()}`
   await page.goto('/questions')
 
@@ -47,9 +46,12 @@ test('a catalogue can be created, renamed, and filled with questions', async ({
   await page.getByRole('button', { name: 'Add question' }).click()
   await expect(chips(page).getByText('How well did you sleep')).toBeVisible()
 
-  const catalogues = await (await admin.get('/api/catalogues')).json()
+  // Read back through the account that made it. The admin cannot see it, which
+  // is the point of the change: a catalogue belongs to whoever answers it.
+  const catalogues = await (await account.api.get('/api/catalogues')).json()
   const created = catalogues.find((c) => c.name === 'Evening check-in')
-  const detail = await (await admin.get(`/api/catalogues/${created.id}`)).json()
+  expect(created, 'the new catalogue is not in its owner list').toBeTruthy()
+  const detail = await (await account.api.get(`/api/catalogues/${created.id}`)).json()
   expect(realQuestions(detail).map((q) => q.prompt)).toEqual(['How well did you sleep'])
 })
 
@@ -58,7 +60,6 @@ test('deactivating a question hides it but keeps its history', async ({
   account,
   admin,
 }) => {
-  await grant(admin, account, { is_editor: true })
   const target = realQuestions(await catalogueOf(account.api))[0]
 
   await page.goto('/answer')
@@ -86,7 +87,6 @@ test('an answered question says why its scale is fixed', async ({
   account,
   admin,
 }) => {
-  await grant(admin, account, { is_editor: true })
   const target = realQuestions(await catalogueOf(account.api))[0]
   await page.goto('/answer')
   await answerBand(page, 4)
@@ -107,4 +107,44 @@ test('an answered question says why its scale is fixed', async ({
   await row.getByLabel('Question').fill('Reworded prompt')
   await row.getByRole('button', { name: 'Save question' }).click()
   await expect(questionRow(page, 'Reworded prompt')).toBeVisible()
+})
+
+test('a new account is built its own copy of the starter questions', async ({
+  account,
+  admin,
+}) => {
+  // The change this whole feature exists for: two accounts answering the same
+  // questions by name, out of catalogues neither can reach from the other.
+  const mine = await catalogueOf(account.api)
+  const theirs = await catalogueOf(admin)
+
+  expect(mine.id).not.toBe(theirs.id)
+  expect(mine.name).toBe(theirs.name)
+  expect(realQuestions(mine).map((q) => q.prompt)).toEqual(
+    realQuestions(theirs).map((q) => q.prompt)
+  )
+  // Same prompts, different rows. Editing one cannot reach the other.
+  expect(realQuestions(mine).map((q) => q.id)).not.toEqual(
+    realQuestions(theirs).map((q) => q.id)
+  )
+})
+
+test('a catalogue can be built from a starter set on the questions page', async ({
+  page,
+  account,
+}) => {
+  await page.goto('/questions')
+  await expect(page.getByRole('heading', { name: 'Questions' })).toBeVisible()
+
+  await page.getByPlaceholder('New catalogue').fill('Second go')
+  await page.getByLabel('Starter set').selectOption('who-5')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+  await expect(page.getByRole('button', { name: 'Second go', exact: true })).toBeVisible()
+
+  const listed = await (await account.api.get('/api/catalogues')).json()
+  const built = listed.find((one) => one.name === 'Second go')
+  expect(built, 'the new catalogue is missing').toBeTruthy()
+  const detail = await (await account.api.get(`/api/catalogues/${built.id}`)).json()
+  expect(realQuestions(detail)).toHaveLength(5)
 })

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from deps import CurrentUser, DbSession, EditorUser
+from deps import CurrentUser, DbSession
 from models import (
     ORIGIN_COMPUTED,
     Answer,
@@ -21,16 +21,19 @@ from schemas import (
     QuestionUpdate,
     ScoreCreate,
     ScoreUpdate,
+    TemplateOut,
 )
 from services import (
     QuestionRuleError,
     ScoreRuleError,
+    build_from_template,
     check_question_bounds,
     check_question_shape,
     check_score_shape,
     create_catalogue,
     question_is_answered,
 )
+from templates import CATALOGUE_TEMPLATES
 
 router = APIRouter(tags=["Catalogue"])
 
@@ -66,8 +69,12 @@ def _enforce(rule) -> None:
         ) from None
 
 
-def _get_catalogue(db: DbSession, catalogue_id: int) -> Catalogue:
-    """Load a catalogue or raise a 404.
+def _get_catalogue(db: DbSession, catalogue_id: int, user_id: int) -> Catalogue:
+    """Load one of this user's catalogues, or raise a 404.
+
+    Somebody else's catalogue answers 404 rather than 403, the way another
+    account's project or session already does: whether it exists is not this
+    caller's business either.
 
     Parameters
     ----------
@@ -75,6 +82,8 @@ def _get_catalogue(db: DbSession, catalogue_id: int) -> Catalogue:
         Active database session.
     catalogue_id : int
         Identifier of the catalogue.
+    user_id : int
+        The account the catalogue must belong to.
 
     Returns
     -------
@@ -84,17 +93,18 @@ def _get_catalogue(db: DbSession, catalogue_id: int) -> Catalogue:
     Raises
     ------
     fastapi.HTTPException
-        With status 404 when no such catalogue exists.
+        With status 404 when no such catalogue exists, or it is not this
+        account's.
     """
     catalogue = db.get(Catalogue, catalogue_id)
-    if catalogue is None:
+    if catalogue is None or catalogue.user_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Catalogue not found"
         )
     return catalogue
 
 
-def _get_question(db: DbSession, question_id: int) -> Question:
+def _get_question(db: DbSession, question_id: int, user_id: int) -> Question:
     """Load an editable question or raise.
 
     Parameters
@@ -103,6 +113,8 @@ def _get_question(db: DbSession, question_id: int) -> Question:
         Active database session.
     question_id : int
         Identifier of the question.
+    user_id : int
+        The account the question's catalogue must belong to.
 
     Returns
     -------
@@ -112,10 +124,13 @@ def _get_question(db: DbSession, question_id: int) -> Question:
     Raises
     ------
     fastapi.HTTPException
-        With status 404 when the question does not exist, or 403 when it is one
-        of the server-owned auto-tracked questions.
+        With status 404 when the question does not exist or is not this
+        account's, or 403 when it is one of the server-owned auto-tracked
+        questions.
     """
     question = db.get(Question, question_id)
+    if question is not None and question.catalogue.user_id != user_id:
+        question = None
     if question is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Question not found"
@@ -134,14 +149,47 @@ def _get_question(db: DbSession, question_id: int) -> Question:
 
 
 @router.get(
+    "/catalogue-templates",
+    response_model=list[TemplateOut],
+    operation_id="listCatalogueTemplates",
+    summary="List starter question sets",
+    description=(
+        "List the starter sets a catalogue can be built from. These are defined "
+        "in the application rather than stored, so they are the same for every "
+        "account and cannot be edited through the API."
+    ),
+)
+def list_templates(user: CurrentUser) -> list[TemplateOut]:
+    """List the starter question sets on offer.
+
+    Open to any signed-in account and gated on no permission: choosing what to
+    track is not administration.
+
+    Parameters
+    ----------
+    user : User
+        The authenticated user. Unused beyond requiring a token.
+
+    Returns
+    -------
+    list of TemplateOut
+        Every template, in the registry's own order.
+    """
+    return [
+        TemplateOut(key=key, name=template.name, description=template.description)
+        for key, template in CATALOGUE_TEMPLATES.items()
+    ]
+
+
+@router.get(
     "/catalogues",
     response_model=list[CatalogueOut],
     operation_id="listCatalogues",
     summary="List catalogues",
-    description="List every catalogue by name. Open to any signed-in user.",
+    description="List the catalogues belonging to the signed-in account.",
 )
 def list_catalogues(user: CurrentUser, db: DbSession) -> list[Catalogue]:
-    """List every catalogue by name.
+    """List the signed-in account's catalogues by name.
 
     Parameters
     ----------
@@ -153,9 +201,17 @@ def list_catalogues(user: CurrentUser, db: DbSession) -> list[Catalogue]:
     Returns
     -------
     list of Catalogue
-        All catalogues, ordered by name.
+        The signed-in account's own catalogues, ordered by name.
     """
-    return list(db.execute(select(Catalogue).order_by(Catalogue.name)).scalars().all())
+    return list(
+        db.execute(
+            select(Catalogue)
+            .where(Catalogue.user_id == user.id)
+            .order_by(Catalogue.name)
+        )
+        .scalars()
+        .all()
+    )
 
 
 @router.get(
@@ -188,7 +244,7 @@ def read_catalogue(catalogue_id: int, user: CurrentUser, db: DbSession) -> Catal
     Catalogue
         The catalogue, with questions and their options attached.
     """
-    return _get_catalogue(db, catalogue_id)
+    return _get_catalogue(db, catalogue_id, user.id)
 
 
 @router.post(
@@ -198,21 +254,22 @@ def read_catalogue(catalogue_id: int, user: CurrentUser, db: DbSession) -> Catal
     operation_id="createCatalogue",
     summary="Create a catalogue",
     description=(
-        "Create a catalogue, seeded with the five auto-tracked questions. "
-        "Requires the catalogue-editing permission."
+        "Create a catalogue for the signed-in account, seeded with the five "
+        "auto-tracked questions and, optionally, a starter set of questions "
+        "from a template."
     ),
 )
 def add_catalogue(
-    payload: CatalogueCreate, editor: EditorUser, db: DbSession
+    payload: CatalogueCreate, user: CurrentUser, db: DbSession
 ) -> Catalogue:
     """Create a catalogue, seeded with its auto-tracked questions.
 
     Parameters
     ----------
     payload : CatalogueCreate
-        The catalogue name.
-    editor : User
-        The authenticated editor.
+        The catalogue name, and optionally a template to fill it from.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
 
@@ -224,12 +281,26 @@ def add_catalogue(
     Raises
     ------
     fastapi.HTTPException
-        With status 409 when the name is already taken.
+        With status 409 when the account already has a catalogue of that name,
+        or 422 when the named template does not exist.
     """
+    template = None
+    if payload.template is not None:
+        template = CATALOGUE_TEMPLATES.get(payload.template)
+        if template is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"No starter set called {payload.template!r}",
+            )
     try:
         # The flush inside create_catalogue is what trips the unique index, so
         # the whole call has to sit inside the guard, not just the commit.
-        catalogue = create_catalogue(db, payload.name)
+        if template is None:
+            catalogue = create_catalogue(db, payload.name, user.id)
+        else:
+            # The name on the payload wins over the template's own: a person
+            # naming a catalogue has said what they want it called.
+            catalogue = build_from_template(db, template, user.id, name=payload.name)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -248,7 +319,7 @@ def add_catalogue(
     description="Change a catalogue's display name.",
 )
 def rename_catalogue(
-    catalogue_id: int, payload: CatalogueCreate, editor: EditorUser, db: DbSession
+    catalogue_id: int, payload: CatalogueCreate, user: CurrentUser, db: DbSession
 ) -> Catalogue:
     """Rename a catalogue.
 
@@ -258,8 +329,8 @@ def rename_catalogue(
         Identifier of the catalogue.
     payload : CatalogueCreate
         The new name.
-    editor : User
-        The authenticated editor.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
 
@@ -273,7 +344,7 @@ def rename_catalogue(
     fastapi.HTTPException
         With status 409 when the name is already taken.
     """
-    catalogue = _get_catalogue(db, catalogue_id)
+    catalogue = _get_catalogue(db, catalogue_id, user.id)
     catalogue.name = payload.name
     try:
         db.commit()
@@ -296,15 +367,15 @@ def rename_catalogue(
         "questions has been answered."
     ),
 )
-def delete_catalogue(catalogue_id: int, editor: EditorUser, db: DbSession) -> None:
+def delete_catalogue(catalogue_id: int, user: CurrentUser, db: DbSession) -> None:
     """Delete a catalogue and its questions.
 
     Parameters
     ----------
     catalogue_id : int
         Identifier of the catalogue.
-    editor : User
-        The authenticated editor.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
 
@@ -314,7 +385,7 @@ def delete_catalogue(catalogue_id: int, editor: EditorUser, db: DbSession) -> No
         With status 409 when answers reference any of its questions, since
         deleting it would discard recorded history.
     """
-    catalogue = _get_catalogue(db, catalogue_id)
+    catalogue = _get_catalogue(db, catalogue_id, user.id)
     answered = db.execute(
         select(Answer.id)
         .join(Question, Question.id == Answer.question_id)
@@ -342,7 +413,7 @@ def delete_catalogue(catalogue_id: int, editor: EditorUser, db: DbSession) -> No
     ),
 )
 def add_question(
-    catalogue_id: int, payload: QuestionCreate, editor: EditorUser, db: DbSession
+    catalogue_id: int, payload: QuestionCreate, user: CurrentUser, db: DbSession
 ) -> Question:
     """Add a question to a catalogue.
 
@@ -352,8 +423,8 @@ def add_question(
         Catalogue that will own the question.
     payload : QuestionCreate
         The question to create.
-    editor : User
-        The authenticated editor.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
 
@@ -369,7 +440,7 @@ def add_question(
         questions need at least two options and no bounds, numeric questions
         need an ordered pair of bounds.
     """
-    catalogue = _get_catalogue(db, catalogue_id)
+    catalogue = _get_catalogue(db, catalogue_id, user.id)
     _enforce(
         lambda: check_question_shape(
             payload.kind, payload.min_value, payload.max_value, len(payload.options)
@@ -413,7 +484,7 @@ def add_question(
     ),
 )
 def update_question(
-    question_id: int, payload: QuestionUpdate, editor: EditorUser, db: DbSession
+    question_id: int, payload: QuestionUpdate, user: CurrentUser, db: DbSession
 ) -> Question:
     """Edit a question, honouring the freeze rule.
 
@@ -428,8 +499,8 @@ def update_question(
         Identifier of the question.
     payload : QuestionUpdate
         Fields to apply. Omitted fields are left alone.
-    editor : User
-        The authenticated editor.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
 
@@ -444,7 +515,7 @@ def update_question(
         With status 409 when a bound would change on an answered question, or
         422 when the resulting bounds would be inverted.
     """
-    question = _get_question(db, question_id)
+    question = _get_question(db, question_id, user.id)
     # Renaming is not rescaling: a changed label describes the same recorded
     # answers, while a changed bound would silently reinterpret them.
     frozen_fields = {
@@ -498,7 +569,7 @@ def update_question(
     description="Add a choice to an enum question that has no answers yet.",
 )
 def add_option(
-    question_id: int, payload: OptionCreate, editor: EditorUser, db: DbSession
+    question_id: int, payload: OptionCreate, user: CurrentUser, db: DbSession
 ) -> Question:
     """Add a choice to an enum question.
 
@@ -508,8 +579,8 @@ def add_option(
         Identifier of the question.
     payload : OptionCreate
         The choice to add.
-    editor : User
-        The authenticated editor.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
 
@@ -524,7 +595,7 @@ def add_option(
         With status 409 when the question has already been answered, or 422
         when it is not an enum question.
     """
-    question = _get_question(db, question_id)
+    question = _get_question(db, question_id, user.id)
     if question.kind != "enum":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -552,7 +623,7 @@ def add_option(
     description="Remove a choice from an enum question that has no answers yet.",
 )
 def delete_option(
-    question_id: int, option_id: int, editor: EditorUser, db: DbSession
+    question_id: int, option_id: int, user: CurrentUser, db: DbSession
 ) -> Question:
     """Remove a choice from an unanswered enum question.
 
@@ -562,8 +633,8 @@ def delete_option(
         Identifier of the question.
     option_id : int
         Identifier of the option to remove.
-    editor : User
-        The authenticated editor.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
 
@@ -578,7 +649,7 @@ def delete_option(
         With status 404 when the option does not belong to the question, or 409
         when the question has already been answered.
     """
-    question = _get_question(db, question_id)
+    question = _get_question(db, question_id, user.id)
     if question_is_answered(db, question.id):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=FROZEN_MESSAGE)
     option = db.get(QuestionOption, option_id)
@@ -652,7 +723,7 @@ def _load_components(
     return loaded
 
 
-def _get_score(db: DbSession, score_id: int) -> Question:
+def _get_score(db: DbSession, score_id: int, user_id: int) -> Question:
     """Load a score or raise.
 
     Parameters
@@ -661,6 +732,8 @@ def _get_score(db: DbSession, score_id: int) -> Question:
         Active database session.
     score_id : int
         Identifier of the computed question.
+    user_id : int
+        The account the score's catalogue must belong to.
 
     Returns
     -------
@@ -673,6 +746,8 @@ def _get_score(db: DbSession, score_id: int) -> Question:
         With status 404 when there is no such score.
     """
     score = db.get(Question, score_id)
+    if score is not None and score.catalogue.user_id != user_id:
+        score = None
     if score is None or not score.is_computed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Score not found"
@@ -694,7 +769,7 @@ def _get_score(db: DbSession, score_id: int) -> Question:
     ),
 )
 def add_score(
-    catalogue_id: int, payload: ScoreCreate, editor: EditorUser, db: DbSession
+    catalogue_id: int, payload: ScoreCreate, user: CurrentUser, db: DbSession
 ) -> Question:
     """Define a score over other questions in a catalogue.
 
@@ -704,8 +779,8 @@ def add_score(
         Catalogue that will own the score.
     payload : ScoreCreate
         The score to create.
-    editor : User
-        The authenticated editor.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
 
@@ -719,7 +794,7 @@ def add_score(
     fastapi.HTTPException
         With status 422 when the definition names nothing usable.
     """
-    catalogue = _get_catalogue(db, catalogue_id)
+    catalogue = _get_catalogue(db, catalogue_id, user.id)
     sources = _load_components(db, catalogue.id, payload.components)
     _enforce_score(lambda: check_score_shape(payload.aggregate, sources))
 
@@ -764,7 +839,7 @@ def add_score(
     ),
 )
 def update_score(
-    score_id: int, payload: ScoreUpdate, editor: EditorUser, db: DbSession
+    score_id: int, payload: ScoreUpdate, user: CurrentUser, db: DbSession
 ) -> Question:
     """Change a score's definition.
 
@@ -774,8 +849,8 @@ def update_score(
         Identifier of the score.
     payload : ScoreUpdate
         Fields to apply. Omitted fields are left alone.
-    editor : User
-        The authenticated editor.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
 
@@ -789,7 +864,7 @@ def update_score(
     fastapi.HTTPException
         With status 422 when the result would not describe a usable score.
     """
-    score = _get_score(db, score_id)
+    score = _get_score(db, score_id, user.id)
     aggregate = payload.aggregate or score.aggregate
     sources = (
         _load_components(db, score.catalogue_id, payload.components)
@@ -834,17 +909,17 @@ def update_score(
         "anything of its own."
     ),
 )
-def delete_score(score_id: int, editor: EditorUser, db: DbSession) -> None:
+def delete_score(score_id: int, user: CurrentUser, db: DbSession) -> None:
     """Remove a score definition.
 
     Parameters
     ----------
     score_id : int
         Identifier of the score.
-    editor : User
-        The authenticated editor.
+    user : User
+        The authenticated user, who must own what is being changed.
     db : sqlalchemy.orm.Session
         Active database session.
     """
-    db.delete(_get_score(db, score_id))
+    db.delete(_get_score(db, score_id, user.id))
     db.commit()

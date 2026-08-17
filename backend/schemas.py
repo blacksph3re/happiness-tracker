@@ -6,6 +6,7 @@ from pydantic.fields import FieldInfo
 
 from config import get_settings
 from models import PROMPT_MAX_LENGTH, TRACK_NAME_MAX_LENGTH
+from templates import DEFAULT_TEMPLATE
 
 
 class Version(BaseModel):
@@ -184,9 +185,6 @@ class UserOut(BaseModel):
     is_admin: bool
     """Whether the user may manage other users."""
 
-    is_editor: bool
-    """Whether the user may edit catalogues and questions."""
-
     default_catalogue_id: int | None
     """Catalogue presented to this user when answering."""
 
@@ -231,11 +229,13 @@ class UserCreate(BaseModel):
     is_admin: bool = False
     """Whether the new user may manage other users."""
 
-    is_editor: bool = False
-    """Whether the new user may edit catalogues and questions."""
+    template: str = DEFAULT_TEMPLATE
+    """Starter set the account's first catalogue is built from.
 
-    default_catalogue_id: int | None = None
-    """Catalogue the new user answers by default."""
+    A key rather than a catalogue id, because there is no catalogue to point at
+    yet: every account owns its own, and this says what to fill the first one
+    with.
+    """
 
 
 class UserUpdate(BaseModel):
@@ -243,9 +243,6 @@ class UserUpdate(BaseModel):
 
     is_admin: bool | None = None
     """New value for the user-management flag, when given."""
-
-    is_editor: bool | None = None
-    """New value for the catalogue-editing flag, when given."""
 
     default_catalogue_id: int | None = None
     """New default catalogue, when given."""
@@ -549,6 +546,27 @@ class CatalogueCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     """Unique display name."""
+
+    template: str | None = None
+    """Key of a starter set to fill the new catalogue with, or None for empty.
+
+    Ignored when renaming: a catalogue is built from a template once, and
+    changing its name later has nothing to do with where its questions came
+    from.
+    """
+
+
+class TemplateOut(BaseModel):
+    """A starter question set on offer."""
+
+    key: str
+    """Identifier the API accepts when building a catalogue from this."""
+
+    name: str
+    """What the catalogue is called when it is created."""
+
+    description: str
+    """One line describing what the set contains."""
 
 
 class AnswerIn(BaseModel):

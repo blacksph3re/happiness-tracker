@@ -246,6 +246,8 @@ Do not re-open these without being asked to; each was decided deliberately.
 | Answers | Never rewritten, never deleted — there is no delete endpoint. A session, by contrast, is corrected and deleted freely |
 | Scores | Over scaled questions only; an enum has no numeric value to contribute |
 | Projects and tags | Per user. Sharing is a later feature |
+| Catalogues | **Per user**, like everything else. There is no editor permission and no shared catalogue: a new account is built its own copy from a starter set in `templates.py`, and one account's questions answer 404 to another. Deleting your last catalogue is allowed — the questionnaire offers to build one |
+| Starter sets | Code, not rows. A template stored in the database would be a catalogue owned by nobody, which is the thing per-user catalogues removed |
 | Deduction rules | On a tag, not on the account — a day of reading owes nobody a lunch break. A tag with a rule shows **reported time only** — except the Patterns group table, which keeps tracked beside reported |
 | Parallel timers | Several projects at once, yes. The same project twice over the same minutes, no |
 | Long sessions | Never auto-closed, no warning. A multi-day session is a hand-editing job |

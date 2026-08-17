@@ -6,12 +6,14 @@
   import QuestionForm from '../../lib/wellbeing/QuestionForm.svelte'
   import ScoreForm from '../../lib/wellbeing/ScoreForm.svelte'
   import { attempt, unwrap } from '../../lib/api.js'
+  import { resource } from '../../lib/resource.svelte.js'
   import {
     addQuestionOption,
     createCatalogue as createCatalogueCall,
     createQuestion,
     createScore,
     deleteScore,
+    listCatalogueTemplates,
     renameCatalogue as renameCatalogueCall,
     updateQuestion,
     updateScore,
@@ -36,6 +38,19 @@
 
   let loading = $state(true)
   let newName = $state('')
+
+  /** Which starter set a newly created catalogue is filled from, or none. */
+  let newTemplate = $state('')
+
+  // Offered here as well as at account creation: a second catalogue would
+  // otherwise start empty, and rebuilding a known instrument by hand is the
+  // work a template exists to save.
+  const templates = resource(
+    () => null,
+    () => attempt(() => listCatalogueTemplates()),
+    { name: 'catalogue templates', initial: [] }
+  )
+  const starters = $derived(templates.data ?? [])
   let renaming = $state(false)
   let renameValue = $state('')
   let draft = $state(blankDraft())
@@ -178,10 +193,13 @@
 
   async function addCatalogue() {
     const created = await attempt(() =>
-      createCatalogueCall({ body: { name: newName } })
+      createCatalogueCall({
+        body: { name: newName, template: newTemplate || null },
+      })
     )
     if (!created) return
     newName = ''
+    newTemplate = ''
     catalogues = (await ensureCatalogues({ force: true })) ?? []
     await select(created.id)
     pushToast(`Created ${created.name}`, 'ok')
@@ -432,6 +450,18 @@
             title={hint}
             class="rounded-md border border-white/15 bg-ink-soft px-3 py-2 text-sm"
           />
+          <select
+            bind:value={newTemplate}
+            disabled={offline}
+            title={hint}
+            aria-label="Starter set"
+            class="rounded-md border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+          >
+            <option value="">Empty</option>
+            {#each starters as starter (starter.key)}
+              <option value={starter.key}>{starter.name}</option>
+            {/each}
+          </select>
           <button
             class="meta rounded-md border border-white/15 p-2 hover:border-white/40
                    disabled:opacity-30"

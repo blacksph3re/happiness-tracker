@@ -223,8 +223,7 @@ test('an admin clears a lost second factor from People', async ({
       username: victimName,
       password: 'e2e-user-password',
       is_admin: false,
-      is_editor: false,
-    },
+          },
   })
   expect(createdVictim.ok(), await createdVictim.text()).toBeTruthy()
   const victim = await createdVictim.json()

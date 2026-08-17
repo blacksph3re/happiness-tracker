@@ -8,6 +8,7 @@
     clearUserTotp,
     createUser as createUserCall,
     deleteUser,
+    listCatalogueTemplates,
     listUsers,
     resetUserPassword,
     updateUser,
@@ -22,7 +23,16 @@
   /** Set on every control the connection is holding down, and on no other. */
   const hint = $derived(offline ? OFFLINE_HINT : undefined)
 
-  let draft = $state({ username: '', password: '', is_admin: false, is_editor: false })
+  let draft = $state({ username: '', password: '', is_admin: false, template: 'who-5' })
+
+  // Offered rather than defaulted silently: what an account starts with is the
+  // one decision here that cannot be undone later without deleting answers.
+  const templates = resource(
+    () => null,
+    () => attempt(() => listCatalogueTemplates()),
+    { name: 'catalogue templates', initial: [] }
+  )
+  const starters = $derived(templates.data ?? [])
 
   /**
    * Bumped by every write, so the list re-reads after it.
@@ -63,7 +73,7 @@
         })
       )
       pushToast(`Created ${draft.username}`, 'ok')
-      draft = { username: '', password: '', is_admin: false, is_editor: false }
+      draft = { username: '', password: '', is_admin: false, template: 'who-5' }
       revision += 1
     } catch (error) {
       pushToast(error.message)
@@ -151,9 +161,7 @@
               {#if user.id === me?.id}<span class="meta ml-2">you</span>{/if}
             </p>
             <p class="meta mt-1">
-              {[user.is_admin && 'manages people', user.is_editor && 'edits questions']
-                .filter(Boolean)
-                .join(' · ') || 'answers only'}
+              {user.is_admin ? 'manages people' : 'answers only'}
             </p>
           </div>
           <div class="flex shrink-0 flex-wrap items-center gap-2">
@@ -162,12 +170,6 @@
               disabled={offline}
               title={hint} onclick={() => toggle(user, 'is_admin')}>
               {user.is_admin ? 'Revoke people' : 'Grant people'}
-            </button>
-            <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                           disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={offline}
-              title={hint} onclick={() => toggle(user, 'is_editor')}>
-              {user.is_editor ? 'Revoke questions' : 'Grant questions'}
             </button>
             <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
                            disabled:cursor-not-allowed disabled:opacity-40"
@@ -218,11 +220,21 @@
           <input type="checkbox" bind:checked={draft.is_admin} class="accent-ember" />
           Can manage people
         </label>
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" bind:checked={draft.is_editor} class="accent-ember" />
-          Can edit questions
-        </label>
       </div>
+      <label class="mt-4 flex max-w-md flex-col gap-1.5">
+        <span class="meta">Starter set</span>
+        <select
+          bind:value={draft.template}
+          class="rounded-lg border border-white/15 bg-ink px-4 py-3"
+        >
+          {#each starters as starter (starter.key)}
+            <option value={starter.key}>{starter.name}</option>
+          {/each}
+        </select>
+        <span class="meta normal-case">
+          {starters.find((one) => one.key === draft.template)?.description ?? ''}
+        </span>
+      </label>
       <button
         type="submit"
         disabled={offline}

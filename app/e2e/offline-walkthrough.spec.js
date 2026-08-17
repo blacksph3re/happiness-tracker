@@ -166,7 +166,7 @@ test('the administrative views are the ones that say no', async ({
   admin,
   context,
 }) => {
-  await grant(admin, account, { is_admin: true, is_editor: true })
+  await grant(admin, account, { is_admin: true })
   await seed(account)
 
   await page.goto('/time/projects')

@@ -6,6 +6,8 @@ from deps import AdminUser, DbSession
 from models import Catalogue, User
 from schemas import PasswordReset, UserCreate, UserOut, UserUpdate
 from security import clear_totp, hash_password
+from services import build_from_template
+from templates import CATALOGUE_TEMPLATES
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -38,8 +40,11 @@ def _get_user(db: DbSession, user_id: int) -> User:
     return user
 
 
-def _check_catalogue(db: DbSession, catalogue_id: int | None) -> None:
-    """Validate that a referenced catalogue exists.
+def _check_catalogue(db: DbSession, catalogue_id: int | None, user_id: int) -> None:
+    """Validate that a referenced catalogue exists and belongs to that account.
+
+    Catalogues are owned now, so pointing somebody's default at another
+    account's questions is not a thing an administrator may do either.
 
     Parameters
     ----------
@@ -47,13 +52,18 @@ def _check_catalogue(db: DbSession, catalogue_id: int | None) -> None:
         Active database session.
     catalogue_id : int or None
         Catalogue to check. ``None`` is accepted and means "no default".
+    user_id : int
+        The account whose default this would become.
 
     Raises
     ------
     fastapi.HTTPException
-        With status 404 when the catalogue does not exist.
+        With status 404 when the catalogue does not exist or is not theirs.
     """
-    if catalogue_id is not None and db.get(Catalogue, catalogue_id) is None:
+    if catalogue_id is None:
+        return
+    catalogue = db.get(Catalogue, catalogue_id)
+    if catalogue is None or catalogue.user_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Catalogue not found"
         )
@@ -112,25 +122,35 @@ def create_user(payload: UserCreate, admin: AdminUser, db: DbSession) -> User:
     Raises
     ------
     fastapi.HTTPException
-        With status 409 when the username is taken, or 404 when the referenced
-        default catalogue does not exist.
+        With status 409 when the username is taken, or 422 when the named
+        starter set does not exist.
     """
-    _check_catalogue(db, payload.default_catalogue_id)
+    template = CATALOGUE_TEMPLATES.get(payload.template)
+    if template is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"No starter set called {payload.template!r}",
+        )
     user = User(
         username=payload.username,
         password_hash=hash_password(payload.password),
         is_admin=payload.is_admin,
-        is_editor=payload.is_editor,
-        default_catalogue_id=payload.default_catalogue_id,
     )
     db.add(user)
     try:
-        db.commit()
+        # Flushed rather than committed: the catalogue below needs the account's
+        # id to belong to, and a failure anywhere in the pair should leave
+        # neither behind.
+        db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Username already taken"
         ) from None
+
+    catalogue = build_from_template(db, template, user.id)
+    user.default_catalogue_id = catalogue.id
+    db.commit()
     db.refresh(user)
     return user
 
@@ -179,10 +199,8 @@ def update_user(
         )
     if payload.is_admin is not None:
         user.is_admin = payload.is_admin
-    if payload.is_editor is not None:
-        user.is_editor = payload.is_editor
     if payload.default_catalogue_id is not None:
-        _check_catalogue(db, payload.default_catalogue_id)
+        _check_catalogue(db, payload.default_catalogue_id, user.id)
         user.default_catalogue_id = payload.default_catalogue_id
     db.commit()
     db.refresh(user)

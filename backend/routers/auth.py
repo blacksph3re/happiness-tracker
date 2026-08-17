@@ -391,7 +391,7 @@ def read_preferences(user: CurrentUser) -> Preferences:
         return Preferences()
     try:
         return Preferences(**json.loads(user.preferences))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return Preferences()
 
 
@@ -462,9 +462,13 @@ def change_own_default_catalogue(
     Raises
     ------
     fastapi.HTTPException
-        With status 404 when the catalogue does not exist.
+        With status 404 when the catalogue does not exist or is not theirs.
     """
-    if db.get(Catalogue, payload.catalogue_id) is None:
+    catalogue = db.get(Catalogue, payload.catalogue_id)
+    # Ownership, not merely existence: a catalogue belongs to somebody, and
+    # answering out of another account's questions is not a thing to offer even
+    # to the person asking for it.
+    if catalogue is None or catalogue.user_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Catalogue not found"
         )

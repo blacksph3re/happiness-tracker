@@ -114,3 +114,99 @@ def _has_table(db, name):
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
     ).fetchone()
     return found is not None
+
+
+CATALOGUE_OWNERSHIP = "3f1a7c4e9b20"
+"""The revision that gives every catalogue an owner and clones it per user."""
+
+
+def test_shared_catalogues_become_one_per_user_without_losing_answers(migrated):
+    # The migration that can lose history, on the shape that can lose it: two
+    # accounts answering the *same* global catalogue. Cloning is the easy half;
+    # repointing every answer onto its own copy is the half worth a test.
+    chain = revisions()
+    upgrade(chain[chain.index(CATALOGUE_OWNERSHIP) - 1])
+
+    db = sqlite3.connect(migrated)
+    db.executescript(
+        """
+        INSERT INTO users (id, username, password_hash, is_admin, is_editor)
+             VALUES (1, 'alice', 'h', 1, 1), (2, 'bob', 'h', 0, 0);
+        INSERT INTO catalogues (id, name) VALUES (1, 'WHO-5');
+        INSERT INTO questions
+               (id, catalogue_id, kind, prompt, position, active, origin,
+                require_all, min_value, max_value)
+             VALUES (10, 1, 'discrete', 'Cheerful', 0, 1, 'asked', 1, 0, 5);
+        INSERT INTO questions
+               (id, catalogue_id, kind, prompt, position, active, origin,
+                system_key, require_all)
+             VALUES (11, 1, 'enum', 'Weekday', 1000, 1, 'auto', 'weekday', 1);
+        INSERT INTO questions
+               (id, catalogue_id, kind, prompt, position, active, origin,
+                aggregate, require_all, min_value, max_value)
+             VALUES (12, 1, 'continuous', 'Raw score', 500, 1, 'computed',
+                     'sum', 1, 0, 1);
+        INSERT INTO score_components (score_question_id, source_question_id, weight)
+             VALUES (12, 10, 1.0);
+        INSERT INTO question_options (id, question_id, label, position)
+             VALUES (20, 11, 'Mon', 0), (21, 11, 'Tue', 1);
+        UPDATE users SET default_catalogue_id = 1;
+        INSERT INTO answers (user_id, question_id, day, value)
+             VALUES (1, 10, '2026-06-01', 5), (2, 10, '2026-06-01', 1);
+        INSERT INTO answers (user_id, question_id, day, option_id)
+             VALUES (1, 11, '2026-06-01', 20), (2, 11, '2026-06-01', 21);
+        """
+    )
+    db.commit()
+
+    upgrade("head")
+
+    # One catalogue each, both still called what they were called.
+    owners = db.execute(
+        "SELECT user_id, name FROM catalogues ORDER BY user_id"
+    ).fetchall()
+    assert owners == [(1, "WHO-5"), (2, "WHO-5")]
+
+    # Every answer survived, and every one of them now belongs to a question in
+    # its own owner's catalogue. This is the assertion the whole migration is
+    # for: a repointing bug shows up here as a row belonging to somebody else.
+    assert db.execute("SELECT count(*) FROM answers").fetchone()[0] == 4
+    assert (
+        db.execute(
+            "SELECT count(*) FROM answers a"
+            " JOIN questions q ON q.id = a.question_id"
+            " JOIN catalogues c ON c.id = q.catalogue_id"
+            " WHERE c.user_id <> a.user_id"
+        ).fetchone()[0]
+        == 0
+    )
+
+    # The enum answers still mean what they meant. A repointed `question_id`
+    # beside a stale `option_id` would read as the wrong day of the week, or as
+    # an option belonging to a question the answer no longer references.
+    assert db.execute(
+        "SELECT a.user_id, o.label FROM answers a"
+        " JOIN question_options o ON o.id = a.option_id ORDER BY a.user_id"
+    ).fetchall() == [(1, "Mon"), (2, "Tue")]
+    assert (
+        db.execute(
+            "SELECT count(*) FROM answers a"
+            " JOIN question_options o ON o.id = a.option_id"
+            " WHERE o.question_id <> a.question_id"
+        ).fetchone()[0]
+        == 0
+    )
+
+    # Each account's default is its own copy, and the score came across too.
+    assert (
+        db.execute(
+            "SELECT count(*) FROM users u JOIN catalogues c"
+            " ON c.id = u.default_catalogue_id WHERE c.user_id <> u.id"
+        ).fetchone()[0]
+        == 0
+    )
+    assert db.execute("SELECT count(*) FROM score_components").fetchone()[0] == 2
+
+    # Nothing of the shared originals is left behind, and no dangling rows.
+    assert db.execute("SELECT count(*) FROM catalogues").fetchone()[0] == 2
+    assert db.execute("PRAGMA foreign_key_check").fetchall() == []

@@ -23,7 +23,9 @@ async function withScore(admin, account, { requireAll = false } = {}) {
     { prompt: 'Focused', kind: 'discrete', min_value: 1, max_value: 5 },
   ])
   const asked = catalogue.questions.filter((q) => q.origin === 'asked')
-  const created = await admin.post(`/api/catalogues/${catalogue.id}/scores`, {
+  // Through the account's own context: the catalogue belongs to it, so the
+  // admin's would answer 404 like anybody else's.
+  const created = await account.api.post(`/api/catalogues/${catalogue.id}/scores`, {
     data: {
       prompt: 'Average',
       aggregate: 'mean',

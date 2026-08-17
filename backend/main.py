@@ -74,8 +74,8 @@ API_TAGS = [
     {
         "name": "Catalogue",
         "description": (
-            "Catalogues and their questions. Reading is open to everyone; "
-            "changing anything requires the catalogue-editing permission."
+            "The signed-in account's own catalogues and questions. Another "
+            "account's answer 404."
         ),
     },
     {"name": "Answers", "description": "Recording, reading and exporting answers."},
@@ -103,8 +103,10 @@ app = FastAPI(
         "Every endpoint lives under `/api`. `GET /api/version`, `POST /api/login` "
         "and `POST /api/refresh` are public; everything else needs a bearer token "
         "and answers `401` without one.\n\n"
-        "Two independent permission flags govern the rest: `is_admin` for managing "
-        "other people's accounts, `is_editor` for catalogues and questions."
+        "One permission flag governs the rest: `is_admin`, for managing other "
+        "people's accounts. Everything else an account can reach belongs to it "
+        "— catalogues and questions included — so ownership decides access "
+        "rather than a flag."
     ),
     openapi_tags=API_TAGS,
     lifespan=lifespan,

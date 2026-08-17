@@ -58,6 +58,10 @@ export type CatalogueCreate = {
      * Name
      */
     name: string;
+    /**
+     * Template
+     */
+    template?: string | null;
 };
 
 /**
@@ -263,10 +267,6 @@ export type MeOut = {
      * Is Admin
      */
     is_admin: boolean;
-    /**
-     * Is Editor
-     */
-    is_editor: boolean;
     /**
      * Default Catalogue Id
      */
@@ -869,6 +869,26 @@ export type TagUpdate = {
 };
 
 /**
+ * TemplateOut
+ *
+ * A starter question set on offer.
+ */
+export type TemplateOut = {
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Description
+     */
+    description: string;
+};
+
+/**
  * TimeEntryOut
  *
  * One session as exposed by the API.
@@ -1007,13 +1027,9 @@ export type UserCreate = {
      */
     is_admin?: boolean;
     /**
-     * Is Editor
+     * Template
      */
-    is_editor?: boolean;
-    /**
-     * Default Catalogue Id
-     */
-    default_catalogue_id?: number | null;
+    template?: string;
 };
 
 /**
@@ -1035,10 +1051,6 @@ export type UserOut = {
      */
     is_admin: boolean;
     /**
-     * Is Editor
-     */
-    is_editor: boolean;
-    /**
      * Default Catalogue Id
      */
     default_catalogue_id: number | null;
@@ -1054,10 +1066,6 @@ export type UserUpdate = {
      * Is Admin
      */
     is_admin?: boolean | null;
-    /**
-     * Is Editor
-     */
-    is_editor?: boolean | null;
     /**
      * Default Catalogue Id
      */
@@ -1589,6 +1597,24 @@ export type ClearUserTotpResponses = {
 };
 
 export type ClearUserTotpResponse = ClearUserTotpResponses[keyof ClearUserTotpResponses];
+
+export type ListCatalogueTemplatesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/catalogue-templates';
+};
+
+export type ListCatalogueTemplatesResponses = {
+    /**
+     * Response Listcataloguetemplates
+     *
+     * Successful Response
+     */
+    200: Array<TemplateOut>;
+};
+
+export type ListCatalogueTemplatesResponse = ListCatalogueTemplatesResponses[keyof ListCatalogueTemplatesResponses];
 
 export type ListCataloguesData = {
     body?: never;

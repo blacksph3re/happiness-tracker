@@ -5,86 +5,108 @@ from tests.conftest import make_user
 USER_ROUTES = [
     ("GET", "/api/users", None),
     ("POST", "/api/users", {"username": "someone", "password": "abcdefgh"}),
-    ("PUT", "/api/users/1", {"is_editor": True}),
+    ("PUT", "/api/users/1", {"is_admin": True}),
     ("PUT", "/api/users/1/password", {"new_password": "abcdefgh"}),
     ("DELETE", "/api/users/1", None),
 ]
 
-EDITOR_ROUTES = [
-    ("POST", "/api/catalogues", {"name": "another"}),
-    ("PUT", "/api/catalogues/1", {"name": "renamed"}),
-    ("DELETE", "/api/catalogues/1", None),
+OWNED_ROUTES = [
+    ("GET", "/api/catalogues/{id}", None),
+    ("PUT", "/api/catalogues/{id}", {"name": "renamed"}),
+    ("DELETE", "/api/catalogues/{id}", None),
     (
         "POST",
-        "/api/catalogues/1/questions",
+        "/api/catalogues/{id}/questions",
         {"kind": "discrete", "prompt": "x", "min_value": 1, "max_value": 5},
     ),
 ]
+"""Routes that take a catalogue id, and must not answer for somebody else's."""
 
 
 @pytest.fixture
 def actors(client, admin_headers):
-    """Return headers for the four permission combinations."""
+    """Return headers for an ordinary account and for one that manages users."""
     _, plain = make_user(client, admin_headers, "plain")
     _, admin_only = make_user(client, admin_headers, "adminonly", is_admin=True)
-    _, editor_only = make_user(client, admin_headers, "editoronly", is_editor=True)
-    _, both = make_user(
-        client, admin_headers, "both", is_admin=True, is_editor=True
-    )
-    return {
-        "plain": plain,
-        "admin_only": admin_only,
-        "editor_only": editor_only,
-        "both": both,
-    }
+    return {"plain": plain, "admin_only": admin_only}
+
+
+def own_catalogue(client, headers):
+    """Return the id of the catalogue that account was created with."""
+    return client.get("/api/me", headers=headers).json()["default_catalogue_id"]
 
 
 @pytest.mark.parametrize("method,path,body", USER_ROUTES)
 def test_user_routes_need_admin_flag(actors, client, method, path, body):
-    for label in ("plain", "editor_only"):
-        response = client.request(method, path, headers=actors[label], json=body)
-        assert response.status_code == 403, f"{label} {method} {path}"
-    for label in ("admin_only", "both"):
-        response = client.request(method, path, headers=actors[label], json=body)
-        assert response.status_code != 403, f"{label} {method} {path}"
+    response = client.request(method, path, headers=actors["plain"], json=body)
+    assert response.status_code == 403, f"plain {method} {path}"
+    response = client.request(method, path, headers=actors["admin_only"], json=body)
+    assert response.status_code != 403, f"admin_only {method} {path}"
 
 
-@pytest.mark.parametrize("method,path,body", EDITOR_ROUTES)
-def test_catalogue_routes_need_editor_flag(actors, client, method, path, body):
+@pytest.mark.parametrize("method,path,body", OWNED_ROUTES)
+def test_a_catalogue_route_answers_only_for_its_owner(
+    actors, client, method, path, body
+):
+    # The whole of the ownership sweep, from outside. Every one of these used to
+    # be gated on a permission and reachable across accounts once you held it.
+    mine = own_catalogue(client, actors["plain"])
+    theirs = own_catalogue(client, actors["admin_only"])
+    assert mine != theirs
+
+    ours = client.request(
+        method, path.format(id=mine), headers=actors["plain"], json=body
+    )
+    assert ours.status_code != 404, f"own catalogue: {method} {path}"
+
+    # 404 rather than 403, the way another account's project already answers:
+    # whether it exists is not this caller's business either. Managing users
+    # does not help — there is nothing left that reaches somebody else's
+    # questions.
     for label in ("plain", "admin_only"):
-        response = client.request(method, path, headers=actors[label], json=body)
-        assert response.status_code == 403, f"{label} {method} {path}"
-    for label in ("editor_only", "both"):
-        response = client.request(method, path, headers=actors[label], json=body)
-        assert response.status_code != 403, f"{label} {method} {path}"
+        actor = actors[label]
+        target = theirs if label == "plain" else mine
+        refused = client.request(
+            method, path.format(id=target), headers=actor, json=body
+        )
+        assert refused.status_code == 404, f"{label} reached {method} {path}"
 
 
-def test_reading_catalogues_needs_no_flag(actors, client, catalogue_id):
+def test_anybody_may_create_and_read_their_own_catalogues(actors, client):
     for headers in actors.values():
         assert client.get("/api/catalogues", headers=headers).status_code == 200
-        assert (
-            client.get(f"/api/catalogues/{catalogue_id}", headers=headers).status_code
-            == 200
-        )
+        created = client.post("/api/catalogues", headers=headers, json={"name": "mine"})
+        assert created.status_code == 201, created.text
 
 
-def test_bootstrapped_admin_holds_both_flags(client, admin_headers):
+def test_the_catalogue_listing_shows_only_your_own(actors, client):
+    mine = own_catalogue(client, actors["plain"])
+    listed = client.get("/api/catalogues", headers=actors["plain"]).json()
+
+    assert [one["id"] for one in listed] == [mine]
+
+
+def test_bootstrapped_admin_manages_users_and_nothing_else(client, admin_headers):
     me = client.get("/api/me", headers=admin_headers).json()
     assert me["is_admin"] is True
-    assert me["is_editor"] is True
+    # The flag that used to sit beside it is gone entirely, not merely False.
+    assert "is_editor" not in me
 
 
-def test_self_service_is_never_gated(client, admin_headers, catalogue_id):
-    """A user with neither flag manages their own password and catalogue."""
+def test_self_service_is_never_gated(client, admin_headers):
+    """A user with no flags manages their own password and catalogue."""
     user, headers = make_user(client, admin_headers, "selfservice")
+    second = client.post(
+        "/api/catalogues", headers=headers, json={"name": "another of mine"}
+    ).json()
 
     changed = client.put(
         "/api/me/default-catalogue",
         headers=headers,
-        json={"catalogue_id": catalogue_id},
+        json={"catalogue_id": second["id"]},
     )
     assert changed.status_code == 200
-    assert changed.json()["default_catalogue_id"] == catalogue_id
+    assert changed.json()["default_catalogue_id"] == second["id"]
 
     response = client.put(
         "/api/me/password",

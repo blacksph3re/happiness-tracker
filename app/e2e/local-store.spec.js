@@ -79,8 +79,7 @@ test('signing in as someone else shows none of the last account', async ({
       username: `${account.username}-second`,
       password: 'e2e-user-password',
       is_admin: false,
-      is_editor: false,
-      default_catalogue_id: account.default_catalogue_id,
+            default_catalogue_id: account.default_catalogue_id,
     },
   })
   expect(created.ok(), await created.text()).toBeTruthy()

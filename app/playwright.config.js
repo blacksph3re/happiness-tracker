@@ -5,6 +5,9 @@ import { defineConfig, devices } from '@playwright/test'
 export const ADMIN = { username: 'e2e-admin', password: 'e2e-admin-password' }
 
 // The catalogue bootstrap creates; tests answer this one by name.
+export const TEMPLATE = 'who-5'
+/** The starter set every e2e account is built from. */
+
 export const DEFAULT_CATALOGUE = 'WHO-5'
 
 // Fixed so "today" never depends on when the suite runs. Midday in the chosen

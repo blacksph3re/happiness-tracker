@@ -78,9 +78,10 @@ def test_starter_catalogue_ships_a_total(client, admin_headers, catalogue_id):
     assert all(component["weight"] == 1.0 for component in score["components"])
     # After the questions it reads, before the auto-tracked block at 1000.
     asked = [
-        q for q in
-        client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers)
-        .json()["questions"]
+        q
+        for q in client.get(
+            f"/api/catalogues/{catalogue_id}", headers=admin_headers
+        ).json()["questions"]
         if q["origin"] == "asked"
     ]
     assert all(q["position"] < score["position"] < 1000 for q in asked)
@@ -106,9 +107,7 @@ def test_a_partial_day_has_no_score(
 def test_require_all_off_scores_what_is_there(
     client, admin_headers, catalogue_id, starter_questions
 ):
-    created = make_score(
-        client, admin_headers, catalogue_id, require_all=False
-    ).json()
+    created = make_score(client, admin_headers, catalogue_id, require_all=False).json()
     answer(client, admin_headers, starter_questions[0]["id"], 4.0)
     assert score_of(client, admin_headers, created["id"]) == 4.0
 
@@ -156,9 +155,7 @@ def test_a_score_is_not_answerable(
     assert answer(client, admin_headers, score["id"], 3.0)["outcome"] == "conflict"
 
 
-def test_a_score_is_not_editable_as_a_question(
-    client, admin_headers, catalogue_id
-):
+def test_a_score_is_not_editable_as_a_question(client, admin_headers, catalogue_id):
     score = seeded_score(client, admin_headers, catalogue_id)
     assert (
         client.put(
@@ -248,9 +245,10 @@ def test_deleting_a_score_leaves_the_answers_alone(
 ):
     created = make_score(client, admin_headers, catalogue_id).json()
     answer(client, admin_headers, starter_questions[0]["id"], 4.0)
-    assert client.delete(
-        f"/api/scores/{created['id']}", headers=admin_headers
-    ).status_code == 204
+    assert (
+        client.delete(f"/api/scores/{created['id']}", headers=admin_headers).status_code
+        == 204
+    )
     rows = client.get("/api/answers", headers=admin_headers).json()
     assert any(
         row["question_id"] == starter_questions[0]["id"] and row["value"] == 4.0
@@ -268,9 +266,27 @@ def test_scores_are_per_user(client, admin_headers, catalogue_id, starter_questi
     assert score_of(client, other_headers, score["id"]) is None
 
 
-def test_defining_a_score_needs_the_editor_flag(
+def test_a_score_may_only_be_defined_on_your_own_catalogue(
     client, admin_headers, catalogue_id
 ):
+    # No permission gates this any more — a score is part of shaping your own
+    # tracker. What stops it is ownership: `catalogue_id` is the admin's.
     _, plain_headers = make_user(client, admin_headers, "reader")
-    assert make_score(client, plain_headers, catalogue_id).status_code == 403
+    mine = client.get("/api/me", headers=plain_headers).json()["default_catalogue_id"]
 
+    assert make_score(client, plain_headers, mine).status_code == 201
+
+    # Posted to the admin's catalogue, with components this account does own,
+    # so the refusal is about the catalogue rather than about the questions.
+    detail = client.get(f"/api/catalogues/{mine}", headers=plain_headers).json()
+    asked = [q for q in detail["questions"] if q["origin"] == "asked"]
+    refused = client.post(
+        f"/api/catalogues/{catalogue_id}/scores",
+        headers=plain_headers,
+        json={
+            "prompt": "Total",
+            "aggregate": "sum",
+            "components": [{"source_question_id": asked[0]["id"]}],
+        },
+    )
+    assert refused.status_code == 404
