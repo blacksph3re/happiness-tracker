@@ -1,5 +1,8 @@
 <script>
   import AdminOffline, { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
+  import IconBin from '../../lib/IconBin.svelte'
+  import IconPencil from '../../lib/IconPencil.svelte'
+  import IconPlus from '../../lib/IconPlus.svelte'
   import QuestionForm from '../../lib/wellbeing/QuestionForm.svelte'
   import ScoreForm from '../../lib/wellbeing/ScoreForm.svelte'
   import { attempt, unwrap } from '../../lib/api.js'
@@ -430,13 +433,14 @@
             class="rounded-md border border-white/15 bg-ink-soft px-3 py-2 text-sm"
           />
           <button
-            class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+            class="meta rounded-md border border-white/15 p-2 hover:border-white/40
                    disabled:opacity-30"
             disabled={offline || !newName.trim()}
-            title={hint}
+            title={hint || 'Add'}
+            aria-label="Add"
             onclick={addCatalogue}
           >
-            Add
+            <IconPlus />
           </button>
         </span>
       {/if}
@@ -478,12 +482,13 @@
             </span>
             <button
               disabled={offline}
-              title={hint}
-              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+              title={hint || 'Edit'}
+              aria-label="Edit"
+              class="meta rounded-md border border-white/15 p-2 hover:border-white/40
                      disabled:cursor-not-allowed disabled:opacity-40"
               onclick={() => edit(question)}
             >
-              Edit
+              <IconPencil />
             </button>
             <button
               disabled={offline}
@@ -535,15 +540,16 @@
             <div class="flex shrink-0 items-center gap-2">
               <button
                 disabled={offline}
-                title={hint}
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                title={hint || 'Edit'}
+                aria-label="Edit"
+                class="meta rounded-md border border-white/15 p-2 hover:border-white/40
                      disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => {
                   scoreDraft = null
                   editingScore = toScoreDraft(score)
                 }}
               >
-                Edit
+                <IconPencil />
               </button>
               <button
                 disabled={offline}
@@ -556,12 +562,13 @@
               </button>
               <button
                 disabled={offline}
-                title={hint}
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                title={hint || 'Remove'}
+                aria-label="Remove"
+                class="meta rounded-md border border-white/15 p-2 hover:border-white/40
                      disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => removeScore(score)}
               >
-                Remove
+                <IconBin />
               </button>
             </div>
             {#if editingScore?.id === score.id}
@@ -589,8 +596,8 @@
         </div>
       {:else}
         <button
-          class="meta mt-3 rounded-md border border-white/15 px-4 py-2 hover:border-white/40
-                 disabled:cursor-not-allowed disabled:opacity-30"
+          class="meta mt-3 flex items-center gap-2 rounded-md border border-white/15 px-4
+                 py-2 hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-30"
           disabled={offline || scorable.length === 0}
           title={hint}
           onclick={() => {
@@ -598,6 +605,7 @@
             scoreDraft = toScoreDraft(null)
           }}
         >
+          <IconPlus class="size-3.5" />
           Add a score
         </button>
       {/if}

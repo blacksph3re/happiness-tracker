@@ -1,5 +1,6 @@
 <script>
   import { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
+  import IconPlus from '../../lib/IconPlus.svelte'
   import ProjectCard from '../../lib/time/ProjectCard.svelte'
   import { attempt } from '../../lib/api.js'
   import {
@@ -237,9 +238,10 @@
           type="submit"
           disabled={offline || !newName.trim()}
           title={hint}
-          class="rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift
-                 disabled:cursor-not-allowed disabled:opacity-30"
+          class="flex items-center gap-2 rounded-lg bg-dusk px-5 py-3 font-semibold
+                 hover:bg-dusk-lift disabled:cursor-not-allowed disabled:opacity-30"
         >
+          <IconPlus class="size-4" />
           Add project
         </button>
       </form>
@@ -277,11 +279,12 @@
         <button
           type="submit"
           disabled={offline || !newName.trim()}
-          title={hint}
-          class="meta rounded-md border border-white/15 px-4 py-2.5 hover:border-white/40
+          title={hint || 'Add'}
+          aria-label="Add"
+          class="meta rounded-md border border-white/15 p-2.5 hover:border-white/40
                  disabled:cursor-not-allowed disabled:opacity-30"
         >
-          Add
+          <IconPlus />
         </button>
       </form>
       <a

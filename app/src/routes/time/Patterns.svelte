@@ -8,7 +8,7 @@
   import { daysIn, period, stepPeriod } from '../../lib/time/period.js'
   import { formatDuration, hours, nowUtc } from '../../lib/time/duration.js'
   import DayTimeline from '../../lib/time/DayTimeline.svelte'
-  import { smoothSeries } from '../../lib/series.js'
+  import { movingAverage } from '../../lib/series.js'
   import { weekdayAverages } from '../../lib/time/weekday.js'
   import {
     barOptions,
@@ -264,14 +264,15 @@
         return { name: group.name, colour: swatch(group.colour), data: plotted.map(value) }
       }
       // The nulls are passed through rather than flattened to zero, which is
-      // what makes the toggle mean anything once smoothing is on: flattening
-      // first made the two settings identical, because every gap had already
-      // become a zero before the average saw it.
-      const averaged = smoothSeries(
-        padded.days.map((day) => value(day)),
-        smoothing,
-        { breakGaps: showGaps }
-      )
+      // what makes the toggle mean anything at all: flattening first made the
+      // two settings identical, because every gap had already become a zero
+      // before the average saw it. `movingAverage` itself decides what happens
+      // to the *line* — it fills a gap from whatever real readings surround
+      // it, on however wide a span the reader chose, and only stays a gap
+      // where the whole window has nothing. The toggle's job ends at whether a
+      // neighbour's average gets pulled down by it; it does not also get to
+      // veto an answer smoothing already worked out.
+      const averaged = movingAverage(padded.days.map((day) => value(day)), smoothing)
       return {
         name: group.name,
         colour: swatch(group.colour),
@@ -464,6 +465,10 @@
   function chart(node, options) {
     const instance = echarts.init(node, null, { renderer: 'canvas' })
     instance.setOption(options)
+    // Stashed on the node itself, the same way a `data-*` attribute would be:
+    // a seam for the e2e suite to read what was actually drawn, since a canvas
+    // otherwise has no DOM a test can inspect. Named to say so.
+    node.__chartForTests = instance
     const resize = () => instance.resize()
     window.addEventListener('resize', resize)
     return {
@@ -716,7 +721,7 @@
   {:else}
     {#if asLine}
     <div class="rounded-xl border border-white/10 bg-ink-soft p-4">
-      <div use:chart={lineOptions(seriesInput)} class="h-80 w-full"></div>
+      <div use:chart={lineOptions(seriesInput)} data-line-chart class="h-80 w-full"></div>
       {#if asLine}
         <div class="mt-3 flex flex-wrap items-center gap-4">
           <label class="flex min-w-56 flex-1 items-center gap-3">
@@ -735,12 +740,21 @@
           </label>
           <!-- A day with nothing tracked is not a day of zero hours; whether it
                should read as one is a judgement, so it is offered rather than
-               assumed. Smoothing reads across the gaps either way. -->
+               assumed. What it no longer does is decide whether the *line*
+               breaks there — smoothing bridges a gap from whatever real
+               readings surround it on however wide a span is chosen, and only
+               stays a gap where the whole window has nothing. This toggle's
+               job ends at the average a neighbour sees. -->
           <label class="flex shrink-0 items-center gap-2">
             <input type="checkbox" bind:checked={showGaps} class="accent-dusk" />
-            <span class="meta">Untracked days break the line</span>
+            <span class="meta">Leave untracked days out of the average</span>
           </label>
         </div>
+        <p class="meta mt-2 normal-case">
+          {showGaps
+            ? 'A day nothing was tracked on is left out of the smoothed average.'
+            : 'A day nothing was tracked on counts as zero in the smoothed average.'}
+        </p>
       {/if}
       <!-- Both captions state an overlap rather than smoothing it over. Two
            timers at once genuinely put more tracked hours in a day than it has;

@@ -8,6 +8,7 @@
     disableTotp,
     setMyDefaultCatalogue,
   } from '../lib/generated/sdk.gen'
+  import IconBin from '../lib/IconBin.svelte'
   import QrCode from '../lib/QrCode.svelte'
   import { resource } from '../lib/resource.svelte.js'
   import { catalogues as catalogueStore, ensureCatalogues, ensureMe, me as meStore } from '../lib/store.js'
@@ -185,9 +186,11 @@
               type="submit"
               disabled={offline || !code.trim()}
               title={hint}
-              class="meta rounded-md border border-ember px-3 py-2 text-paper
-                     hover:bg-ember/10 disabled:cursor-not-allowed disabled:opacity-40"
+              class="meta flex items-center gap-2 rounded-md border border-ember px-3 py-2
+                     text-paper hover:bg-ember/10 disabled:cursor-not-allowed
+                     disabled:opacity-40"
             >
+              <IconBin class="size-3.5" />
               Remove it
             </button>
             <button
@@ -204,10 +207,11 @@
           data-totp-remove
           disabled={offline}
           title={hint}
-          class="meta mt-4 rounded-md border border-white/15 px-3 py-2 hover:border-ember
-                 disabled:cursor-not-allowed disabled:opacity-40"
+          class="meta mt-4 flex items-center gap-2 rounded-md border border-white/15 px-3
+                 py-2 hover:border-ember disabled:cursor-not-allowed disabled:opacity-40"
           onclick={() => ((removing = true), (code = ''))}
         >
+          <IconBin class="size-3.5" />
           Remove it
         </button>
       {/if}

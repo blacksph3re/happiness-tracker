@@ -1,6 +1,8 @@
 <script>
   import AdminOffline, { OFFLINE_HINT } from '../lib/AdminOffline.svelte'
   import { attempt, unwrap } from '../lib/api.js'
+  import IconBin from '../lib/IconBin.svelte'
+  import IconPlus from '../lib/IconPlus.svelte'
   import { resource } from '../lib/resource.svelte.js'
   import {
     clearUserTotp,
@@ -179,11 +181,12 @@
               title={hint}
               onclick={() => clearSecondFactor(user)}>Clear second factor</button>
             {#if user.id !== me?.id}
-              <button class="meta rounded-md border border-ember/40 px-3 py-2 text-ember
+              <button class="meta rounded-md border border-ember/40 p-2 text-ember
                              hover:border-ember disabled:cursor-not-allowed
                              disabled:opacity-40"
                 disabled={offline}
-                title={hint} onclick={() => remove(user)}>Delete</button>
+                aria-label="Delete"
+                title={hint || 'Delete'} onclick={() => remove(user)}><IconBin /></button>
             {/if}
           </div>
         </li>
@@ -224,9 +227,10 @@
         type="submit"
         disabled={offline}
         title={hint}
-        class="mt-5 rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift
-               disabled:cursor-not-allowed disabled:opacity-40"
+        class="mt-5 flex items-center gap-2 rounded-lg bg-dusk px-5 py-3 font-semibold
+               hover:bg-dusk-lift disabled:cursor-not-allowed disabled:opacity-40"
       >
+        <IconPlus class="size-4" />
         Add person
       </button>
     </form>

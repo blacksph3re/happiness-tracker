@@ -956,6 +956,63 @@ test('the smoothed line reaches past the window it is drawn for', async ({
   expect(ranges.length, 'smoothing refetched the summary').toBe(before)
 })
 
+/** Read what a mounted chart was actually given, via the seam `chart` leaves for this. */
+async function chartOption(page, selector) {
+  return page.evaluate(
+    (sel) => document.querySelector(sel).__chartForTests.getOption(),
+    selector
+  )
+}
+
+test('a wide smoothing span bridges a gap instead of breaking the line there', async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  // Ten days apart, so the days between are a real gap — nothing tracked on
+  // any of them — with a reading on either side.
+  await recordSession(account, project.id, '2026-06-05T09:00:00', '2026-06-05T12:00:00')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'Month', exact: true }).click()
+  await expect(page.locator('[data-period]')).toBeVisible()
+  await page.getByLabel('Smoothing').fill('14')
+  await page.waitForTimeout(300)
+
+  const option = await chartOption(page, '[data-line-chart]')
+  const at = option.xAxis[0].data.indexOf('2026-06-10')
+  expect(at, 'the middle of the gap was not on the axis').toBeGreaterThan(-1)
+
+  // The bug: this stayed `null` no matter how wide the span was, because a
+  // masking step threw away exactly the value smoothing had just worked out.
+  // A fourteen-day average centred near here sees both tracked days.
+  expect(option.series[0].data[at]).not.toBeNull()
+})
+
+test('leaving untracked days out of the average does not also reopen the gap', async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, '2026-06-05T09:00:00', '2026-06-05T12:00:00')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'Month', exact: true }).click()
+  await expect(page.locator('[data-period]')).toBeVisible()
+  await page.getByLabel('Smoothing').fill('14')
+  // The toggle governs the average alone now — checking it must not bring
+  // the old line-breaking behaviour back by a side door.
+  await page.getByRole('checkbox', { name: 'Leave untracked days out of the average' }).check()
+  await page.waitForTimeout(300)
+
+  const option = await chartOption(page, '[data-line-chart]')
+  const at = option.xAxis[0].data.indexOf('2026-06-10')
+
+  expect(option.series[0].data[at]).not.toBeNull()
+})
+
 test('untagged time is reported below the total, not inside the charts', async ({
   page,
   account,

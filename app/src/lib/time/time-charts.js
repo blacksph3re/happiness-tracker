@@ -149,6 +149,16 @@ export function shareOptions({ slices }) {
 export function weekdayOptions({ labels, series }) {
   return {
     ...barOptions({ days: [], series }),
+    // `barOptions`'s own tooltip reads `name` through `dayLabel`, which turns
+    // a `YYYY-MM-DD` key into "Tue 4 Mar" — and turns "Mon" into "Invalid
+    // Date", since that is what `dayLabel` does with a string that is not a
+    // day key. This axis's categories are already the label, so the tooltip
+    // just says it back rather than trying to parse it as one.
+    tooltip: {
+      trigger: 'item',
+      formatter: ({ name, seriesName, value }) =>
+        `${seriesName}<br>${name} · ${(value ?? 0).toFixed(2)} h`,
+    },
     xAxis: {
       type: 'category',
       data: labels,

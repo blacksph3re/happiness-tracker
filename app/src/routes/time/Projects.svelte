@@ -23,6 +23,9 @@
   import { connection } from '../../lib/sync.js'
   import { deductionFor, previewPoints } from '../../lib/time/deductions.js'
   import { formatDuration } from '../../lib/time/duration.js'
+  import IconBin from '../../lib/IconBin.svelte'
+  import IconPencil from '../../lib/IconPencil.svelte'
+  import IconPlus from '../../lib/IconPlus.svelte'
   import ImportSessions from '../../lib/time/ImportSessions.svelte'
   import { nextColour, PROJECT_COLOURS as COLOURS } from '../../lib/time/palette.js'
   import { pushToast } from '../../lib/toasts.js'
@@ -278,12 +281,13 @@
               </span>
               <button
                 disabled={offline}
-                title={hint}
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
+                title={hint || 'Edit'}
+                aria-label="Edit"
+                class="meta rounded-md border border-white/15 p-2 hover:border-white/40
                        disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => (editing = editing === project.id ? null : project.id)}
               >
-                Edit
+                <IconPencil />
               </button>
               <button
                 disabled={offline}
@@ -380,12 +384,13 @@
 
               <button
                 disabled={offline}
-                title={hint}
-                class="meta self-start rounded-md border border-white/15 px-3 py-2
+                title={hint || 'Delete project'}
+                aria-label="Delete project"
+                class="meta self-start rounded-md border border-white/15 p-2
                        hover:border-ember disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => removeProject(project)}
               >
-                Delete project
+                <IconBin />
               </button>
             </div>
           {/if}
@@ -410,11 +415,12 @@
       <button
         type="submit"
         disabled={offline || !newProject.trim()}
-        title={hint}
-        class="meta rounded-md border border-white/15 px-4 py-2.5 hover:border-white/40
+        title={hint || 'Add'}
+        aria-label="Add"
+        class="meta rounded-md border border-white/15 p-2.5 hover:border-white/40
                disabled:cursor-not-allowed disabled:opacity-30"
       >
-        Add
+        <IconPlus />
       </button>
     </form>
 
@@ -476,12 +482,13 @@
               </button>
               <button
                 disabled={offline}
-                title={hint}
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-ember
+                title={hint || 'Remove'}
+                aria-label="Remove"
+                class="meta rounded-md border border-white/15 p-2 hover:border-ember
                        disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => removeTag(tag)}
               >
-                Remove
+                <IconBin />
               </button>
             </div>
 
@@ -590,11 +597,12 @@
 
                 <div class="mt-3 flex flex-wrap gap-2">
                   <button
-                    class="meta rounded-md border border-white/15 px-3 py-2
-                           hover:border-white/40"
+                    class="meta flex items-center gap-2 rounded-md border border-white/15
+                           px-3 py-2 hover:border-white/40"
                     onclick={() =>
                       (bands = [...bands, { from_minutes: 0, deduct_minutes: 30 }])}
                   >
+                    <IconPlus class="size-3.5" />
                     Add a band
                   </button>
                   <button
@@ -621,11 +629,12 @@
         <button
           type="submit"
           disabled={offline || !newTag.trim()}
-          title={hint}
-          class="meta rounded-md border border-white/15 px-4 py-2.5 hover:border-white/40
+          title={hint || 'Add'}
+          aria-label="Add"
+          class="meta rounded-md border border-white/15 p-2.5 hover:border-white/40
                  disabled:cursor-not-allowed disabled:opacity-30"
         >
-          Add
+          <IconPlus />
         </button>
       </form>
     </div>

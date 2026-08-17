@@ -19,6 +19,9 @@
     slices,
     utcOffset,
   } from '../../lib/time/duration.js'
+  import IconBin from '../../lib/IconBin.svelte'
+  import IconPencil from '../../lib/IconPencil.svelte'
+  import IconPlus from '../../lib/IconPlus.svelte'
   import TimeField from '../../lib/time/TimeField.svelte'
   import { now } from '../../lib/time/tick.js'
   import {
@@ -563,11 +566,13 @@
            is no "current" day for the form to belong to, so the day it writes
            became a field. -->
       <button
-        class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift"
+        class="flex items-center gap-2 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
+               hover:bg-dusk-lift"
         data-add-session
         onclick={startAdding}
       >
-        + Add a session
+        <IconPlus class="size-4" />
+        Add a session
       </button>
       <button
         class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
@@ -644,11 +649,12 @@
           <TimeField label="To" bind:value={adding.endClock} />
         </div>
         <button
-          class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift
-                 disabled:opacity-30"
+          class="flex items-center gap-2 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
+                 hover:bg-dusk-lift disabled:opacity-30"
           disabled={!adding.project_id || !adding.day || adding.day > today()}
           onclick={() => saveNew()}
         >
+          <IconPlus class="size-4" />
           Add session
         </button>
         <button
@@ -850,19 +856,22 @@
                                offering what the row cannot honestly do. -->
                           {#if workable}
                             <button
-                              class="meta rounded-md border border-white/15 px-3 py-2
+                              class="meta rounded-md border border-white/15 p-2
                                      hover:border-white/40"
+                              aria-label="Edit"
+                              title="Edit"
                               onclick={() => startEditing(only)}
                             >
-                              Edit
+                              <IconPencil />
                             </button>
                             <button
-                              class="meta rounded-md border border-white/15 px-3 py-2
+                              class="meta rounded-md border border-white/15 p-2
                                      hover:border-ember"
                               aria-label="Delete {shown.name} session"
+                              title="Delete {shown.name} session"
                               onclick={() => remove(only)}
                             >
-                              Delete
+                              <IconBin />
                             </button>
                           {/if}
                         </div>
