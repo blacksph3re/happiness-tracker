@@ -4,7 +4,11 @@
   import { save, toCsv } from '../../lib/download.js'
   import { swipe } from '../../lib/swipe.js'
   import { attempt } from '../../lib/api.js'
-  import { ensureAllCatalogues, ensureAnswers } from '../../lib/store.js'
+  import {
+    answers as answerStore,
+    ensureAllCatalogues,
+    ensureAnswers,
+  } from '../../lib/store.js'
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
   import { navigate } from '../../lib/router.js'
   import { wide } from '../../lib/media.js'
@@ -19,9 +23,17 @@
   // three times as long.
   const ROW_HEIGHT = 'min-h-14'
 
-  let rows = $state([])
+  // Read from the store rather than snapshotted out of the loader, so that a
+  // background revalidation — an answer recorded on another device — reaches
+  // this table without it having to ask again.
+  const rows = $derived($answerStore ?? [])
   let questions = $state([])
-  let loading = $state(true)
+  let loaded = $state(false)
+
+  // "Loading" means there is nothing to show, not that a request is out. A
+  // revisit paints from the store immediately while a revalidation runs behind
+  // it, which is the whole of the rule about never waiting on a fetch.
+  const loading = $derived(!loaded && rows.length === 0)
   let past = $state(WINDOW_STEP)
   let future = $state(7)
   let scroller = $state(null)
@@ -101,9 +113,11 @@
       // a catalogue switch still belong in the record.
       const details = await ensureAllCatalogues()
       questions = details.flatMap((detail) => detail.questions)
-      rows = (await ensureAnswers()) ?? []
+      // Not assigned: `rows` reads the store, and this is only what starts it
+      // filling. Assigning here is what used to make a later update invisible.
+      await ensureAnswers()
     } finally {
-      loading = false
+      loaded = true
     }
   }
 

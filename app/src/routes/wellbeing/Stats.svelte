@@ -13,17 +13,28 @@
   import { fiveNumberSummary, movingAverage, tallyChoices, tallyPairs } from '../../lib/series.js'
   import { plotWindow } from '../../lib/timeline.js'
   import {
+    answers as answerStore,
     ensureAnswers,
     ensurePreferences,
     preferenceSection,
     ensureVariables,
     persistPreferences,
+    variables as variableStore,
   } from '../../lib/store.js'
   import { dayLabel } from '../../lib/day.js'
 
-  let variables = $state([])
-  let rows = $state([])
-  let loading = $state(true)
+  // Read from the stores rather than snapshotted out of the loader, so that a
+  // background revalidation — an answer recorded on another device — redraws
+  // these charts without the page having to ask for anything.
+  const variables = $derived($variableStore ?? [])
+  const rows = $derived($answerStore ?? [])
+  let loaded = $state(false)
+
+  // "Loading" means there is nothing to show, not that a request is out. A
+  // revisit paints from the store immediately while a revalidation runs behind
+  // it, which is the whole of the rule about never waiting on a fetch.
+  const loading = $derived(!loaded && variables.length === 0)
+
   let view = $state('line')
   let scatterX = $state('')
   let scatterY = $state('')
@@ -102,9 +113,13 @@
 
   /** Load the plottable variables and the raw answers behind them. */
   async function load() {
-    variables = (await ensureVariables()) ?? []
-    rows = (await ensureAnswers()) ?? []
-    const axes = variables.filter((v) => v.roles.includes('axis'))
+    // Awaited for the defaults below, which are chosen once from what is there
+    // at the time. Neither result is assigned to component state — `variables`
+    // and `rows` read the stores, and assigning here is exactly what used to
+    // make a later update invisible.
+    const loadedVariables = (await ensureVariables()) ?? []
+    await ensureAnswers()
+    const axes = loadedVariables.filter((v) => v.roles.includes('axis'))
     scatterX = axes[0]?.key ?? ''
     scatterY = axes[1]?.key ?? axes[0]?.key ?? ''
     chosen = new Set(axes.filter((v) => v.origin === 'asked').map((v) => v.key))
@@ -124,7 +139,7 @@
     if (stored.scatterX) scatterX = stored.scatterX
     if (stored.scatterY) scatterY = stored.scatterY
 
-    loading = false
+    loaded = true
     ready = true
   }
 

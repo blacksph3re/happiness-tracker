@@ -15,6 +15,55 @@ class Version(BaseModel):
     """Application version string."""
 
 
+class Fingerprint(BaseModel):
+    """How much of one collection there is, and when it last moved.
+
+    Both halves are needed, because neither alone sees every kind of change: a
+    timestamp watermark cannot see a deletion, since the deleted row takes its
+    own timestamp with it, and a count cannot see an edit.
+    """
+
+    n: int
+    """How many rows the signed-in account has in this collection."""
+
+    at: datetime | None
+    """The newest ``updated_at`` among them.
+
+    ``None`` where the table does not carry the column, in which case the
+    collection is compared on ``n`` alone and an edit in place goes unnoticed
+    until the row count changes.
+    """
+
+
+class Changes(BaseModel):
+    """A fingerprint per collection, for a client deciding what to re-read.
+
+    Deliberately one small response rather than an endpoint per collection: the
+    common answer is "nothing moved", and that should cost one request.
+    """
+
+    answers: Fingerprint
+    """Recorded answers, including edits to them."""
+
+    time_entries: Fingerprint
+    """Tracked sessions, which are corrected and deleted freely."""
+
+    projects: Fingerprint
+    """Projects owned by the account."""
+
+    tags: Fingerprint
+    """Tags owned by the account."""
+
+    rules: Fingerprint
+    """Deduction bands, which change what reported time means."""
+
+    catalogues: Fingerprint
+    """Question catalogues, which are shared rather than per account."""
+
+    me: Fingerprint
+    """The account row itself, whose default catalogue decides what is asked."""
+
+
 class LoginRequest(BaseModel):
     """Credentials submitted to the login endpoint."""
 

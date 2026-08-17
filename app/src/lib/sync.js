@@ -83,6 +83,47 @@ const PROBE_EVERY = 30_000
 let probing = null
 
 /**
+ * What to do on a wake-up while the server is reachable.
+ *
+ * Injected rather than imported, the same way `whenHoldingWrites` is: the thing
+ * that wants to run here — checking what changed — needs `connection` from this
+ * file, and importing it back would be a cycle.
+ *
+ * Registered by `lib/revalidate.js`. Left unset, every wake-up below is exactly
+ * what it was before: a probe while offline, and nothing while online.
+ */
+let onReachable = null
+
+/**
+ * Register what to run when the app wakes up and the server is answering.
+ *
+ * @param {() => void} handler Called with no arguments, and never awaited: a
+ *   wake-up must not be able to hold up the event that caused it.
+ */
+export function whenReachable(handler) {
+  onReachable = handler
+}
+
+/**
+ * Look at the world again, doing whichever half of the job applies.
+ *
+ * The two are complementary and exactly one of them is ever wanted: while the
+ * server is unreachable the only question is whether it has come back, and
+ * while it is answering that question is already settled and the interesting
+ * one is what has changed. Branching here rather than at each listener is what
+ * keeps a tab regaining focus from asking both at once.
+ */
+async function wake() {
+  if (get(connection) !== 'online') {
+    await probe()
+    // Still nothing there: the reconnect this was hoping for did not happen,
+    // and there is nobody to ask what changed.
+    if (get(connection) !== 'online') return
+  }
+  onReachable?.()
+}
+
+/**
  * Find out whether the server is reachable, one question at a time.
  *
  * Every other way the app learns this is a side effect of a request it was
@@ -319,6 +360,14 @@ async function drain() {
   }
   await loadQueue()
   if (decided.length || unsettled.length) remember()
+
+  // The server has just moved, and this device is the reason. Worth asking what
+  // it looks like now: the answer also refreshes the baseline the next check
+  // compares against, and without that these same writes would be reported as
+  // "changed" by whichever trigger fires next. So this moves the cost rather
+  // than adding it — see the note on `applyChanges` about re-reading a
+  // collection this device already has.
+  onReachable?.()
 }
 
 /** Forget the conflicts and decisions a person has read. */
@@ -357,18 +406,24 @@ export function watch() {
   // the state from what actually happened to a request. Claiming to be online
   // here was the same mistake as trusting `navigator.onLine`, one layer along:
   // an interface came up, which is not the same as the server being there.
-  window.addEventListener('online', probe)
+  window.addEventListener('online', wake)
   window.addEventListener('offline', () => connection.set('offline'))
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') probe()
+    if (document.visibilityState === 'visible') wake()
   })
 
   // The one thing no event covers. `online` does not fire for every way a
   // connection comes back — a proxy returning, a captive portal let go of, a
   // laptop whose interface never dropped — and on a phone the app is usually
   // not even running to hear it.
+  //
+  // One timer for both halves of the job, because exactly one of them applies
+  // at a time. Nothing wakes a hidden tab to ask what changed: the answer is
+  // only wanted by something on screen, and it will be asked for again the
+  // moment the tab is looked at.
   setInterval(() => {
     if (get(connection) !== 'online') probe()
+    else if (document.visibilityState === 'visible') onReachable?.()
   }, PROBE_EVERY)
 
   // `navigator.onLine` is not consulted: it says whether there is an interface,

@@ -124,6 +124,27 @@ class User(Base):
     rule about computing on read does not apply.
     """
 
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now(),
+        nullable=True,
+    )
+    """When this row was last written, or NULL if not since it was added.
+
+    Carried so that `/api/changes` can tell an edit in place from no change at
+    all: a row count sees rows arriving and leaving, and nothing else.
+
+    Nullable, and with no ``server_default``, entirely so that adding it is a
+    migration SQLite can do **in place**. A ``NOT NULL DEFAULT
+    (CURRENT_TIMESTAMP)`` cannot be added to an existing table — SQLite requires
+    a constant default — so Alembic falls back to rebuilding the table: copy,
+    ``DROP``, rename, which is the operation that has emptied tables in this
+    database before. Rows written before the column existed simply read NULL,
+    which the digest already treats as "compare on the count alone", and the
+    first edit to any of them fills it in.
+    """
+
     default_catalogue: Mapped[Catalogue | None] = relationship()
     """The catalogue referenced by `default_catalogue_id`."""
 
@@ -148,6 +169,27 @@ class Catalogue(Base):
         DateTime, server_default=func.now(), nullable=False
     )
     """Timestamp set by the database when the row is inserted."""
+
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now(),
+        nullable=True,
+    )
+    """When this row was last written, or NULL if not since it was added.
+
+    Carried so that `/api/changes` can tell an edit in place from no change at
+    all: a row count sees rows arriving and leaving, and nothing else.
+
+    Nullable, and with no ``server_default``, entirely so that adding it is a
+    migration SQLite can do **in place**. A ``NOT NULL DEFAULT
+    (CURRENT_TIMESTAMP)`` cannot be added to an existing table — SQLite requires
+    a constant default — so Alembic falls back to rebuilding the table: copy,
+    ``DROP``, rename, which is the operation that has emptied tables in this
+    database before. Rows written before the column existed simply read NULL,
+    which the digest already treats as "compare on the count alone", and the
+    first edit to any of them fills it in.
+    """
 
     questions: Mapped[list[Question]] = relationship(
         back_populates="catalogue",
@@ -231,6 +273,27 @@ class Question(Base):
 
     max_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     """Description of the upper bound, such as ``"High"``."""
+
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now(),
+        nullable=True,
+    )
+    """When this row was last written, or NULL if not since it was added.
+
+    Carried so that `/api/changes` can tell an edit in place from no change at
+    all: a row count sees rows arriving and leaving, and nothing else.
+
+    Nullable, and with no ``server_default``, entirely so that adding it is a
+    migration SQLite can do **in place**. A ``NOT NULL DEFAULT
+    (CURRENT_TIMESTAMP)`` cannot be added to an existing table — SQLite requires
+    a constant default — so Alembic falls back to rebuilding the table: copy,
+    ``DROP``, rename, which is the operation that has emptied tables in this
+    database before. Rows written before the column existed simply read NULL,
+    which the digest already treats as "compare on the count alone", and the
+    first edit to any of them fills it in.
+    """
 
     catalogue: Mapped[Catalogue] = relationship(back_populates="questions")
     """The catalogue this question belongs to."""
@@ -465,6 +528,27 @@ class Project(Base):
     )
     """Timestamp set by the database when the row is inserted."""
 
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now(),
+        nullable=True,
+    )
+    """When this row was last written, or NULL if not since it was added.
+
+    Carried so that `/api/changes` can tell an edit in place from no change at
+    all: a row count sees rows arriving and leaving, and nothing else.
+
+    Nullable, and with no ``server_default``, entirely so that adding it is a
+    migration SQLite can do **in place**. A ``NOT NULL DEFAULT
+    (CURRENT_TIMESTAMP)`` cannot be added to an existing table — SQLite requires
+    a constant default — so Alembic falls back to rebuilding the table: copy,
+    ``DROP``, rename, which is the operation that has emptied tables in this
+    database before. Rows written before the column existed simply read NULL,
+    which the digest already treats as "compare on the count alone", and the
+    first edit to any of them fills it in.
+    """
+
     user: Mapped[User] = relationship()
     """The owner."""
 
@@ -496,6 +580,27 @@ class Tag(Base):
 
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     """Sort order in the tag grouping."""
+
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now(),
+        nullable=True,
+    )
+    """When this row was last written, or NULL if not since it was added.
+
+    Carried so that `/api/changes` can tell an edit in place from no change at
+    all: a row count sees rows arriving and leaving, and nothing else.
+
+    Nullable, and with no ``server_default``, entirely so that adding it is a
+    migration SQLite can do **in place**. A ``NOT NULL DEFAULT
+    (CURRENT_TIMESTAMP)`` cannot be added to an existing table — SQLite requires
+    a constant default — so Alembic falls back to rebuilding the table: copy,
+    ``DROP``, rename, which is the operation that has emptied tables in this
+    database before. Rows written before the column existed simply read NULL,
+    which the digest already treats as "compare on the count alone", and the
+    first edit to any of them fills it in.
+    """
 
     projects: Mapped[list[Project]] = relationship(
         secondary="project_tags", back_populates="tags"
@@ -566,6 +671,27 @@ class DeductionBand(Base):
 
     A cap is the open-ended case of a deduction: it takes off however much the
     day ran past `from_minutes`, so the day reports the threshold and no more.
+    """
+
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now(),
+        nullable=True,
+    )
+    """When this row was last written, or NULL if not since it was added.
+
+    Carried so that `/api/changes` can tell an edit in place from no change at
+    all: a row count sees rows arriving and leaving, and nothing else.
+
+    Nullable, and with no ``server_default``, entirely so that adding it is a
+    migration SQLite can do **in place**. A ``NOT NULL DEFAULT
+    (CURRENT_TIMESTAMP)`` cannot be added to an existing table — SQLite requires
+    a constant default — so Alembic falls back to rebuilding the table: copy,
+    ``DROP``, rename, which is the operation that has emptied tables in this
+    database before. Rows written before the column existed simply read NULL,
+    which the digest already treats as "compare on the count alone", and the
+    first edit to any of them fills it in.
     """
 
 

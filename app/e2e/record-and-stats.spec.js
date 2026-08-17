@@ -263,10 +263,16 @@ test('deep links open the page they name', async ({ page }) => {
 })
 
 
-test('revisiting the stats page makes no requests, and saves only on a change', async ({
+test('revisiting the stats page re-reads nothing, and saves only on a change', async ({
   page,
   account,
 }) => {
+  // This used to assert the API call list was *exactly* empty. Under the
+  // amended rule that is the wrong assertion: navigation may now cost a change
+  // digest, and forbidding it would forbid the feature. What must still hold is
+  // that a revisit re-reads no *collection* — the digest says nothing moved,
+  // and nothing is fetched behind it. `e2e/sync.spec.js` covers the other half,
+  // that a revisit never waits on any of it.
   await withHistory(account, 10)
   await page.goto('/stats')
   await expect(page.locator('canvas').first()).toBeVisible()
@@ -292,11 +298,15 @@ test('revisiting the stats page makes no requests, and saves only on a change', 
   await page.getByRole('link', { name: 'Patterns' }).click()
   await expect(page.locator('canvas').first()).toBeVisible()
   await page.waitForTimeout(900)
-  expect(calls, 'a revisit should cost nothing').toEqual([])
+
+  const reads = calls.filter((call) => call !== 'GET /api/changes')
+  expect(reads, 'a revisit re-read a collection that had not moved').toEqual([])
 
   // An actual change is saved, once.
   await savesView(page, () => page.getByRole('button', { name: 'Spread' }).click())
-  expect(calls).toEqual(['PUT /api/me/preferences'])
+  expect(calls.filter((call) => call.startsWith('PUT'))).toEqual([
+    'PUT /api/me/preferences',
+  ])
 
   // And it survives a reload.
   await page.reload()

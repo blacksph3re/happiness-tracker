@@ -2,7 +2,7 @@
   import { answerFacet, matchingDays, weekdayFacet } from '../../lib/facets.js'
   import { chart } from '../../lib/chart-action.js'
   import { resource } from '../../lib/resource.svelte.js'
-  import { ensureSummary } from '../../lib/store.js'
+  import { ensureSummary, summaryRevision } from '../../lib/store.js'
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
   import { daysIn, period, stepPeriod } from '../../lib/time/period.js'
   import { formatDuration, hours, nowUtc } from '../../lib/time/duration.js'
@@ -435,7 +435,18 @@
     // smoothed line has real neighbours to average with at its edges instead of
     // tapering into a half-window. Fixed rather than `smoothingPad`, or every
     // notch of the slider would be a different range and a fresh request.
-    () => ({ by, start: shiftDay(start, -MAX_PAD), end: shiftDay(end, MAX_PAD), dayView }),
+    // `revision` is not a window: it is the store saying the cached totals have
+    // been thrown away, by a write here or by a change arriving from another
+    // device. Folded into the query because a resource re-runs on its query and
+    // on nothing else, so clearing the cache underneath one is otherwise
+    // invisible until the window happens to move.
+    () => ({
+      by,
+      start: shiftDay(start, -MAX_PAD),
+      end: shiftDay(end, MAX_PAD),
+      dayView,
+      revision: $summaryRevision,
+    }),
     async ({ by: grouping, start: from, end: to }) => {
       await Promise.all([
         ensureProjects(),

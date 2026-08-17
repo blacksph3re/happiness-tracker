@@ -33,11 +33,26 @@ The owner reviews by reading, then by using. Both are served by the same habits:
 
 Two, both standing, both cheaper to honour from the first commit:
 
-- **Read from the store after the initial load.** Opening a view a second time,
-  or switching between windows already seen, must not refetch or show a loading
-  state. Entries are cached with the *range* they were loaded for and summaries
-  by `(range, grouping)`; mutations update the cache in place and invalidate what
-  they touched. `expectSettled()` asserts it.
+- **Read from the store after the initial load, and never wait on a refetch.**
+  Opening a view a second time, or switching between windows already seen, must
+  paint from the store immediately. A request on navigation is allowed — that is
+  how a change made on another device arrives — but nothing may *wait* for one,
+  and `loading` may only be true when there is nothing to show. Entries are
+  cached with the *range* they were loaded for and summaries by
+  `(range, grouping)`; mutations update the cache in place and invalidate what
+  they touched. `expectSettled()` asserts the no-loop half, `e2e/sync.spec.js`
+  the no-waiting half.
+
+  The rule used to be the stricter "must not refetch", asserted as *zero* API
+  calls across a navigation. It was relaxed deliberately: forbidding the request
+  was only ever a proxy for forbidding the wait, and it made a stale tab
+  unfixable without a reload. `lib/revalidate.js` asks a small digest what moved
+  and re-reads only that; `SYNC_FRESHNESS_PROPOSAL.md` records the reasoning.
+
+  A component must therefore **read its data from the store**, not snapshot it
+  out of a loader. `x = await ensureX()` into local state cannot see a later
+  update, which is the whole point — `await ensureX()` to start the load, and
+  `$derived($xStore)` to read it.
 - **Three zones, imports pointing inward** — see below. A feature that needs
   something from the other half means the thing belongs in the shared zone.
 

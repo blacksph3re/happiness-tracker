@@ -99,6 +99,24 @@ export type CatalogueOut = {
 };
 
 /**
+ * Changes
+ *
+ * A fingerprint per collection, for a client deciding what to re-read.
+ *
+ * Deliberately one small response rather than an endpoint per collection: the
+ * common answer is "nothing moved", and that should cost one request.
+ */
+export type Changes = {
+    answers: Fingerprint;
+    time_entries: Fingerprint;
+    projects: Fingerprint;
+    tags: Fingerprint;
+    rules: Fingerprint;
+    catalogues: Fingerprint;
+    me: Fingerprint;
+};
+
+/**
  * DeductionBandIn
  *
  * One step of a tag's tracked-to-reported rule.
@@ -140,6 +158,26 @@ export type DefaultCatalogueChange = {
      * Catalogue Id
      */
     catalogue_id: number;
+};
+
+/**
+ * Fingerprint
+ *
+ * How much of one collection there is, and when it last moved.
+ *
+ * Both halves are needed, because neither alone sees every kind of change: a
+ * timestamp watermark cannot see a deletion, since the deleted row takes its
+ * own timestamp with it, and a count cannot see an edit.
+ */
+export type Fingerprint = {
+    /**
+     * N
+     */
+    n: number;
+    /**
+     * At
+     */
+    at: string | null;
 };
 
 /**
@@ -2346,3 +2384,19 @@ export type SyncIntentsResponses = {
 };
 
 export type SyncIntentsResponse = SyncIntentsResponses[keyof SyncIntentsResponses];
+
+export type GetChangesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/changes';
+};
+
+export type GetChangesResponses = {
+    /**
+     * Successful Response
+     */
+    200: Changes;
+};
+
+export type GetChangesResponse = GetChangesResponses[keyof GetChangesResponses];

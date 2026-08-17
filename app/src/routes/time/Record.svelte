@@ -34,6 +34,7 @@
     projects as projectStore,
     removeEntry,
     saveEntry,
+    summaryRevision,
     tags as tagStore,
     timeEntries,
     trackedDays,
@@ -61,13 +62,19 @@
   let by = $state('project')
 
   /**
-   * Bumped by every write, to re-read totals the server owns.
+   * How many times the cached totals have been thrown away.
    *
    * The session cache updates itself from what a write returns, but the tag
-   * totals are computed server-side and only invalidated there — without this a
-   * session added while reading by tag would not appear until the window moved.
+   * totals are computed server-side, so without this a session added while
+   * reading by tag would not appear until the window moved.
+   *
+   * Read from the store rather than counted here. This page used to bump a
+   * local counter after each of its own writes, which covered exactly the
+   * changes it made itself — not one arriving from another device, and not one
+   * made on the projects page. `forgetSummaries` is what actually knows the
+   * totals are stale, whoever caused it.
    */
-  let revision = $state(0)
+  const revision = $derived($summaryRevision)
 
   /**
    * Whether a row can be worked on rather than only read.
@@ -504,7 +511,6 @@
       utc_offset: editing.offset,
       note: editing.note ?? null,
     })
-    revision += 1
     editing = null
   }
 
@@ -516,14 +522,12 @@
       ended_at: fromLocal(day, adding.endClock, utcOffset()),
       utc_offset: utcOffset(),
     })
-    revision += 1
     reach(day)
     adding = null
   }
 
   async function remove(entry) {
     await removeEntry(entry.client_id)
-    revision += 1
     editing = null
   }
 

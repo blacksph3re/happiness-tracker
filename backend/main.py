@@ -11,7 +11,17 @@ from starlette.types import Scope
 from bootstrap import bootstrap
 from config import get_settings
 from database import SessionLocal
-from routers import answers, auth, catalogues, projects, stats, sync, time, users
+from routers import (
+    answers,
+    auth,
+    catalogues,
+    changes,
+    projects,
+    stats,
+    sync,
+    time,
+    users,
+)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 """Directory holding the compiled frontend, produced by `pnpm build` in `app/`."""
@@ -51,8 +61,7 @@ API_TAGS = [
     {
         "name": "Account",
         "description": (
-            "The signed-in account acting on itself. Never gated on a "
-            "permission flag."
+            "The signed-in account acting on itself. Never gated on a permission flag."
         ),
     },
     {
@@ -113,6 +122,7 @@ app.include_router(stats.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(time.router, prefix="/api")
 app.include_router(sync.router, prefix="/api")
+app.include_router(changes.router, prefix="/api")
 
 
 class SinglePageApp(StaticFiles):

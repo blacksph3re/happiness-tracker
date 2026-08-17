@@ -166,9 +166,24 @@ async function quietly(call) {
   }
 }
 
+/**
+ * How many times the cached totals have been thrown away.
+ *
+ * Clearing the cache is not enough on its own: totals are loaded through
+ * `resource()`, which re-runs only when its *query* changes, so emptying the
+ * map underneath one leaves the chart showing what it drew before. Pages fold
+ * this counter into their query, which turns "the totals are stale" into a
+ * query change and lets the resource keep owning its own loading state.
+ *
+ * Only ever incremented by `forgetSummaries`, and read by nothing that
+ * `ensureSummary` writes to — the cycle `resource` would otherwise detect.
+ */
+export const summaryRevision = writable(0)
+
 /** Forget the cached totals, after anything that changes what they count. */
 export function forgetSummaries() {
   summaries.clear()
+  summaryRevision.update((count) => count + 1)
 }
 
 /**
@@ -849,6 +864,73 @@ export function forgetEntry(client_id) {
 notices.subscribe((all) => {
   if (all.length) ensureTimeEntries({ force: true })
 })
+
+/**
+ * Re-read the collections a change digest says have moved.
+ *
+ * The map from "this moved" to "re-read that" lives here rather than beside the
+ * digest, because it is knowledge about the cache: which loader owns a
+ * collection, what else is derived from it, and — for sessions — which range to
+ * ask for. `lib/revalidate.js` decides *whether* anything moved; this decides
+ * what that means.
+ *
+ * Every re-read is forced, and none of them clears its store first: a loader
+ * that cannot reach the server keeps what the device holds, and the queue is
+ * laid back over whatever arrives, so a revalidation landing mid-flush cannot
+ * erase writes that have not been sent.
+ *
+ * @param {Array<string>} moved Collection names, as the digest reports them.
+ * @returns {Promise<void>} When every affected loader has settled.
+ */
+export async function applyChanges(moved) {
+  const changed = new Set(moved)
+  const loads = []
+
+  if (changed.has('answers')) {
+    // Marked stale rather than discarded, for the reason `rememberAnswer`
+    // gives: a new answer can bring a variable into play, but out of date is
+    // not gone, and dropping the list strands a page that cannot refetch.
+    fetched.delete('variables')
+    loads.push(ensureAnswers({ force: true }))
+  }
+
+  if (changed.has('time_entries')) {
+    // Re-read for the range already held, not for all of history: a forced call
+    // with no bounds asks for every session the account has ever recorded,
+    // which is a heavy answer to a question about the last fortnight.
+    loads.push(ensureTimeEntries({ ...loadedRange, force: true }))
+    loads.push(ensureTrackedRange({ force: true }))
+    forgetSummaries()
+  }
+
+  if (changed.has('projects')) loads.push(ensureProjects({ force: true }))
+  if (changed.has('tags')) loads.push(ensureTags({ force: true }))
+  if (changed.has('rules')) loads.push(ensureDeductionRules({ force: true }))
+
+  // All three regroup or re-weigh tracked time, so any of them invalidates the
+  // totals even though none of them is a session.
+  if (changed.has('projects') || changed.has('tags') || changed.has('rules')) {
+    forgetSummaries()
+  }
+
+  if (changed.has('catalogues')) {
+    loads.push(
+      ensureCatalogues({ force: true }).then(() =>
+        // Only the ones already read: fetching every catalogue's questions here
+        // would pull in the ones this account has never opened.
+        Promise.all(
+          Object.keys(get(catalogueDetails)).map((id) =>
+            ensureCatalogue(Number(id), { force: true })
+          )
+        )
+      )
+    )
+  }
+
+  if (changed.has('me')) loads.push(ensureMe({ force: true }))
+
+  await Promise.all(loads)
+}
 
 /** Drop every cached value, for a sign-out or a change that invalidates all of it. */
 export function resetStore() {

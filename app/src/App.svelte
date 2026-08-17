@@ -17,6 +17,7 @@
   import Toasts from './lib/Toasts.svelte'
   import { clearTokens, signedIn } from './lib/api.js'
   import { ensureMe, me, resetStore } from './lib/store.js'
+  import { forgetDigest, watchForChanges } from './lib/revalidate.js'
   import SyncBadge from './lib/SyncBadge.svelte'
   import { watch } from './lib/sync.js'
   import { applyUpdate, updateReady, watchForUpdates } from './lib/updates.js'
@@ -41,14 +42,22 @@
   let menuOpen = $state(false)
 
   $effect(() => {
-    if ($signedIn) ensureMe()
-    else resetStore()
+    if ($signedIn) {
+      ensureMe()
+    } else {
+      resetStore()
+      // The digest describes one account. Kept across a sign-out it would be
+      // compared against the next person's, which reports either every
+      // collection as changed or — worse — none of them.
+      forgetDigest()
+    }
   })
 
   // Started once, for the life of the tab: the queue drains on the events that
   // mean it might work now, which on a phone is chiefly "the app came back".
   $effect(() => {
     watch()
+    watchForChanges()
     watchForUpdates()
   })
 
