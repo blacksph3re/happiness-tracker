@@ -43,8 +43,8 @@ async function seed(account) {
     await recordSession(account, reading.id, `${day}T13:00:00`, `${day}T15:00:00`)
   }
 
-  const rule = await account.api.put(`/api/tags/${work.id}/deductions`, {
-    data: [{ from_minutes: 180, deduct_minutes: 30 }],
+  const rule = await account.api.put(`/api/tags/${work.id}/rule`, {
+    data: { add_minutes: null, bands: [{ from_minutes: 180, deduct_minutes: 30 }] },
   })
   expect(rule.ok(), await rule.text()).toBeTruthy()
 

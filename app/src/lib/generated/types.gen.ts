@@ -165,6 +165,26 @@ export type DefaultCatalogueChange = {
 };
 
 /**
+ * DiskUsage
+ *
+ * How full the volume holding the database is.
+ */
+export type DiskUsage = {
+    /**
+     * Total Bytes
+     */
+    total_bytes: number;
+    /**
+     * Used Bytes
+     */
+    used_bytes: number;
+    /**
+     * Free Bytes
+     */
+    free_bytes: number;
+};
+
+/**
  * Fingerprint
  *
  * How much of one collection there is, and when it last moved.
@@ -279,6 +299,22 @@ export type MeOut = {
      * Totp Enabled
      */
     totp_enabled: boolean;
+};
+
+/**
+ * MemoryUsage
+ *
+ * What the container's cgroup says about memory.
+ */
+export type MemoryUsage = {
+    /**
+     * Used Bytes
+     */
+    used_bytes: number;
+    /**
+     * Limit Bytes
+     */
+    limit_bytes: number | null;
 };
 
 /**
@@ -698,6 +734,32 @@ export type ScoreUpdate = {
 };
 
 /**
+ * ServerMetrics
+ *
+ * A glance at the running server, for an administrator.
+ *
+ * Deliberately small and cheap: a version, how long the process has been up,
+ * and how much room is left. Anything needing history belongs in a monitoring
+ * system rather than in a settings page.
+ */
+export type ServerMetrics = {
+    /**
+     * Version
+     */
+    version: string;
+    /**
+     * Uptime Seconds
+     */
+    uptime_seconds: number;
+    /**
+     * Database Bytes
+     */
+    database_bytes: number;
+    disk: DiskUsage;
+    memory: MemoryUsage | null;
+};
+
+/**
  * SummaryRow
  *
  * How long one project or tag ran on one day.
@@ -715,6 +777,10 @@ export type SummaryRow = {
      * Seconds
      */
     seconds: number;
+    /**
+     * Added
+     */
+    added?: number;
     /**
      * Deduction
      */
@@ -846,6 +912,43 @@ export type TagOut = {
      * Position
      */
     position: number;
+};
+
+/**
+ * TagRuleIn
+ *
+ * A tag's whole rule: what it adds to a day, and what it takes away.
+ *
+ * One payload rather than two endpoints, because the two halves are one rule:
+ * the addition lands first and the bands are tested against the increased
+ * total, so saving them separately would leave a moment where the stored rule
+ * means something nobody asked for.
+ */
+export type TagRuleIn = {
+    /**
+     * Add Minutes
+     */
+    add_minutes?: number | null;
+    /**
+     * Bands
+     */
+    bands?: Array<DeductionBandIn>;
+};
+
+/**
+ * TagRuleOut
+ *
+ * A tag's rule as exposed by the API.
+ */
+export type TagRuleOut = {
+    /**
+     * Add Minutes
+     */
+    add_minutes: number | null;
+    /**
+     * Bands
+     */
+    bands?: Array<DeductionBandOut>;
 };
 
 /**
@@ -2259,7 +2362,7 @@ export type ListTimeEntriesResponses = {
 
 export type ListTimeEntriesResponse = ListTimeEntriesResponses[keyof ListTimeEntriesResponses];
 
-export type ListDeductionsData = {
+export type GetTagRuleData = {
     body?: never;
     path: {
         /**
@@ -2268,34 +2371,29 @@ export type ListDeductionsData = {
         tag_id: number;
     };
     query?: never;
-    url: '/api/tags/{tag_id}/deductions';
+    url: '/api/tags/{tag_id}/rule';
 };
 
-export type ListDeductionsErrors = {
+export type GetTagRuleErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type ListDeductionsError = ListDeductionsErrors[keyof ListDeductionsErrors];
+export type GetTagRuleError = GetTagRuleErrors[keyof GetTagRuleErrors];
 
-export type ListDeductionsResponses = {
+export type GetTagRuleResponses = {
     /**
-     * Response Listdeductions
-     *
      * Successful Response
      */
-    200: Array<DeductionBandOut>;
+    200: TagRuleOut;
 };
 
-export type ListDeductionsResponse = ListDeductionsResponses[keyof ListDeductionsResponses];
+export type GetTagRuleResponse = GetTagRuleResponses[keyof GetTagRuleResponses];
 
-export type SetDeductionsData = {
-    /**
-     * Payload
-     */
-    body: Array<DeductionBandIn>;
+export type SetTagRuleData = {
+    body: TagRuleIn;
     path: {
         /**
          * Tag Id
@@ -2303,28 +2401,26 @@ export type SetDeductionsData = {
         tag_id: number;
     };
     query?: never;
-    url: '/api/tags/{tag_id}/deductions';
+    url: '/api/tags/{tag_id}/rule';
 };
 
-export type SetDeductionsErrors = {
+export type SetTagRuleErrors = {
     /**
      * Validation Error
      */
     422: HttpValidationError;
 };
 
-export type SetDeductionsError = SetDeductionsErrors[keyof SetDeductionsErrors];
+export type SetTagRuleError = SetTagRuleErrors[keyof SetTagRuleErrors];
 
-export type SetDeductionsResponses = {
+export type SetTagRuleResponses = {
     /**
-     * Response Setdeductions
-     *
      * Successful Response
      */
-    200: Array<DeductionBandOut>;
+    200: TagRuleOut;
 };
 
-export type SetDeductionsResponse = SetDeductionsResponses[keyof SetDeductionsResponses];
+export type SetTagRuleResponse = SetTagRuleResponses[keyof SetTagRuleResponses];
 
 export type TrackedRangeData = {
     body?: never;
@@ -2426,3 +2522,19 @@ export type GetChangesResponses = {
 };
 
 export type GetChangesResponse = GetChangesResponses[keyof GetChangesResponses];
+
+export type GetServerMetricsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/admin/metrics';
+};
+
+export type GetServerMetricsResponses = {
+    /**
+     * Successful Response
+     */
+    200: ServerMetrics;
+};
+
+export type GetServerMetricsResponse = GetServerMetricsResponses[keyof GetServerMetricsResponses];

@@ -597,6 +597,19 @@ class Tag(Base):
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     """Sort order in the tag grouping."""
 
+    add_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Minutes added to every day this tag tracked anything, or None for no addition.
+
+    The other half of the tag's rule, and deliberately not a `DeductionBand`:
+    bands only ever subtract, they *replace* each other rather than stacking, and
+    the addition has to land before them — none of which a row in that table can
+    express.
+
+    Nullable with no default so the migration adding it is an in-place
+    ``ADD COLUMN``. Zero is normalised to NULL on write, so a rule that adds
+    nothing has one spelling rather than two.
+    """
+
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         default=func.now(),

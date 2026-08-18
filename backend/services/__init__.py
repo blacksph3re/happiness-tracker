@@ -10,6 +10,7 @@ score_for_day`` without caring which half it lives in.
 
 from services.timetrack import (
     TimeRuleError,
+    added_for,
     check_entry_shape,
     check_no_overlap,
     daily_slices,
@@ -48,6 +49,7 @@ __all__ = [
     "QuestionRuleError",
     "ScoreRuleError",
     "TimeRuleError",
+    "added_for",
     "check_entry_shape",
     "check_no_overlap",
     "check_question_bounds",

@@ -2,7 +2,13 @@ import { describe, expect, test } from 'vitest'
 
 import corpus from './derivations.json' with { type: 'json' }
 import { dayOffsets } from './time/duration.js'
-import { deductionFor, groupByTag, reportedFor, summarise } from './time/summary.js'
+import {
+  addedFor,
+  deductionFor,
+  groupByTag,
+  reportedFor,
+  summarise,
+} from './time/summary.js'
 import { scoreForDay, systemValues } from './wellbeing/derive.js'
 
 /**
@@ -52,10 +58,14 @@ describe('totals regroup under tags', () => {
 })
 
 describe('a rule turns tracked time into reported time', () => {
-  for (const one of corpus.deductions) {
+  for (const one of corpus.rules) {
     test(one.name, () => {
-      expect(deductionFor(one.tracked, one.bands)).toBe(one.deduction)
-      expect(reportedFor(one.tracked, one.bands)).toBe(one.reported)
+      expect(addedFor(one.tracked, one.add_minutes)).toBe(one.added)
+      // Against the increased total, as the server measures it.
+      expect(deductionFor(one.tracked + one.added, one.bands)).toBe(one.deduction)
+      expect(reportedFor(one.tracked, one.bands, one.add_minutes)).toBe(one.reported)
+      // And the four numbers reconcile, which is what the summary row promises.
+      expect(one.tracked + one.added - one.deduction).toBe(one.reported)
     })
   }
 })

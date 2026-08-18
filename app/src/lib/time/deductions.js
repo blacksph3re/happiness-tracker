@@ -1,55 +1,50 @@
 /**
- * What a tag's deduction rule does, for the editor's preview.
+ * Which day lengths are worth showing a tag's rule against.
  *
- * A mirror of `deduction_for` in `services/timetrack.py`, and the one place the
- * client is allowed to compute a deduction: everything *reported* comes from
- * `/api/time/summary`, but a rule being edited has not been saved yet, so the
- * only way to show what it would do is to work it out here.
+ * The arithmetic itself is not here. It used to be — a second copy of
+ * `deduction_for`, in minutes rather than seconds — and a rule with three
+ * implementations is a rule that can disagree with itself. The preview now calls
+ * the same `deductionFor` the offline summary uses, which is the one the
+ * conformance corpus holds to the server.
+ *
+ * Choosing rows is the part that has no server counterpart, so it is the part
+ * that stays.
  */
 
-/**
- * The deduction a day of this length attracts, in minutes.
- *
- * Bands replace each other rather than stacking: the highest threshold the day
- * reaches is the one that applies, and no other. Two bands of ten minutes at
- * two and four hours therefore take ten minutes off a five-hour day, not
- * twenty.
- *
- * A band with a null deduction caps rather than deducts: it removes whatever
- * the day ran past its threshold, so the day reports the threshold and no more.
- *
- * @param {number} trackedMinutes
- * @param {Array<{from_minutes: number, deduct_minutes: number|null}>} bands
- */
-export function deductionFor(trackedMinutes, bands) {
-  if (trackedMinutes <= 0 || bands.length === 0) return 0
-  const reached = bands.filter((band) => Number(band.from_minutes) <= trackedMinutes)
-  if (reached.length === 0) return 0
-  const band = reached.reduce((held, next) =>
-    Number(next.from_minutes) > Number(held.from_minutes) ? next : held
-  )
-  if (band.deduct_minutes === null || band.deduct_minutes === undefined) {
-    return trackedMinutes - Number(band.from_minutes)
-  }
-  return Math.min(trackedMinutes, Number(band.deduct_minutes) || 0)
-}
+/** Day lengths to illustrate a rule that only adds, in minutes. */
+const PLAIN_DAYS = [0, 240, 480]
 
 /**
- * Day lengths worth showing a rule against.
+ * Day lengths worth showing a rule against, in minutes.
  *
- * Built from the rule itself — just under its lowest threshold, at each
- * threshold, and an hour past the highest — so the preview lands exactly where
- * the behaviour changes rather than on round numbers that may miss it.
+ * Built from the rule itself rather than from round numbers, so the preview
+ * lands exactly where the behaviour changes — and the behaviour changes at
+ * `threshold − addition` rather than at the threshold, because the day is
+ * measured after the addition. A rule adding an hour against a 210-minute band
+ * decides a three-hour day, so three hours is the row worth showing; 210
+ * minutes tracked reaches the band with or without the rule and demonstrates
+ * nothing about it.
  *
  * @param {Array<{from_minutes: number}>} bands
+ * @param {number} addMinutes Minutes the rule adds to a tracked day.
  * @returns {Array<number>} Minutes, ascending.
  */
-export function previewPoints(bands) {
+export function previewPoints(bands, addMinutes = 0) {
+  const added = Number(addMinutes) || 0
   const thresholds = bands
-    .map((band) => Number(band.from_minutes) || 0)
+    .map((band) => Math.max(0, (Number(band.from_minutes) || 0) - added))
     .sort((a, b) => a - b)
-  if (thresholds.length === 0) return []
+
+  // A rule that only adds has no threshold to aim at, so there is nothing to
+  // miss and plain day lengths do the job.
+  if (thresholds.length === 0) {
+    return added > 0 ? [...PLAIN_DAYS] : []
+  }
+
   const below = Math.max(0, thresholds[0] - 60)
   const above = thresholds.at(-1) + 60
-  return [...new Set([below, ...thresholds, above])].sort((a, b) => a - b)
+  // Zero earns nothing however long the rule is, and that is the one row that
+  // says so. Only worth a line when there is an addition to withhold.
+  const untracked = added > 0 ? [0] : []
+  return [...new Set([...untracked, below, ...thresholds, above])].sort((a, b) => a - b)
 }

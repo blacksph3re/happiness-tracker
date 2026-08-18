@@ -116,8 +116,7 @@ def test_two_projects_run_at_once(client, admin_headers):
     work = make_project(client, admin_headers, "Work")
     meeting = make_project(client, admin_headers, "Meeting")
     assert (
-        check_in(client, admin_headers, work["id"], hour=9)[1]["outcome"]
-        == "applied"
+        check_in(client, admin_headers, work["id"], hour=9)[1]["outcome"] == "applied"
     )
     assert (
         check_in(client, admin_headers, meeting["id"], hour=11)[1]["outcome"]
@@ -445,9 +444,18 @@ def test_an_archived_project_leaves_the_summary(client, admin_headers):
     assert any(row["project_id"] == retired["id"] for row in rows)
 
 
+def set_rule(client, headers, tag_id, bands=(), add_minutes=None):
+    """Replace a tag's whole rule — what it adds, and what it deducts."""
+    return client.put(
+        f"/api/tags/{tag_id}/rule",
+        headers=headers,
+        json={"add_minutes": add_minutes, "bands": list(bands)},
+    )
+
+
 def set_bands(client, headers, tag_id, bands):
-    """Replace a tag's deduction rule."""
-    return client.put(f"/api/tags/{tag_id}/deductions", headers=headers, json=bands)
+    """Replace a tag's deduction bands, leaving its addition alone."""
+    return set_rule(client, headers, tag_id, bands)
 
 
 def tag_rows(client, headers, **params):
@@ -490,10 +498,74 @@ def test_a_capping_band_holds_the_day_at_its_threshold(client, admin_headers):
         10 * HOUR,
     )
 
-    stored = client.get(
-        f"/api/tags/{tag['id']}/deductions", headers=admin_headers
-    ).json()
-    assert stored == [{"from_minutes": 600, "deduct_minutes": None}]
+    stored = client.get(f"/api/tags/{tag['id']}/rule", headers=admin_headers).json()
+    assert stored == {
+        "add_minutes": None,
+        "bands": [{"from_minutes": 600, "deduct_minutes": None}],
+    }
+
+
+def test_a_rule_can_add_time_to_every_tracked_day(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    project = make_project(client, admin_headers, "Backend", tag_ids=[tag["id"]])
+    assert set_rule(client, admin_headers, tag["id"], add_minutes=60).status_code == 200
+
+    record(client, admin_headers, project["id"], at(10, 9), at(10, 12))
+    row = tag_rows(client, admin_headers)[("2026-06-10", tag["id"])]
+
+    assert (row["seconds"], row["added"], row["deduction"], row["reported"]) == (
+        3 * HOUR,
+        HOUR,
+        0,
+        4 * HOUR,
+    )
+
+
+def test_the_addition_lands_before_the_bands_are_tested(client, admin_headers):
+    # Three tracked hours do not reach a 210-minute threshold; three plus an
+    # added one do. End to end, because the ordering has to survive the summary
+    # as well as the arithmetic.
+    tag = make_tag(client, admin_headers, "Work")
+    project = make_project(client, admin_headers, "Backend", tag_ids=[tag["id"]])
+    set_rule(
+        client,
+        admin_headers,
+        tag["id"],
+        bands=[{"from_minutes": 210, "deduct_minutes": 20}],
+        add_minutes=60,
+    )
+
+    record(client, admin_headers, project["id"], at(10, 9), at(10, 12))
+    row = tag_rows(client, admin_headers)[("2026-06-10", tag["id"])]
+
+    assert row["reported"] == 3 * HOUR + 40 * 60
+    # And the four fields reconcile, which is the whole reason `added` is sent.
+    assert row["seconds"] + row["added"] - row["deduction"] == row["reported"]
+
+
+def test_an_untracked_day_earns_no_addition(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    project = make_project(client, admin_headers, "Backend", tag_ids=[tag["id"]])
+    set_rule(client, admin_headers, tag["id"], add_minutes=60)
+    record(client, admin_headers, project["id"], at(10, 9), at(10, 12))
+
+    # The 11th was never tracked, so it has no row at all — an addition cannot
+    # conjure a day into the summary.
+    assert ("2026-06-11", tag["id"]) not in tag_rows(client, admin_headers)
+
+
+def test_an_addition_of_zero_is_stored_as_no_addition(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    assert set_rule(client, admin_headers, tag["id"], add_minutes=0).status_code == 200
+
+    stored = client.get(f"/api/tags/{tag['id']}/rule", headers=admin_headers).json()
+    assert stored["add_minutes"] is None
+
+
+def test_a_negative_addition_is_refused(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    refused = set_rule(client, admin_headers, tag["id"], add_minutes=-30)
+    assert refused.status_code == 422
 
 
 def test_a_lunch_rule_deducts_by_band(client, admin_headers):
@@ -608,10 +680,7 @@ def test_deleting_a_tag_takes_its_rule(client, admin_headers):
 def test_another_users_rule_is_missing(client, admin_headers):
     _, other = make_user(client, admin_headers, "bystander")
     tag = make_tag(client, admin_headers, "Work")
-    assert (
-        client.get(f"/api/tags/{tag['id']}/deductions", headers=other).status_code
-        == 404
-    )
+    assert client.get(f"/api/tags/{tag['id']}/rule", headers=other).status_code == 404
     assert set_bands(client, other, tag["id"], []).status_code == 404
 
 

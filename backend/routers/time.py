@@ -8,13 +8,15 @@ from deps import CurrentUser, DbSession
 from models import DeductionBand, Project, Tag, TimeEntry
 from routers.projects import own_tag
 from schemas import (
-    DeductionBandIn,
     DeductionBandOut,
     SummaryRow,
+    TagRuleIn,
+    TagRuleOut,
     TimeEntryOut,
     TrackedRange,
 )
 from services import (
+    added_for,
     deduction_for,
     group_by_tag,
     reported,
@@ -213,8 +215,8 @@ def _offset_label(utc_offset: int) -> str:
     return f"UTC{sign}{minutes // 60:02d}:{minutes % 60:02d}"
 
 
-def _bands_of(db: DbSession, user_id: int) -> dict[int, list]:
-    """Map each of the user's tags to its deduction rule.
+def _rules_of(db: DbSession, user_id: int) -> dict[int, tuple[int | None, list]]:
+    """Map each of the user's tags to its whole rule.
 
     Parameters
     ----------
@@ -226,7 +228,8 @@ def _bands_of(db: DbSession, user_id: int) -> dict[int, list]:
     Returns
     -------
     dict
-        ``{tag_id: [DeductionBand, ...]}``, absent for a tag with no rule.
+        ``{tag_id: (add_minutes, [DeductionBand, ...])}``, absent for a tag
+        whose rule neither adds nor deducts.
     """
     tags = (
         db.execute(
@@ -235,7 +238,11 @@ def _bands_of(db: DbSession, user_id: int) -> dict[int, list]:
         .scalars()
         .all()
     )
-    return {tag.id: list(tag.bands) for tag in tags if tag.bands}
+    return {
+        tag.id: (tag.add_minutes, list(tag.bands))
+        for tag in tags
+        if tag.bands or tag.add_minutes
+    }
 
 
 def _summary_rows(
@@ -288,10 +295,10 @@ def _summary_rows(
         if entry.project_id in live
     ]
     totals = summarise(entries, as_of)
-    bands: dict[int, list] = {}
+    rules: dict[int, tuple[int | None, list]] = {}
     if by == "tag":
         totals = group_by_tag(totals, _tags_of(db, user_id))
-        bands = _bands_of(db, user_id)
+        rules = _rules_of(db, user_id)
 
     rows = []
     for day in sorted(totals):
@@ -301,31 +308,37 @@ def _summary_rows(
             continue
         ordered = sorted(totals[day].items(), key=lambda kv: (kv[0] is None, kv[0]))
         for key, seconds in ordered:
-            rule = bands.get(key, [])
+            add_minutes, rule = rules.get(key, (None, []))
+            added = added_for(seconds, add_minutes)
             rows.append(
                 SummaryRow(
                     day=day,
                     key=key,
                     seconds=seconds,
-                    deduction=deduction_for(seconds, rule),
-                    reported=reported(seconds, rule),
+                    added=added,
+                    # Against the increased total, which is what the rule
+                    # deducts from. Measured against `seconds` it would be a
+                    # number that does not reconcile with `reported`.
+                    deduction=deduction_for(seconds + added, rule),
+                    reported=reported(seconds, rule, add_minutes),
                 )
             )
     return rows
 
 
 @router.get(
-    "/tags/{tag_id}/deductions",
-    response_model=list[DeductionBandOut],
-    operation_id="listDeductions",
-    summary="Read a tag's deduction rule",
+    "/tags/{tag_id}/rule",
+    response_model=TagRuleOut,
+    operation_id="getTagRule",
+    summary="Read a tag's rule",
     description=(
-        "The bands turning this tag's tracked time into reported time, lowest "
-        "threshold first. An empty list means no deduction."
+        "What this tag adds to every day it tracked anything, and the bands it "
+        "then deducts by, lowest threshold first. A null addition and an empty "
+        "list mean the tag reports exactly what it tracked."
     ),
 )
-def list_deductions(tag_id: int, user: CurrentUser, db: DbSession) -> list:
-    """Return a tag's deduction bands.
+def get_tag_rule(tag_id: int, user: CurrentUser, db: DbSession) -> TagRuleOut:
+    """Return a tag's whole rule.
 
     Parameters
     ----------
@@ -338,11 +351,11 @@ def list_deductions(tag_id: int, user: CurrentUser, db: DbSession) -> list:
 
     Returns
     -------
-    list of DeductionBand
-        The bands, lowest threshold first.
+    TagRuleOut
+        The addition and the bands, lowest threshold first.
     """
-    own_tag(db, user, tag_id)
-    return (
+    tag = own_tag(db, user, tag_id)
+    bands = (
         db.execute(
             select(DeductionBand)
             .where(DeductionBand.tag_id == tag_id)
@@ -351,22 +364,27 @@ def list_deductions(tag_id: int, user: CurrentUser, db: DbSession) -> list:
         .scalars()
         .all()
     )
+    return TagRuleOut(
+        add_minutes=tag.add_minutes,
+        bands=[DeductionBandOut.model_validate(band) for band in bands],
+    )
 
 
 @router.put(
-    "/tags/{tag_id}/deductions",
-    response_model=list[DeductionBandOut],
-    operation_id="setDeductions",
-    summary="Replace a tag's deduction rule",
+    "/tags/{tag_id}/rule",
+    response_model=TagRuleOut,
+    operation_id="setTagRule",
+    summary="Replace a tag's rule",
     description=(
-        "Send the whole rule. A rule is edited as one thing - the bands only "
-        "mean anything in relation to each other."
+        "Send the whole rule. It is edited as one thing - the addition lands "
+        "before the bands, and the bands only mean anything in relation to "
+        "each other."
     ),
 )
-def set_deductions(
-    tag_id: int, payload: list[DeductionBandIn], user: CurrentUser, db: DbSession
-) -> list:
-    """Replace a tag's deduction bands.
+def set_tag_rule(
+    tag_id: int, payload: TagRuleIn, user: CurrentUser, db: DbSession
+) -> TagRuleOut:
+    """Replace a tag's whole rule.
 
     The whole set at once rather than row by row: the bands are one rule with
     an ordering, and validating "no two thresholds the same" is only possible
@@ -376,7 +394,7 @@ def set_deductions(
     ----------
     tag_id : int
         Identifier of the tag.
-    payload : list of DeductionBandIn
+    payload : TagRuleIn
         The rule the tag should have afterwards.
     user : User
         The authenticated user.
@@ -385,7 +403,7 @@ def set_deductions(
 
     Returns
     -------
-    list of DeductionBand
+    TagRuleOut
         The stored rule, lowest threshold first.
 
     Raises
@@ -394,19 +412,24 @@ def set_deductions(
         With status 422 when two bands share a threshold.
     """
     tag = own_tag(db, user, tag_id)
-    thresholds = [band.from_minutes for band in payload]
+    thresholds = [band.from_minutes for band in payload.bands]
     if len(set(thresholds)) != len(thresholds):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Two bands cannot start at the same number of minutes",
         )
 
+    # Zero and null both mean "adds nothing", so only one of them is stored.
+    # Otherwise the same rule round-trips differently depending on how it was
+    # last saved, which the change digest would report as an edit.
+    tag.add_minutes = payload.add_minutes or None
+
     for existing in db.execute(
         select(DeductionBand).where(DeductionBand.tag_id == tag.id)
     ).scalars():
         db.delete(existing)
     db.flush()
-    for band in payload:
+    for band in payload.bands:
         db.add(
             DeductionBand(
                 tag_id=tag.id,
@@ -415,7 +438,7 @@ def set_deductions(
             )
         )
     db.commit()
-    return list_deductions(tag_id, user, db)
+    return get_tag_rule(tag_id, user, db)
 
 
 @router.get(
@@ -447,9 +470,7 @@ def tracked_range(user: CurrentUser, db: DbSession) -> TrackedRange:
         The edges of the history.
     """
     entries = (
-        db.execute(
-            select(TimeEntry).where(TimeEntry.user_id == user.id)
-        )
+        db.execute(select(TimeEntry).where(TimeEntry.user_id == user.id))
         .scalars()
         .all()
     )

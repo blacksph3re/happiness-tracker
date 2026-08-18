@@ -241,8 +241,8 @@ test('a window never fetched is still totalled with no connection', async ({
   // here rather than served from something already fetched.
   await recordSession(account, project.id, '2026-05-20T09:00:00', '2026-05-20T17:00:00')
 
-  const rule = await account.api.put(`/api/tags/${work.id}/deductions`, {
-    data: [{ from_minutes: 360, deduct_minutes: 45 }],
+  const rule = await account.api.put(`/api/tags/${work.id}/rule`, {
+    data: { add_minutes: null, bands: [{ from_minutes: 360, deduct_minutes: 45 }] },
   })
   expect(rule.ok(), await rule.text()).toBeTruthy()
 

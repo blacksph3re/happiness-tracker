@@ -89,14 +89,36 @@ export function deductionFor(trackedSeconds, bands) {
 }
 
 /**
- * What a day reports after its deduction.
+ * The time a tag's rule adds to a day, in seconds.
+ *
+ * A flat amount on any day the tag tracked anything, with no minimum. Zero on a
+ * day that tracked nothing — the mirror of a day off owing no lunch break.
+ *
+ * @param {number} trackedSeconds
+ * @param {number|null} addMinutes The tag's addition, or null for none.
+ * @returns {number} Seconds to add.
+ */
+export function addedFor(trackedSeconds, addMinutes) {
+  if (trackedSeconds <= 0 || !addMinutes) return 0
+  return addMinutes * 60
+}
+
+/**
+ * What a day reports after its tag's whole rule.
+ *
+ * The addition lands **first**, and the bands are then tested against the
+ * increased total. That ordering is the rule: three hours does not reach a
+ * three-and-a-half hour threshold, three hours plus an added one does, so the
+ * same band applies in one case and not the other.
  *
  * @param {number} trackedSeconds
  * @param {Array<object>} bands
- * @returns {number} Tracked seconds less the deduction, never below zero.
+ * @param {number|null} addMinutes
+ * @returns {number} What the day reports, never below zero.
  */
-export function reportedFor(trackedSeconds, bands) {
-  return trackedSeconds - deductionFor(trackedSeconds, bands)
+export function reportedFor(trackedSeconds, bands, addMinutes = null) {
+  const total = trackedSeconds + addedFor(trackedSeconds, addMinutes)
+  return total - deductionFor(total, bands)
 }
 
 /**
@@ -108,11 +130,12 @@ export function reportedFor(trackedSeconds, bands) {
  *
  * @param {{entries: Array<object>, asOf: number, by: string,
  *   tagsOf?: Record<number, Array<number>>,
- *   bandsOf?: Record<string, Array<object>>, start?: string, end?: string}} input
+ *   rulesOf?: Record<string, {add_minutes: number|null, bands: Array<object>}>,
+ *   start?: string, end?: string}} input
  * @returns {Array<{day: string, key: number|null, seconds: number,
  *   deduction: number, reported: number}>}
  */
-export function summaryRows({ entries, asOf, by, tagsOf = {}, bandsOf = {}, start, end }) {
+export function summaryRows({ entries, asOf, by, tagsOf = {}, rulesOf = {}, start, end }) {
   const totals = summarise(entries, asOf)
   const grouped = by === 'tag' ? groupByTag(totals, tagsOf) : totals
 
@@ -131,13 +154,22 @@ export function summaryRows({ entries, asOf, by, tagsOf = {}, bandsOf = {}, star
     })
     for (const key of keys) {
       const seconds = bucket[key]
-      const bands = by === 'tag' ? (bandsOf[key] ?? []) : []
+      // Only a tag carries a rule. A project row, and the untagged bucket,
+      // report exactly what they tracked.
+      const rule = by === 'tag' ? rulesOf[key] : undefined
+      const bands = rule?.bands ?? []
+      const add = rule?.add_minutes ?? null
+      const added = addedFor(seconds, add)
       rows.push({
         day,
         key: key === 'null' ? null : Number(key),
         seconds,
-        deduction: deductionFor(seconds, bands),
-        reported: reportedFor(seconds, bands),
+        added,
+        // Measured against the increased total, which is what the rule deducts
+        // from — reporting the deduction against `seconds` would give a number
+        // that does not reconcile with `reported`.
+        deduction: deductionFor(seconds + added, bands),
+        reported: reportedFor(seconds, bands, add),
       })
     }
   }
@@ -159,10 +191,11 @@ export function trackedEdges(entries) {
  * have to be kept in step, they are one.
  *
  * @param {{entries: Array<object>, projects: Array<object>, tags: Array<object>,
- *   bandsOf: Record<string, Array<object>>, asOf: number}} input
+ *   rulesOf: Record<string, {add_minutes: number|null, bands: Array<object>}>,
+ *   asOf: number}} input
  * @returns {Record<string, Array<Array<unknown>>>} Rows by file name.
  */
-export function exportTables({ entries, projects, tags, bandsOf, asOf }) {
+export function exportTables({ entries, projects, tags, rulesOf, asOf }) {
   const named = new Map(projects.map((project) => [project.id, project]))
   const tagNames = new Map(tags.map((tag) => [tag.id, tag.name]))
   const offsets = dayOffsets(entries)
@@ -207,7 +240,7 @@ export function exportTables({ entries, projects, tags, bandsOf, asOf }) {
 
   const grouped = (by) => {
     const rows = [['Day', by === 'tag' ? 'Tag' : 'Project', 'Hours']]
-    for (const row of summaryRows({ entries: tracked, asOf, by, tagsOf, bandsOf })) {
+    for (const row of summaryRows({ entries: tracked, asOf, by, tagsOf, rulesOf })) {
       const name =
         by === 'tag'
           ? (row.key === null ? 'Untagged' : (tagNames.get(row.key) ?? ''))

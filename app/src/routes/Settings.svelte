@@ -1,11 +1,13 @@
 <script>
   import AdminOffline, { OFFLINE_HINT } from '../lib/AdminOffline.svelte'
   import { attempt, clearTokens, unwrap } from '../lib/api.js'
+  import { formatBytes, formatUptime } from '../lib/format.js'
   import {
     beginTotpEnrolment,
     changeMyPassword,
     confirmTotpEnrolment,
     disableTotp,
+    getServerMetrics,
     setMyDefaultCatalogue,
   } from '../lib/generated/sdk.gen'
   import IconBin from '../lib/IconBin.svelte'
@@ -35,6 +37,31 @@
   let removing = $state(false)
 
   const enrolled = $derived(me?.totp_enabled === true)
+
+  /**
+   * The version this bundle was built as.
+   *
+   * Baked in by Vite from `package.json`, so it describes the code actually
+   * running in this browser rather than what the server happens to be serving
+   * now — which is the honest answer when a cached worker is a release behind.
+   */
+  const appVersion = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'
+
+  // Administrators only, and only worth asking for when the page is open.
+  const metrics = resource(
+    () => ($meStore?.is_admin ? 'admin' : null),
+    (who) => (who ? attempt(() => getServerMetrics()) : null),
+    { name: 'server metrics' }
+  )
+  const server = $derived(metrics.data ?? null)
+
+  /**
+   * Whether the served version differs from the one this bundle was built as.
+   *
+   * Only ever true for a browser holding a worker from before the last deploy.
+   * Worth saying rather than showing two numbers with no explanation.
+   */
+  const behind = $derived(Boolean(server) && server.version !== appVersion)
 
   /**
    * Ask for a secret and show it.
@@ -310,4 +337,79 @@
       Change password
     </button>
   </form>
+
+  <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-about>
+    <h2 class="font-semibold">About</h2>
+    <dl class="mt-3 flex flex-wrap gap-x-10 gap-y-3">
+      <div>
+        <dt class="meta">Version</dt>
+        <dd class="numeral mt-1" data-app-version>{appVersion}</dd>
+      </div>
+      {#if behind}
+        <!-- Only ever a browser holding a worker from before the last deploy.
+             Two bare numbers would raise the question this answers. -->
+        <div>
+          <dt class="meta">On the server</dt>
+          <dd class="numeral mt-1 text-ember">{server.version}</dd>
+        </div>
+      {/if}
+    </dl>
+    {#if behind}
+      <p class="meta mt-3 normal-case">
+        This device is running an older copy. Reload to pick up the new one.
+      </p>
+    {/if}
+
+    {#if me?.is_admin}
+      <!-- Administrators only: how full a disk is says something about the host
+           rather than about anybody's answers. The API enforces it; this only
+           keeps the page honest. -->
+      <div class="mt-5 border-t border-white/10 pt-4" data-server-metrics>
+        <p class="meta">This server</p>
+        {#if metrics.loading && !server}
+          <p class="meta mt-2 normal-case">Asking…</p>
+        {:else if !server}
+          <p class="meta mt-2 normal-case">Could not reach the server.</p>
+        {:else}
+          <dl class="mt-3 flex flex-wrap gap-x-10 gap-y-3">
+            <div>
+              <dt class="meta">Serving for</dt>
+              <dd class="numeral mt-1" data-uptime>
+                {formatUptime(server.uptime_seconds)}
+              </dd>
+            </div>
+            <div>
+              <dt class="meta">Database</dt>
+              <dd class="numeral mt-1">{formatBytes(server.database_bytes)}</dd>
+            </div>
+            <div>
+              <dt class="meta">Disk free</dt>
+              <dd class="numeral mt-1" data-disk-free>
+                {formatBytes(server.disk.free_bytes)}
+                <span class="meta normal-case">
+                  of {formatBytes(server.disk.total_bytes)}
+                </span>
+              </dd>
+            </div>
+            {#if server.memory}
+              <div>
+                <dt class="meta">Memory</dt>
+                <dd class="numeral mt-1">
+                  {formatBytes(server.memory.used_bytes)}
+                  {#if server.memory.limit_bytes}
+                    <span class="meta normal-case">
+                      of {formatBytes(server.memory.limit_bytes)}
+                    </span>
+                  {/if}
+                </dd>
+              </div>
+            {/if}
+          </dl>
+          <p class="meta mt-3 normal-case">
+            Since this process started, so a deploy resets it.
+          </p>
+        {/if}
+      </div>
+    {/if}
+  </div>
 </section>

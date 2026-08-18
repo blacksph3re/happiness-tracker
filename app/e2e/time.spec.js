@@ -1484,3 +1484,56 @@ test('moving between time pages makes no further requests', async ({
 
   expect(calls, `refetched: ${calls.join(', ')}`).toEqual([])
 })
+
+test('a tag rule can add time, and the bands measure what it added', async ({
+  page,
+  account,
+}) => {
+  // The case the feature exists for, end to end: three tracked hours do not
+  // reach a 210-minute band; three plus an added hour do, so the day reports
+  // 3h 40m rather than 3h 00m.
+  const work = await makeTag(account, 'Work')
+  const project = await makeProject(account, 'Backend', { tag_ids: [work.id] })
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  await page.goto('/time/projects')
+  await page.locator(`[data-tag-row="${work.id}"]`).getByRole('button', { name: 'Rule' }).click()
+  await page.getByLabel('Add to every tracked day').fill('60')
+  await page.getByRole('button', { name: 'Add a band' }).click()
+  await page.getByLabel('Band 1 threshold').fill('210')
+  await page.getByLabel('Band 1 deduction').fill('20')
+
+  // The preview says what the rule does before it is saved, which is the whole
+  // point of it: a Gains column, and rows placed where the band starts to bite —
+  // 2h 30m tracked, because that is what an added hour lifts to the threshold.
+  const editor = page.locator(`[data-bands="${work.id}"]`)
+  await expect(editor.getByRole('columnheader', { name: 'Gains' })).toBeVisible()
+  await expect(editor).toContainText('2h 30m')
+  await expect(editor).toContainText('1h 00m')
+
+  await page.getByRole('button', { name: 'Save rule' }).click()
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'By tag' }).click()
+  await expect(page.locator('[data-group="Work"]')).toContainText('3h 00m')
+  await expect(page.locator('[data-group="Work"]')).toContainText('3h 40m')
+  await expect(page.locator('[data-period]')).toContainText('3h 40m reported')
+})
+
+test('a tag that only adds still reports more than it tracked', async ({
+  page,
+  account,
+}) => {
+  const work = await makeTag(account, 'Work')
+  const project = await makeProject(account, 'Backend', { tag_ids: [work.id] })
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  await page.goto('/time/projects')
+  await page.locator(`[data-tag-row="${work.id}"]`).getByRole('button', { name: 'Rule' }).click()
+  await page.getByLabel('Add to every tracked day').fill('60')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'By tag' }).click()
+  await expect(page.locator('[data-period]')).toContainText('4h 00m reported')
+})

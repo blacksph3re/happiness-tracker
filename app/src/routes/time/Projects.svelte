@@ -6,8 +6,8 @@
     createTag,
     deleteProject,
     deleteTag,
-    listDeductions,
-    setDeductions,
+    getTagRule,
+    setTagRule,
     updateProject,
     updateTag,
   } from '../../lib/generated/sdk.gen'
@@ -21,7 +21,8 @@
     timeEntries,
   } from '../../lib/store.js'
   import { connection } from '../../lib/sync.js'
-  import { deductionFor, previewPoints } from '../../lib/time/deductions.js'
+  import { previewPoints } from '../../lib/time/deductions.js'
+  import { addedFor, deductionFor } from '../../lib/time/summary.js'
   import { formatDuration } from '../../lib/time/duration.js'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
@@ -42,6 +43,9 @@
   let editing = $state(null)
   let editingBands = $state(null)
   let bands = $state([])
+
+  /** Minutes the open tag's rule adds to every day it tracked anything. */
+  let addMinutes = $state(0)
 
   /**
    * Whether the account's own shape can be changed at all right now.
@@ -169,26 +173,32 @@
   }
 
   /**
-   * Open a tag's deduction rule for editing.
+   * Open a tag's rule for editing.
    *
    * Loaded on demand: most tags have no rule, and the summary already carries
-   * the numbers it produces, so the bands themselves are only wanted here.
+   * the numbers it produces, so the rule itself is only wanted here.
    */
   async function openBands(tag) {
     editingBands = tag.id
-    bands = (await attempt(() => listDeductions({ path: { tag_id: tag.id } }))) ?? []
+    const rule = (await attempt(() => getTagRule({ path: { tag_id: tag.id } }))) ?? {}
+    bands = rule.bands ?? []
+    addMinutes = rule.add_minutes ?? 0
   }
 
   async function saveBands(tag) {
-    const body = bands
-      .map((band) => ({
-        from_minutes: Number(band.from_minutes) || 0,
-        // null is not "zero minutes" but "as much as it takes": a cap.
-        deduct_minutes:
-          band.deduct_minutes === null ? null : Number(band.deduct_minutes) || 0,
-      }))
-      .sort((a, b) => a.from_minutes - b.from_minutes)
-    const saved = await attempt(() => setDeductions({ path: { tag_id: tag.id }, body }))
+    const body = {
+      // Zero and blank both mean "adds nothing"; the server stores one of them.
+      add_minutes: Number(addMinutes) || null,
+      bands: bands
+        .map((band) => ({
+          from_minutes: Number(band.from_minutes) || 0,
+          // null is not "zero minutes" but "as much as it takes": a cap.
+          deduct_minutes:
+            band.deduct_minutes === null ? null : Number(band.deduct_minutes) || 0,
+        }))
+        .sort((a, b) => a.from_minutes - b.from_minutes),
+    }
+    const saved = await attempt(() => setTagRule({ path: { tag_id: tag.id }, body }))
     if (!saved) return
     // The rule changes what every day of this tag reports, including the ones
     // already on screen elsewhere.
@@ -495,8 +505,26 @@
             {#if editingBands === tag.id}
               <div class="mt-4 w-full border-t border-white/10 pt-4" data-bands={tag.id}>
                 <p class="meta normal-case">
-                  Turns tracked time into reported time on this tag's days.
+                  Turns tracked time into reported time on this tag's days. The
+                  addition lands first; the bands are measured against the total
+                  after it.
                 </p>
+
+                <label class="mt-3 flex flex-col gap-1.5">
+                  <span class="meta">Add to every tracked day (minutes)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="1440"
+                    bind:value={addMinutes}
+                    aria-label="Add to every tracked day"
+                    class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
+                           py-2 text-sm"
+                  />
+                  <span class="meta normal-case">
+                    A day that tracked nothing stays at nothing.
+                  </span>
+                </label>
 
                 <div class="mt-3 flex flex-col gap-2">
                   {#each bands as band, index (index)}
@@ -564,23 +592,32 @@
                       <thead>
                         <tr class="text-left">
                           <th class="meta py-1">A day of</th>
+                          <th class="meta py-1 text-right">Gains</th>
                           <th class="meta py-1 text-right">Loses</th>
                           <th class="meta py-1 text-right">Reports</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {#each previewPoints(bands) as minutes (minutes)}
-                          {@const lost = deductionFor(minutes, bands)}
+                        {#each previewPoints(bands, Number(addMinutes) || 0) as minutes (minutes)}
+                          <!-- The rule works in seconds; the editor works in
+                               minutes. Converting at the call site is what lets
+                               there be one implementation of the arithmetic. -->
+                          {@const gained = addedFor(minutes * 60, Number(addMinutes) || 0) / 60}
+                          {@const lost = deductionFor((minutes + gained) * 60, bands) / 60}
                           <tr class="border-t border-white/5">
                             <td class="numeral py-1 tabular-nums">
                               {formatDuration(minutes * 60)}
+                            </td>
+                            <td class="numeral py-1 text-right tabular-nums
+                                       {gained ? 'text-paper' : 'text-haze'}">
+                              {formatDuration(gained * 60)}
                             </td>
                             <td class="numeral py-1 text-right tabular-nums
                                        {lost ? 'text-ember' : 'text-haze'}">
                               {formatDuration(lost * 60)}
                             </td>
                             <td class="numeral py-1 text-right tabular-nums">
-                              {formatDuration((minutes - lost) * 60)}
+                              {formatDuration((minutes + gained - lost) * 60)}
                             </td>
                           </tr>
                         {/each}

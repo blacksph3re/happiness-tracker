@@ -18,7 +18,7 @@
   import {
     answers as answerStore,
     ensureAnswers,
-    ensureDeductionRules,
+    ensureTagRules,
     ensureProjects,
     ensureTags,
     ensureTimeEntries,
@@ -184,14 +184,22 @@
   const tracked = $derived(filed.reduce((sum, group) => sum + group.total, 0))
 
   /**
-   * Whether a rule actually took something off what is shown.
+   * Whether a rule actually moved what is shown, in either direction.
    *
    * Only ever used to *say so*. The numbers are the reported ones either way;
    * this decides whether the page calls them reported or tracked, so a figure
-   * that has had an hour removed never reads as the hours worked.
+   * a rule has changed never reads as the hours worked.
+   *
+   * Both halves count. A rule that only adds moves the number just as surely as
+   * one that deducts, and checking the deduction alone left a tag reporting an
+   * hour it had not tracked while the page called it tracked time.
    */
-  const deducted = $derived(
-    rows.some((row) => (row.deduction ?? 0) > 0 && (by !== 'tag' || row.key !== null))
+  const adjusted = $derived(
+    rows.some(
+      (row) =>
+        ((row.deduction ?? 0) > 0 || (row.added ?? 0) > 0) &&
+        (by !== 'tag' || row.key !== null)
+    )
   )
 
   const overlapping = $derived(
@@ -456,7 +464,7 @@
         // out here when there is nothing to ask: a page that only ever held
         // somebody else's arithmetic has nothing to fall back on.
         ensureTimeEntries({ start: from, end: to }),
-        ensureDeductionRules(),
+        ensureTagRules(),
         // The questionnaire's answers become filters here, so the two halves
         // can be read against each other.
         ensureVariables(),
@@ -545,11 +553,12 @@
   <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
     <p class="meta" data-period>
       {dayView ? dayLabel(anchor) : shown.label}
-      <!-- "reported" wherever a rule took something off, because the number is
-           then not the hours worked and must not read as though it were. -->
-      · {formatDuration(tracked)}{deducted ? ' reported' : ''}{by === 'tag'
+      <!-- "reported" wherever a rule moved the number, in either direction,
+           because it is then not the hours worked and must not read as though
+           it were. -->
+      · {formatDuration(tracked)}{adjusted ? ' reported' : ''}{by === 'tag'
         ? ' across tags'
-        : deducted
+        : adjusted
           ? ''
           : ' tracked'}
     </p>
@@ -792,7 +801,7 @@
         <tr class="border-b border-white/10 text-left">
           <th class="meta py-2">{by === 'tag' ? 'Tag' : 'Project'}</th>
           <th class="meta py-2 text-right">Tracked</th>
-          {#if deducted}<th class="meta py-2 text-right">Reported</th>{/if}
+          {#if adjusted}<th class="meta py-2 text-right">Reported</th>{/if}
           <th class="meta py-2 text-right">Share</th>
         </tr>
       </thead>
@@ -809,7 +818,7 @@
             <td class="numeral py-2 text-right tabular-nums">
               {formatDuration(group.trackedTotal)}
             </td>
-            {#if deducted}
+            {#if adjusted}
               <td class="numeral py-2 text-right tabular-nums">
                 {formatDuration(group.total)}
               </td>
@@ -831,7 +840,7 @@
           <td class="numeral py-2 text-right font-medium tabular-nums">
             {formatDuration(filed.reduce((sum, group) => sum + group.trackedTotal, 0))}
           </td>
-          {#if deducted}
+          {#if adjusted}
             <td class="numeral py-2 text-right font-medium tabular-nums">
               {formatDuration(tracked)}
             </td>
@@ -850,7 +859,7 @@
             <td class="numeral py-2 text-right tabular-nums text-haze">
               {formatDuration(untagged.trackedTotal)}
             </td>
-            {#if deducted}
+            {#if adjusted}
               <td class="numeral py-2 text-right tabular-nums text-haze">
                 {formatDuration(untagged.total)}
               </td>

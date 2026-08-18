@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from services.timetrack import (  # noqa: E402
+    added_for,
     day_offsets,
     deduction_for,
     group_by_tag,
@@ -145,6 +146,7 @@ BAND_CASES = [
     ("two bands, the higher one reached", [Band(240, 15), Band(360, 45)]),
     ("a cap", [Band(600, None)]),
     ("a deduction larger than the day", [Band(1, 600)]),
+    ("a threshold only an addition reaches", [Band(210, 20)]),
 ]
 
 SCORE_CASES = [
@@ -189,7 +191,7 @@ def main_() -> None:
     """Write every case and its Python answer to the corpus file."""
     corpus: dict[str, list] = {
         "summaries": [],
-        "deductions": [],
+        "rules": [],
         "scores": [],
         "days": [],
     }
@@ -220,22 +222,33 @@ def main_() -> None:
         )
 
     for name, bands in BAND_CASES:
-        for tracked in (0, 60, 3600, 21_600, 28_800, 36_000, 43_200):
-            corpus["deductions"].append(
-                {
-                    "name": f"{name}, {tracked}s tracked",
-                    "tracked": tracked,
-                    "bands": [
-                        {
-                            "from_minutes": band.from_minutes,
-                            "deduct_minutes": band.deduct_minutes,
-                        }
-                        for band in bands
-                    ],
-                    "deduction": deduction_for(tracked, bands),
-                    "reported": reported(tracked, bands),
-                }
-            )
+        # 10_800 is three hours: the length in the reported case, which only
+        # reaches a 210-minute threshold once an hour has been added.
+        for tracked in (0, 60, 3600, 10_800, 21_600, 28_800, 36_000, 43_200):
+            # None and 60 for every case, so each band shape is exercised with
+            # and without an addition — the pair is what pins the *ordering*,
+            # since a mirror that deducted first would agree on one and not the
+            # other. 210/20 is the reported case: a day that reaches its
+            # threshold only once the hour has been added.
+            for add_minutes in (None, 60):
+                total = tracked + added_for(tracked, add_minutes)
+                corpus["rules"].append(
+                    {
+                        "name": f"{name}, {tracked}s tracked, +{add_minutes or 0}m",
+                        "tracked": tracked,
+                        "add_minutes": add_minutes,
+                        "bands": [
+                            {
+                                "from_minutes": band.from_minutes,
+                                "deduct_minutes": band.deduct_minutes,
+                            }
+                            for band in bands
+                        ],
+                        "added": added_for(tracked, add_minutes),
+                        "deduction": deduction_for(total, bands),
+                        "reported": reported(tracked, bands, add_minutes),
+                    }
+                )
 
     for name, score, values in SCORE_CASES:
         corpus["scores"].append(

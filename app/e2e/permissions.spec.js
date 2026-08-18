@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { expect, grant, test } from './fixtures.js'
 import { ADMIN } from '../playwright.config.js'
 
@@ -137,4 +139,34 @@ test('an administrator can delete an account and reset a password', async ({
   await expect(row).toHaveCount(0)
   const remaining = await (await admin.get('/api/users')).json()
   expect(remaining.some((user) => user.id === id), 'the account was not deleted').toBe(false)
+})
+
+test('settings names the running version, and metrics are for admins alone', async ({
+  page,
+  account,
+  admin,
+}) => {
+  const declared = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+  ).version
+
+  await page.goto('/settings')
+  const about = page.locator('[data-about]')
+  // The built version, not a placeholder: this is what says which code is
+  // actually running in this browser.
+  await expect(about.locator('[data-app-version]')).toHaveText(declared)
+
+  // How full a disk is says something about the host rather than about
+  // anybody's answers, so an ordinary account is not shown it — and the API
+  // refuses it whatever the page does.
+  await expect(page.locator('[data-server-metrics]')).toHaveCount(0)
+  expect((await account.api.get('/api/admin/metrics')).status()).toBe(403)
+
+  await grant(admin, account, { is_admin: true })
+  await page.reload()
+  const metrics = page.locator('[data-server-metrics]')
+  await expect(metrics).toBeVisible()
+  // Real numbers from the running process, not zeroes.
+  await expect(metrics.locator('[data-uptime]')).not.toHaveText('')
+  await expect(metrics.locator('[data-disk-free]')).toContainText(/\d/)
 })

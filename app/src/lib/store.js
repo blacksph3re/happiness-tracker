@@ -18,7 +18,7 @@ import {
   getMyPreferences,
   listAnswers,
   listCatalogues,
-  listDeductions,
+  getTagRule,
   listProjects,
   listStatsVariables,
   listTags,
@@ -57,13 +57,13 @@ export const projects = writable(null)
 export const tags = writable(null)
 
 /**
- * Deduction bands by tag id.
+ * Each tag's whole rule by tag id: `{add_minutes, bands}`.
  *
  * Cached because reported time has to be computable here: with no connection
  * there is no summary endpoint to ask, and a tag with a lunch rule that reports
  * its raw hours offline would be wrong in the direction that matters.
  */
-export const deductionRules = writable(null)
+export const tagRules = writable(null)
 
 /** The first and last day tracking covers, for window controls that must stop. */
 export const trackedDays = writable(null)
@@ -124,7 +124,7 @@ export async function ensureSummary({ start, end, by, as_of }) {
  * @returns {Promise<Array<object>>} Rows in the shape the endpoint returns.
  */
 async function localSummary({ start, end, by, as_of }) {
-  const [known, rules] = await Promise.all([ensureProjects(), ensureDeductionRules()])
+  const [known, rules] = await Promise.all([ensureProjects(), ensureTagRules()])
   const live = new Set(known.filter((project) => project.active).map((p) => p.id))
   return summaryRows({
     // Archived projects leave the reports, as they do online.
@@ -132,7 +132,7 @@ async function localSummary({ start, end, by, as_of }) {
     asOf: as_of ? Date.parse(`${as_of}Z`) : Date.now(),
     by,
     tagsOf: Object.fromEntries(known.map((p) => [p.id, p.tags.map((tag) => tag.id)])),
-    bandsOf: rules ?? {},
+    rulesOf: rules ?? {},
     start,
     end,
   })
@@ -228,7 +228,7 @@ const PERSISTED = {
   preferences,
   projects,
   tags,
-  deductionRules,
+  tagRules,
   trackedDays,
   timeEntries,
 }
@@ -690,21 +690,21 @@ export async function ensureTags({ force = false } = {}) {
  * @param {{force?: boolean}} options
  * @returns {Promise<Record<number, Array<object>>>} Bands by tag id.
  */
-export async function ensureDeductionRules({ force = false } = {}) {
+export async function ensureTagRules({ force = false } = {}) {
   await ready()
-  if (!force && get(deductionRules) && fetched.has('rules')) return get(deductionRules)
-  return once('deduction-rules', async () => {
+  if (!force && get(tagRules) && fetched.has('rules')) return get(tagRules)
+  return once('tag-rules', async () => {
     const known = await ensureTags()
     const pairs = await Promise.all(
       known.map(async (tag) => [
         tag.id,
-        (await quietly(() => listDeductions({ path: { tag_id: tag.id } }))) ??
-          (get(deductionRules) ?? {})[tag.id] ??
-          [],
+        (await quietly(() => getTagRule({ path: { tag_id: tag.id } }))) ??
+          (get(tagRules) ?? {})[tag.id] ??
+          { add_minutes: null, bands: [] },
       ])
     )
     const rules = Object.fromEntries(pairs)
-    deductionRules.set(rules)
+    tagRules.set(rules)
     fetched.add('rules')
     return rules
   })
@@ -905,7 +905,7 @@ export async function applyChanges(moved) {
 
   if (changed.has('projects')) loads.push(ensureProjects({ force: true }))
   if (changed.has('tags')) loads.push(ensureTags({ force: true }))
-  if (changed.has('rules')) loads.push(ensureDeductionRules({ force: true }))
+  if (changed.has('rules')) loads.push(ensureTagRules({ force: true }))
 
   // All three regroup or re-weigh tracked time, so any of them invalidates the
   // totals even though none of them is a session.
@@ -946,7 +946,7 @@ export function resetStore() {
   preferences.set(null)
   projects.set(null)
   tags.set(null)
-  deductionRules.set(null)
+  tagRules.set(null)
   trackedDays.set(null)
   timeEntries.set([])
   loadedRange = null

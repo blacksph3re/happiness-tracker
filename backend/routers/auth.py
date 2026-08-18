@@ -43,11 +43,16 @@ from security import (
     verify_password,
     verify_totp,
 )
+from version import app_version
 
 router = APIRouter()
 
-APP_VERSION = "0.1.0"
-"""Version reported by the public version endpoint."""
+APP_VERSION = app_version()
+"""Version reported by the public version endpoint.
+
+Read from `version.py`, which reads `pyproject.toml`: one declaration, so the
+packaging metadata and what the app tells the world cannot disagree.
+"""
 
 
 @router.get(

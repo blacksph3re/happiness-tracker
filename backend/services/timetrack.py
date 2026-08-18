@@ -232,6 +232,31 @@ def check_no_overlap(entry, others: list) -> None:
             raise TimeRuleError("This overlaps another session on the same project")
 
 
+def added_for(tracked_seconds: int, add_minutes: int | None) -> int:
+    """Return the time a tag's rule adds to a day, in seconds.
+
+    A flat amount on any day the tag tracked anything at all, with no minimum:
+    one tracked minute earns the whole of it.
+
+    Parameters
+    ----------
+    tracked_seconds : int
+        What was tracked on the day, for one tag.
+    add_minutes : int or None
+        The tag's addition, or None for a tag that adds nothing.
+
+    Returns
+    -------
+    int
+        Seconds to add. Zero when nothing was tracked — the mirror of a day off
+        owing no lunch break, and what keeps an untracked day from sprouting an
+        hour it never worked.
+    """
+    if tracked_seconds <= 0 or not add_minutes:
+        return 0
+    return add_minutes * 60
+
+
 def deduction_for(tracked_seconds: int, bands: list) -> int:
     """Return the deduction a day of this length attracts, in seconds.
 
@@ -267,22 +292,31 @@ def deduction_for(tracked_seconds: int, bands: list) -> int:
     return min(tracked_seconds, band.deduct_minutes * 60)
 
 
-def reported(tracked_seconds: int, bands: list) -> int:
-    """Return what a day reports after its deduction.
+def reported(tracked_seconds: int, bands: list, add_minutes: int | None = None) -> int:
+    """Return what a day reports after its tag's whole rule.
+
+    The addition lands **first**, and the bands are then tested against the
+    increased total rather than the tracked one. That ordering is the rule, not
+    an implementation detail: three hours does not reach a three-and-a-half hour
+    threshold, and three hours plus an added one does, so the same band applies
+    in one case and not the other.
 
     Parameters
     ----------
     tracked_seconds : int
         What was tracked on the day, for one tag.
     bands : list of models.DeductionBand
-        The tag's rule.
+        The tag's deduction bands.
+    add_minutes : int or None, optional
+        The tag's addition, by default None.
 
     Returns
     -------
     int
-        Tracked seconds less the deduction, never below zero.
+        What the day reports, never below zero.
     """
-    return tracked_seconds - deduction_for(tracked_seconds, bands)
+    total = tracked_seconds + added_for(tracked_seconds, add_minutes)
+    return total - deduction_for(total, bands)
 
 
 def summarise(entries: list, as_of: datetime) -> dict[date, dict[int, int]]:

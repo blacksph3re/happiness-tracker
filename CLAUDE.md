@@ -16,8 +16,13 @@ The owner reviews by reading, then by using. Both are served by the same habits:
   root — database design, an API sketch, the tests you intend, and the open
   questions marked `[assumed: X]` so a silent default is visible as a default.
   Answers come back inline in the file; fold them in and re-issue the document
-  before writing code. `TIME_TRACKING_PLAN.md`, `COMPUTED_TOTALS_PROPOSAL.md` and
-  `TIMEZONE_PROPOSAL.md` are the pattern.
+  before writing code. `CATALOGUE_OWNERSHIP_PROPOSAL.md` is the pattern.
+
+  These are working documents and most are deleted once the work lands, so
+  **anything in one that is still true afterwards belongs here instead**. Do not
+  leave a rule pointing at a proposal: several passages in this file used to cite
+  `TIME_TRACKING_PLAN.md`, `COMPUTED_TOTALS_PROPOSAL.md`, `TIMEZONE_PROPOSAL.md`
+  and `SYNC_FRESHNESS_PROPOSAL.md`, and every one of those files is gone.
 - **Write the failing test first**, then the fix — stated explicitly, and it has
   caught vacuous tests here more than once.
 - **Fix what is obviously wrong; ask about judgement calls.** Changing
@@ -28,6 +33,11 @@ The owner reviews by reading, then by using. Both are served by the same habits:
   request because it did not earn its place. Suggest the cut.
 - **Say what was verified and how.** Assertions without evidence get challenged,
   correctly. Screenshots, measurements and reproductions belong in the report.
+- **Format only what you touched.** `ruff format .` also reformats pre-existing
+  drift across the repo — five hundred lines of line-joining in old migrations
+  and scripts, mixed into a diff that was supposed to be reviewable. Name the
+  files. If unrelated churn does creep in, `git diff -w --ignore-blank-lines`
+  tells you which files are cosmetic-only so they can be reverted.
 
 ## Non-functional requirements
 
@@ -46,8 +56,16 @@ Two, both standing, both cheaper to honour from the first commit:
   The rule used to be the stricter "must not refetch", asserted as *zero* API
   calls across a navigation. It was relaxed deliberately: forbidding the request
   was only ever a proxy for forbidding the wait, and it made a stale tab
-  unfixable without a reload. `lib/revalidate.js` asks a small digest what moved
-  and re-reads only that; `SYNC_FRESHNESS_PROPOSAL.md` records the reasoning.
+  unfixable without a reload.
+
+  `lib/revalidate.js` now asks `GET /api/changes` what moved and re-reads only
+  that. The digest fingerprints each collection as a row **count and**
+  `max(updated_at)`, because neither alone sees every change: a timestamp cannot
+  see a deletion, since the deleted row takes its own with it, and a count cannot
+  see an edit. It runs on navigation, visibility, focus, reconnect and a 30s tick
+  that shares `PROBE_EVERY` with the offline probe — exactly one of the two
+  applies at a time. A floor of 10s between checks, measured from when a check
+  *finished*, is what stops a slow connection stacking them.
 
   A component must therefore **read its data from the store**, not snapshot it
   out of a loader. `x = await ensureX()` into local state cannot see a later
@@ -69,7 +87,7 @@ The app is two trackers sharing a login, and the code says so. Three zones, and
 
 | | Wellbeing | Time | Shared |
 | --- | --- | --- | --- |
-| Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `auth.py`, `users.py` |
+| Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `auth.py`, `users.py`, `admin.py`, `changes.py` |
 | Services | `services/wellbeing.py` | `services/timetrack.py` | `services/__init__.py` re-exports both |
 | Routes | `routes/wellbeing/` | `routes/time/` | `routes/` — Landing, Login, Settings, Users |
 | Lib | `lib/wellbeing/` | `lib/time/` | `lib/store.js`, `api.js`, `router.js`, `facets.js`, `series.js`, `resource.svelte.js` |
@@ -153,6 +171,32 @@ answering.
 
 Do not write `$effect(() => load(...))` where `load` assigns component state.
 
+## Everything belongs to somebody
+
+Answers, projects, tags, deduction bands, preferences, catalogues and their
+questions: every row in this database has an owner, and **another account's
+anything answers 404** — not 403, because whether it exists is not that caller's
+business either.
+
+The one flag left is `is_admin`, for managing accounts. There is no permission
+for editing questions, because a catalogue belongs to whoever answers it and
+shaping your own tracker is not administration.
+
+Two things to know when the next thing becomes owned, both of which bit here:
+
+- **Scope the resolver, not the handlers.** `_get_catalogue`, `_get_question` and
+  `_get_score` each take the owner and filter on it, so twelve endpoints inherit
+  the check by construction. Twelve separate checks is twelve chances to forget
+  one.
+- **Anything that resolves a bare id is an authorization hole the moment the row
+  has an owner.** None of it looks like a bug beforehand: while the thing is
+  global there is nothing to check, so the absence reads as correct. The two
+  found last time were the sync queue's `answer.put`, which validated the
+  *shape* of an answer but never whose question it named, and
+  `PUT /me/default-catalogue` — self-service, which is exactly why it did not
+  look like part of the sweep, and which would have let an account point its own
+  questionnaire at somebody else's questions.
+
 ## Derived values are computed on read, never stored
 
 Scores over questions, deduction bands over tags, the midnight split, tag
@@ -189,8 +233,9 @@ Three rules follow, and they are easy to get subtly wrong:
    would either invent an hour or lose one.
 
 A fixed offset is not a timezone: a session spanning the change reads an hour out
-on the far side. `TIMEZONE_PROPOSAL.md` records what storing an IANA zone name
-would fix and what it would cost.
+on the far side. Storing an IANA zone name instead would fix that, at the cost of
+resolving a zone on every read and of deciding what a session means when a zone's
+rules change under it — considered, and deliberately not done.
 
 ## Migrations
 
@@ -208,6 +253,95 @@ whole chain, failing if any revision loses a row. Run it before trusting a new
 migration, and hand-write anything autogenerate cannot express — check the
 generated file, since it does not see data.
 
+### Which changes rebuild the table
+
+"Adding a column is safe" is the **wrong** rule, and a migration docstring here
+asserted it for a while. The right one:
+
+> A **nullable column with no server default** is added in place. Anything
+> else — `NOT NULL`, a non-constant default such as `CURRENT_TIMESTAMP`, a
+> changed constraint, a changed nullability, a dropped column — sends the batch
+> context down the rebuild path.
+
+SQLite refuses `ADD COLUMN NOT NULL DEFAULT (CURRENT_TIMESTAMP)` because it
+requires a *constant* default, and Alembic quietly falls back to recreating the
+table. That is how a six-table `updated_at` migration nearly rebuilt half the
+schema; making the column nullable turned it into six in-place adds instead, and
+the nulls cost nothing because the reader already treats "no timestamp" as
+"compare on the count".
+
+**Measure it rather than reasoning about it.** SQLite leaves a table's
+`sqlite_master.rootpage` alone for an in-place add and moves it for a rebuild:
+
+```sql
+SELECT name, rootpage FROM sqlite_master WHERE type = 'table';
+```
+
+Run it either side of `alembic upgrade`. Identical means in place; changed means
+the table was rebuilt. Confirm the check itself against a table you know was only
+added to, or a coincidence reads as proof.
+
+### Writing a data migration
+
+Cloning rows is the easy half. What loses history is **repointing**: anything
+naming a row by id — `answers.question_id` *and* `answers.option_id` — has to
+move with it, and a half-repointed row is silently wrong rather than an error.
+
+Three rules, each learned by hitting it:
+
+- **Cascades do not fire.** Foreign keys are off for the migration connection, so
+  deleting a parent orphans its children rather than removing them. Delete
+  explicitly, deepest first.
+- **Guard the destructive step.** Before deleting anything, count what still
+  references it and raise if the answer is not zero. Nothing else will stop it,
+  and the damage is silent. A migration that refuses to run beats one that
+  half-succeeds.
+- **A constraint swap comes before the data that would violate the old one.** A
+  clone carrying its original's name cannot be inserted while a global unique on
+  that name still stands, so the swap is phase one, not phase three.
+
+An inline column-level `UNIQUE` is reported by SQLite without a name, so there is
+nothing to write `drop_constraint` against. Hand `batch_alter_table` a
+`copy_from=` table description that simply omits it: the new table is built from
+that description plus the operations applied, so a constraint in neither is gone.
+
+### Before it touches the real database
+
+**Rehearse against a copy of production.** Pull the newest dump, run
+`alembic upgrade head` against it locally, and read the result back — row counts
+per table, `PRAGMA foreign_key_check`, `PRAGMA integrity_check`, and whatever
+invariant the migration is supposed to establish. Then boot the ORM against the
+migrated copy, because a schema the models cannot map is a healthy container
+serving 500s. Delete the copy afterwards: it holds password hashes and encrypted
+TOTP secrets.
+
+Take a fresh `happiness-dump` on the server immediately before deploying, under a
+name the nightly rotation will not reclaim. The container runs
+`alembic upgrade head` at startup, so deploying *is* migrating — there is no
+separate step to decide about, and no moment between them to change your mind.
+
+## Versioning
+
+Semantic, and the two halves move **in lockstep**: `backend/pyproject.toml` and
+`app/package.json` carry the same number, and any change that ships bumps both.
+They deploy as one image, so a build where they disagreed would be a build
+nobody could name.
+
+| | |
+| --- | --- |
+| Bump both | `uv run python scripts/bump_version.py 0.3.0`, from `backend/` |
+| On `0.x` | a feature is a minor bump, a fix is a patch |
+| The backend reads it | `version.py` parses `pyproject.toml` — one declaration, no constant to drift |
+| The frontend reads it | Vite bakes `__APP_VERSION__` in from `package.json` at build time |
+| Enforced by | `tests/test_version.py`, which is why the rule is more than a habit — the two sat at 0.1.0 and 0.0.0 until it was written |
+
+The script does not commit, tag, or guess the next number: which kind of change
+just happened is a judgement, and the person who wrote it is the one who knows.
+
+**Images are tagged with the version, not the commit.** A deploy therefore starts
+by bumping, and `Settings → About` is where the running version is read back —
+beside the server's own, when a cached worker is a release behind.
+
 ## Verifying a change
 
 - **A test that has never failed has not been shown to test anything.** Two tests
@@ -219,7 +353,10 @@ generated file, since it does not see data.
   *position* (`page.mouse.click(x, y)`) when the claim is "all of this is
   clickable".
 - `getByLabel` matches substrings — a field labelled `Ended time` also matches
-  its `Ended time 5 minutes later` stepper. Pass `{ exact: true }`.
+  its `Ended time 5 minutes later` stepper. Pass `{ exact: true }`. It cuts both
+  ways: **adding** a label breaks somebody else's locator, and a new
+  `aria-label="Starter questions"` is what made an existing `getByLabel('Question')`
+  ambiguous. Renaming the newcomer beat loosening the test that was already right.
 - **The e2e clock is set, not frozen.** Freezing stops anything animating from a
   time delta, and a canvas chart then draws its axes and no data at all. Use
   `page.clock.setSystemTime` and `fastForward`.
@@ -231,6 +368,11 @@ generated file, since it does not see data.
 - **When synthetic data cannot reproduce a report, use the real database.** Copy
   `database.db`, reset the password on the *copy*, serve it on another port. A
   freeze that no generated fixture could produce reproduced on the first try.
+- **A comment about infrastructure can be wrong.** A migration docstring here
+  stated that batch mode "never rebuilds the table at all" for column adds. True
+  of its own three nullable columns, false in general, and precisely the
+  reasoning someone would lean on to judge the next migration safe. Where a claim
+  decides whether something is dangerous, measure it and correct the comment.
 
 ## Settled decisions
 
@@ -243,7 +385,7 @@ Do not re-open these without being asked to; each was decided deliberately.
 | Login attempts | 5 failures per username per 15 minutes, counted in process memory and cleared by a restart. Keyed on the **submitted username**, never the client IP — the app sits behind nginx and does not trust proxy headers, so every request would otherwise share one key. A locked username answers `429` whether or not the account exists |
 | Schema | The server never creates tables. An unmigrated database fails with `no such table` |
 | Deployment | A VM behind nginx doing SSL and a second auth layer. **The domain is an environment variable, never in the repo** |
-| Answers | Never rewritten, never deleted — there is no delete endpoint. A session, by contrast, is corrected and deleted freely |
+| Answers | **Never deleted** — there is no delete endpoint, and none should be added. Re-answering a day *does* overwrite, last-write-wins on the device's own clock (`test_repeated_answers_upsert_rather_than_duplicate`); this row used to read "never rewritten", which the upsert has contradicted for some time. A session, by contrast, is corrected and deleted freely |
 | Scores | Over scaled questions only; an enum has no numeric value to contribute |
 | Projects and tags | Per user. Sharing is a later feature |
 | Catalogues | **Per user**, like everything else. There is no editor permission and no shared catalogue: a new account is built its own copy from a starter set in `templates.py`, and one account's questions answer 404 to another. Deleting your last catalogue is allowed — the questionnaire offers to build one |

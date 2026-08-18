@@ -16,6 +16,67 @@ class Version(BaseModel):
     """Application version string."""
 
 
+class DiskUsage(BaseModel):
+    """How full the volume holding the database is."""
+
+    total_bytes: int
+    """Size of the filesystem the database sits on."""
+
+    used_bytes: int
+    """How much of it is in use, by anything, not only by this app."""
+
+    free_bytes: int
+    """How much is available to this process.
+
+    Not simply `total - used`: a filesystem reserves blocks for root, so the
+    space a writer can actually have is the smaller number and the one worth
+    showing.
+    """
+
+
+class MemoryUsage(BaseModel):
+    """What the container's cgroup says about memory."""
+
+    used_bytes: int
+    """Current usage, as the cgroup accounts it."""
+
+    limit_bytes: int | None
+    """The ceiling, or None where the cgroup reports no limit."""
+
+
+class ServerMetrics(BaseModel):
+    """A glance at the running server, for an administrator.
+
+    Deliberately small and cheap: a version, how long the process has been up,
+    and how much room is left. Anything needing history belongs in a monitoring
+    system rather than in a settings page.
+    """
+
+    version: str
+    """The running application's version."""
+
+    uptime_seconds: int
+    """How long this process has been serving.
+
+    The process, not the host. A container is restarted by a deploy, so this is
+    "how long since the last deploy or crash", which is the question somebody
+    looking at a settings page is actually asking.
+    """
+
+    database_bytes: int
+    """Size of the SQLite file on disk."""
+
+    disk: DiskUsage
+    """The volume the database sits on."""
+
+    memory: MemoryUsage | None
+    """Container memory, or None when there is no cgroup to read.
+
+    Absent rather than zero on a development machine: a number nobody measured
+    is worse than an honest gap.
+    """
+
+
 class Fingerprint(BaseModel):
     """How much of one collection there is, and when it last moved.
 
@@ -877,12 +938,19 @@ class SummaryRow(BaseModel):
     """Tracked seconds. Parallel sessions are added, so a day's rows can sum to
     more than 24 hours."""
 
+    added: int = 0
+    """Seconds the group's rule adds to this day, on any day it tracked
+    anything. Always zero when grouping by project: a rule belongs to a tag."""
+
     deduction: int = 0
-    """Seconds the group's rule removes from this day. Always zero when
-    grouping by project: a deduction belongs to a tag, not to a project."""
+    """Seconds the group's rule removes from this day, measured against the
+    total *after* `added`. Always zero when grouping by project."""
 
     reported: int = 0
-    """Tracked seconds less the deduction."""
+    """What the day reports: ``seconds + added - deduction``.
+
+    All four are sent so the number explains itself. With only three, a rule
+    that adds an hour would leave an hour nobody could account for."""
 
 
 class DeductionBandIn(BaseModel):
@@ -899,6 +967,35 @@ class DeductionBandOut(DeductionBandIn):
     """A band as exposed by the API."""
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TagRuleIn(BaseModel):
+    """A tag's whole rule: what it adds to a day, and what it takes away.
+
+    One payload rather than two endpoints, because the two halves are one rule:
+    the addition lands first and the bands are tested against the increased
+    total, so saving them separately would leave a moment where the stored rule
+    means something nobody asked for.
+    """
+
+    add_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
+    """Minutes added to every day this tag tracked anything, or null for none.
+
+    Zero is stored as null, so a rule that adds nothing has one spelling.
+    """
+
+    bands: list[DeductionBandIn] = []
+    """The deduction bands, in any order."""
+
+
+class TagRuleOut(BaseModel):
+    """A tag's rule as exposed by the API."""
+
+    add_minutes: int | None
+    """Minutes added to every tracked day, or null for none."""
+
+    bands: list[DeductionBandOut] = []
+    """The deduction bands, lowest threshold first."""
 
 
 class TrackedRange(BaseModel):

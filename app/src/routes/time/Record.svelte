@@ -25,7 +25,7 @@
   import TimeField from '../../lib/time/TimeField.svelte'
   import { now } from '../../lib/time/tick.js'
   import {
-    ensureDeductionRules,
+    ensureTagRules,
     ensureProjects,
     ensureSummary,
     ensureTags,
@@ -543,13 +543,13 @@
     const [known, allTags, rules] = await Promise.all([
       ensureProjects(),
       ensureTags(),
-      ensureDeductionRules(),
+      ensureTagRules(),
     ])
     const tables = exportTables({
       entries: $timeEntries,
       projects: known ?? [],
       tags: allTags ?? [],
-      bandsOf: rules ?? {},
+      rulesOf: rules ?? {},
       asOf: $now,
     })
     save(

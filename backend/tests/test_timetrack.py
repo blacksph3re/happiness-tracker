@@ -4,6 +4,7 @@ import pytest
 
 from services.timetrack import (
     TimeRuleError,
+    added_for,
     check_entry_shape,
     check_no_overlap,
     daily_slices,
@@ -210,6 +211,58 @@ def test_a_capping_band_sits_above_deducting_ones():
 
 def test_a_cap_at_zero_reports_nothing():
     assert reported(4 * HOUR, [FakeBand(0, None)]) == 0
+
+
+def test_an_addition_lifts_every_tracked_day():
+    assert reported(3 * HOUR, [], add_minutes=60) == 4 * HOUR
+    assert added_for(3 * HOUR, add_minutes=60) == HOUR
+
+
+def test_the_addition_is_counted_before_the_bands_are_tested():
+    # The case the whole feature turns on. Three hours does not reach a
+    # three-and-a-half hour threshold; three hours plus an added one does, so the
+    # band applies and the day reports 3:40. Getting the order wrong reports 3:00
+    # — a plausible number, and the wrong one.
+    band = [FakeBand(210, 20)]
+
+    assert reported(3 * HOUR, band, add_minutes=60) == 3 * HOUR + 40 * 60
+
+
+def test_the_same_day_without_the_addition_never_reaches_that_band():
+    # The other half of the test above: without this, "the band applied" and
+    # "the band was never reached" both pass.
+    band = [FakeBand(210, 20)]
+
+    assert reported(3 * HOUR, band) == 3 * HOUR
+    assert deduction_for(3 * HOUR, band) == 0
+
+
+def test_a_day_that_tracked_nothing_earns_no_addition():
+    # The mirror of "a day off owes no lunch break". Without this every untracked
+    # day in a range sprouts an hour and the averages measure the rule.
+    assert added_for(0, add_minutes=60) == 0
+    assert reported(0, [], add_minutes=60) == 0
+    assert reported(0, LUNCH, add_minutes=60) == 0
+
+
+def test_one_tracked_minute_earns_the_whole_addition():
+    assert reported(60, [], add_minutes=60) == 60 + HOUR
+
+
+def test_a_cap_swallows_the_addition():
+    cap = [FakeBand(600, None)]
+
+    assert reported(9 * HOUR + 1800, cap, add_minutes=60) == 10 * HOUR
+
+
+def test_a_deduction_cannot_take_an_increased_day_below_zero():
+    assert reported(60, [FakeBand(0, 24 * 60)], add_minutes=60) == 0
+
+
+def test_no_addition_reports_exactly_what_it_did_before():
+    for tracked in (0, 600, 4 * HOUR, 9 * HOUR):
+        assert reported(tracked, LUNCH, add_minutes=None) == reported(tracked, LUNCH)
+        assert reported(tracked, LUNCH, add_minutes=0) == reported(tracked, LUNCH)
 
 
 def test_overlapping_sessions_on_one_project_are_refused():

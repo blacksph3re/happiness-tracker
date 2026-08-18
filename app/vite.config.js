@@ -1,12 +1,23 @@
+import { readFileSync } from 'node:fs'
+
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// Baked in at build time from the one place the frontend declares it. The
+// backend reads the same number out of `pyproject.toml`, and a test holds the
+// two files equal — they ship as one image, so a build where they disagreed
+// would be a build nobody could name.
+const { version } = JSON.parse(readFileSync('./package.json', 'utf8'))
+
 // The production bundle is emitted into the backend so that a single FastAPI
 // process (and a single shipped artifact) serves both the API and the frontend.
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(version),
+  },
   plugins: [
     tailwindcss(),
     svelte(),

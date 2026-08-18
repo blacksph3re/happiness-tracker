@@ -12,6 +12,7 @@ from bootstrap import bootstrap
 from config import get_settings
 from database import SessionLocal
 from routers import (
+    admin,
     answers,
     auth,
     catalogues,
@@ -125,6 +126,7 @@ app.include_router(projects.router, prefix="/api")
 app.include_router(time.router, prefix="/api")
 app.include_router(sync.router, prefix="/api")
 app.include_router(changes.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
 
 
 class SinglePageApp(StaticFiles):
