@@ -44,6 +44,26 @@
   --color-tide-lift: #2f9aa8;
   --color-amber: #d9a33c;
 
+  /* Status, not decoration: the marks on a pomodoro, and "careful" inside the
+     focus section. Deliberately outside the project palette and outside what
+     any section rebinds, so a tick means the same green wherever it is drawn. */
+  --color-alarm: #d4574e;
+
+  /* The focus section's accents. Warm against the wellbeing purple and the
+     time teal, so three places read as three. None of these is a project
+     colour, for the reason above: a project coloured `flame` would vanish into
+     the section around it.
+
+     Marigold rather than the muted red this started as. A dark desaturated red
+     is what every interface uses for "something went wrong", and a focus timer
+     wearing it made finishing a block feel like a warning. Orange is the
+     nearest hue that is unmistakably not red and still not the other two
+     sections. */
+  --color-flame: #e0803c;
+  --color-flame-deep: #a8551f;
+  --color-flame-lift: #f2a462;
+  --color-gilt: #e8c46a;
+
   --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-meta: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace;
 }
@@ -71,6 +91,19 @@ body {
   --color-dusk-deep: var(--color-tide-deep);
   --color-dusk-lift: var(--color-tide-lift);
   --color-ember: var(--color-amber);
+}
+
+/* The focus half, recoloured the same way the time half is. */
+.section-focus {
+  --color-dusk: var(--color-flame);
+  --color-dusk-deep: var(--color-flame-deep);
+  --color-dusk-lift: var(--color-flame-lift);
+  /* Gold, as the time section maps it to amber. `ember` carries three jobs —
+     the selected tab, the "now" line, and the border on a destructive button —
+     and only the last of them wants to look like a warning. Bound to red, a
+     selected tab read as an error. Anything that genuinely means careful names
+     `alarm` directly. */
+  --color-ember: var(--color-gilt);
 }
 
 /* Hover, app-wide, so a pointer is answered the same way everywhere:

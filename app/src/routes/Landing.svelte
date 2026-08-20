@@ -1,25 +1,32 @@
 <script>
   import { link } from '../lib/router.js'
-  import { elapsed, formatDuration } from '../lib/time/duration.js'
+  import { formatDuration, localDay } from '../lib/clock.js'
+import { elapsed } from '../lib/time/duration.js'
   import { now } from '../lib/time/tick.js'
+  import { dayTotals, pomodoroState, RUNNING } from '../lib/pomodoro/derive.js'
   import {
     answers as answerStore,
     ensureAnswers,
     ensureCatalogue,
     ensureMe,
+    ensurePomodoros,
     ensureProjects,
     ensureTimeEntries,
+    pomodoros as pomodoroStore,
     projects as projectStore,
     timeEntries,
   } from '../lib/store.js'
   import { today } from '../lib/day.js'
 
   /**
-   * The one place the two halves meet.
+   * The one place the three halves meet.
    *
-   * Not a menu: each card reports the state of its half before it is touched,
-   * so the two most common actions of a day — answer today, stop a timer — are
-   * one tap from where you land.
+   * Not a menu: each card reports the state of its section before it is
+   * touched, so the commonest actions of a day — answer today, stop a timer,
+   * start a pomodoro — are one tap from where you land.
+   *
+   * Still the only bridge. None of the three links to another anywhere else,
+   * which is what keeps "Record" and "Patterns" unambiguous inside each.
    */
 
   let loading = $state(true)
@@ -53,6 +60,16 @@
 
   const projectCount = $derived(($projectStore ?? []).filter((p) => p.active).length)
 
+  const todaysPomodoros = $derived(
+    ($pomodoroStore ?? []).filter(
+      (row) => localDay(row.started_at, row.utc_offset) === day
+    )
+  )
+  const focusing = $derived(
+    todaysPomodoros.find((row) => pomodoroState(row, $now) === RUNNING)
+  )
+  const focusTotals = $derived(dayTotals(todaysPomodoros, $now))
+
   $effect(() => {
     load()
   })
@@ -64,6 +81,7 @@
         ensureAnswers(),
         ensureProjects(),
         ensureTimeEntries({ start: day, end: day }),
+        ensurePomodoros({ start: day, end: day }),
       ])
       if (user?.default_catalogue_id) {
         const detail = await ensureCatalogue(user.default_catalogue_id)
@@ -81,7 +99,7 @@
   <p class="meta">Today</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">What are you recording?</h1>
 
-  <div class="grid gap-4 md:grid-cols-2">
+  <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
     <!-- Wellbeing keeps the app's own accents; the time card previews the other
          half's, so the difference is visible before you go there. -->
     <a
@@ -157,6 +175,41 @@
       </div>
       <span class="meta self-start rounded-md border border-white/20 px-4 py-2.5">
         {running.length ? 'Check out' : 'Check in'} →
+      </span>
+    </a>
+
+    <a
+      href="/focus"
+      use:link
+      data-card="focus"
+      class="section-focus flex min-h-52 flex-col justify-between rounded-xl border
+             border-white/10 bg-ink-soft p-6 transition hover:border-white/30
+             hover:bg-dusk/10"
+    >
+      <div>
+        <p class="meta">Focus</p>
+        {#if loading}
+          <p class="mt-3 text-2xl font-semibold">…</p>
+        {:else if focusing}
+          <p class="mt-3 truncate text-2xl font-semibold">
+            {focusing.task ?? 'Focusing'}
+          </p>
+          <p class="mt-1 text-sm text-haze">A pomodoro is running.</p>
+        {:else if focusTotals.count > 0}
+          <p class="mt-3 text-2xl font-semibold">
+            {focusTotals.count}
+            {focusTotals.count === 1 ? 'pomodoro' : 'pomodoros'}
+          </p>
+          <p class="mt-1 text-sm text-haze">
+            {formatDuration(focusTotals.focus)} of focus today.
+          </p>
+        {:else}
+          <p class="mt-3 text-2xl font-semibold">Nothing yet</p>
+          <p class="mt-1 text-sm text-haze">One press and the clock runs.</p>
+        {/if}
+      </div>
+      <span class="meta self-start rounded-md border border-white/20 px-4 py-2.5">
+        {focusing ? 'Back to it' : 'Start a pomodoro'} →
       </span>
     </a>
   </div>

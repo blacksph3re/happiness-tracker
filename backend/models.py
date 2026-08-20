@@ -788,6 +788,19 @@ class TimeEntry(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     """Optional free text about the session."""
 
+    source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """Where this session came from, when it was not tracked directly.
+
+    Only `pomodoro` so far, set by the focus half's transfer. A plain column
+    rather than a foreign key: "this arrived from somewhere else" is a fact
+    about the session, and a real reference would point the time half at the
+    focus half — and would then have to survive the pomodoro being deleted,
+    which it is free to be.
+
+    Nullable with no server default, so the migration adding it is one SQLite
+    performs in place. See `Project.updated_at` for why that matters.
+    """
+
     client_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True, default=lambda: str(uuid4())
     )
@@ -822,3 +835,124 @@ class TimeEntry(Base):
 
     project: Mapped[Project] = relationship()
     """The project this session counts towards."""
+
+
+# ---------------------------------------------------------------------------
+# Focus. Pomodoros are independent of both halves above: nothing here
+# references a project or a question, and nothing above references a pomodoro.
+# Time reaches the tracker only as a copy, when somebody presses the transfer
+# button, which is why there is no foreign key in either direction.
+# ---------------------------------------------------------------------------
+
+
+class Pomodoro(Base):
+    """One focus block and the break that follows it."""
+
+    __tablename__ = "pomodoros"
+    __table_args__ = (
+        CheckConstraint(
+            "ended_at is null or ended_at > started_at",
+            name="ck_pomodoro_ends_after_start",
+        ),
+        CheckConstraint("focus_seconds > 0", name="ck_pomodoro_has_focus"),
+        CheckConstraint("break_seconds >= 0", name="ck_pomodoro_break_not_negative"),
+        Index("ix_pomodoros_user_started", "user_id", "started_at"),
+        # As for sessions: a device's own id is unique to its owner, so
+        # replaying the same intent twice updates one row instead of making two.
+        Index(
+            "uq_pomodoro_client_id",
+            "user_id",
+            "client_id",
+            unique=True,
+            sqlite_where=text("client_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """Whose pomodoro this is."""
+
+    task: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """What the focus was for, if anything was typed.
+
+    Optional on purpose: an unnamed pomodoro is a real pomodoro, and requiring a
+    description would turn a timer into a form. Editable afterwards, because
+    discovering a minute in that you are really doing something else is the
+    ordinary case rather than the exception.
+    """
+
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    """When the focus began, in UTC."""
+
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When something stopped it early, in UTC, or NULL if nothing did.
+
+    **Not** "null while running". A pomodoro declares its own end when it
+    starts, so one that ran as declared needs nothing written to finish it: the
+    end is `started_at` plus both phases, computed on read. This column is
+    written only by an explicit stop — abandoning during the focus, or the next
+    pomodoro beginning during the break.
+
+    That is what lets a pomodoro complete while the app was closed, with no
+    timer and no background task, and it is why there is no stored outcome
+    beside it that an edit could leave disagreeing.
+    """
+
+    utc_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    """Minutes east of UTC when it started, as a session records."""
+
+    focus_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    """Length of the focus phase, as configured at the time."""
+
+    break_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    """Length of the break phase, as configured at the time.
+
+    Stored rather than read back from the account's current setting, and the one
+    deliberate exception here to computing on read: changing the mode from 25/5
+    to 50/10 is not a claim about yesterday.
+    """
+
+    tainted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    """Whether the focus was marked unsuccessful.
+
+    Stored rather than derived, because it is a judgement: nothing in the
+    timestamps knows the time went on social media. It changes no total — time
+    spent is time spent — and exists only to be shown.
+    """
+
+    transferred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When this pomodoro's time was copied to a project, or NULL if never.
+
+    What stops the transfer button offering the same hour twice. The session it
+    produced is a copy and not a link: editing this row afterwards does not
+    reach it, which is the whole of why there is no synchronisation to keep.
+    """
+
+    client_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, default=lambda: str(uuid4())
+    )
+    """The identity a device gives a pomodoro before the server has one.
+
+    See `TimeEntry.client_id`: the identity outlives the row, which is what lets
+    an edit made offline find what it meant.
+    """
+
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When the device says this pomodoro was last changed. See `Answer`."""
+
+    server_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When the server accepted the write that last set this row."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    """Timestamp set by the database when the row is inserted."""
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    """Timestamp set on insert and refreshed on every update."""

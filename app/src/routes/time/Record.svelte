@@ -4,21 +4,20 @@
 
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
   import { link } from '../../lib/router.js'
-  import { period, weekHeading } from '../../lib/time/period.js'
+  import { period, weekHeading } from '../../lib/period.js'
   import { exportTables } from '../../lib/time/summary.js'
-  import { offsetLabel } from '../../lib/time/duration.js'
   import { resource } from '../../lib/resource.svelte.js'
   import {
     clockLabel,
-    dayOffsets,
     clockOfSeconds,
     formatDuration,
     fromLocal,
     localDay,
     nowUtc,
-    slices,
+    offsetLabel,
     utcOffset,
-  } from '../../lib/time/duration.js'
+  } from '../../lib/clock.js'
+import { dayOffsets, slices } from '../../lib/time/duration.js'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
@@ -200,6 +199,7 @@
         crosses: false,
         whole: false,
         running: false,
+        fromFocus: false,
       })
     }
     for (const [day, list] of map) {
@@ -347,6 +347,9 @@
       crosses: slice.crosses,
       whole: slice.whole ?? false,
       running: slice.entry.ended_at === null,
+      // Every session behind the row, so a merged row only says "from focus"
+      // when the whole of it was.
+      fromFocus: slice.entry.source === 'pomodoro',
     }
   }
 
@@ -369,6 +372,7 @@
       found.seconds += slice.seconds
       found.entries.push(slice.entry)
       found.crosses = found.crosses || slice.crosses
+      found.fromFocus = found.fromFocus && slice.entry.source === 'pomodoro'
       found.whole = found.whole || (slice.whole ?? false)
       found.running = found.running || slice.entry.ended_at === null
     }
@@ -843,6 +847,13 @@
                                 <span class="text-haze">
                                   · {row.from === 0 ? 'from earlier' : 'continues'}
                                 </span>
+                              {/if}
+                              {#if row.fromFocus}
+                                <!-- Where the hour came from, in the same
+                                     place the row says anything else about
+                                     itself. It is a copy and nothing links it
+                                     back, so this is all the tracker knows. -->
+                                <span class="text-haze" data-from-focus>· from focus</span>
                               {/if}
                               {#if !only}
                                 <span class="text-haze">· {row.entries.length} sessions</span>

@@ -1,7 +1,7 @@
 <script>
   import { fade } from 'svelte/transition'
 
-  import { clockLabel, formatDuration, secondsPart } from './duration.js'
+  import { clockLabel, formatDuration, secondsPart } from '../clock.js'
 
   /**
    * One project as a check-in control.

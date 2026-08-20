@@ -23,8 +23,9 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models import Answer, Project, Question, QuestionOption, TimeEntry
+from models import Answer, Pomodoro, Project, Question, QuestionOption, TimeEntry
 from schemas import AnswerIn, SyncEntryPayload
+from services.pomodoro import PomodoroRuleError, check_pomodoro_shape
 from services.timetrack import TimeRuleError, check_entry_shape, check_no_overlap
 from services.wellbeing import QuestionRuleError, check_answer, sync_system_answers
 
@@ -361,6 +362,134 @@ def delete_entry(
             SyncOutcome.DROPPED,
             "That session was changed elsewhere after it was deleted here, so it "
             "was kept",
+        )
+
+    db.delete(stored)
+    return SyncOutcome.APPLIED, None
+
+
+def apply_pomodoro(
+    db: Session,
+    user_id: int,
+    client_id: str,
+    claimed: datetime,
+    payload,
+    now: datetime,
+) -> tuple[str, str | None, Pomodoro | None]:
+    """Record or correct one pomodoro from a device's queue.
+
+    One kind for both, as `apply_entry` is: a correction to a pomodoro another
+    device deleted re-creates it, which falls out rather than being special-cased.
+
+    Unlike a session, nothing here checks for a collision with what is already
+    stored. Pomodoros are not tracked time — they become time only when somebody
+    presses the transfer button — so two that overlap are a device replaying its
+    queue, not a double count.
+
+    A pomodoro already copied to a project is edited like any other. The session
+    it produced does not follow, and that is the accepted trade: the transfer is
+    a copy and was never a link, so the alternative is a row nobody can correct
+    for the sake of an agreement that was never promised.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session. Not committed here.
+    user_id : int
+        Whose pomodoro this is.
+    client_id : str
+        The device's identity for it.
+    claimed : datetime.datetime
+        When the device says the change was made.
+    payload : schemas.SyncPomodoroPayload
+        The pomodoro as the device holds it.
+    now : datetime.datetime
+        The server's clock, recorded on the row.
+
+    Returns
+    -------
+    tuple of (str, str or None, Pomodoro or None)
+        The outcome, why when it was not applied, and the row as it now stands.
+    """
+    stored = db.execute(
+        select(Pomodoro).where(
+            Pomodoro.user_id == user_id, Pomodoro.client_id == client_id
+        )
+    ).scalar_one_or_none()
+
+    if stored is not None and not _is_newer(claimed, stored.client_updated_at):
+        return (
+            SyncOutcome.SUPERSEDED,
+            "A newer version of that pomodoro is already stored",
+            stored,
+        )
+
+    pomodoro = stored or Pomodoro(user_id=user_id, client_id=client_id)
+    pomodoro.task = payload.task
+    pomodoro.started_at = payload.started_at
+    pomodoro.ended_at = payload.ended_at
+    pomodoro.utc_offset = payload.utc_offset
+    pomodoro.focus_seconds = payload.focus_seconds
+    pomodoro.break_seconds = payload.break_seconds
+    pomodoro.tainted = payload.tainted
+    pomodoro.client_updated_at = claimed
+    pomodoro.server_received_at = now
+
+    try:
+        check_pomodoro_shape(
+            pomodoro.started_at,
+            pomodoro.ended_at,
+            pomodoro.focus_seconds,
+            pomodoro.break_seconds,
+            pomodoro.utc_offset,
+        )
+    except PomodoroRuleError as refusal:
+        return SyncOutcome.CONFLICT, str(refusal), None
+
+    if stored is None:
+        db.add(pomodoro)
+    db.flush()
+    return SyncOutcome.APPLIED, None, pomodoro
+
+
+def delete_pomodoro(
+    db: Session, user_id: int, client_id: str, claimed: datetime
+) -> tuple[str, str | None]:
+    """Remove one pomodoro, unless something newer happened to it.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session. Not committed here.
+    user_id : int
+        Whose pomodoro this is.
+    client_id : str
+        The device's identity for it.
+    claimed : datetime.datetime
+        When the device says the deletion was made.
+
+    A pomodoro already copied to a project is deleted like any other; the
+    session it produced stays where it is. See `apply_pomodoro`.
+
+    Returns
+    -------
+    tuple of (str, str or None)
+        The outcome and, when the deletion was not carried out, why.
+    """
+    stored = db.execute(
+        select(Pomodoro).where(
+            Pomodoro.user_id == user_id, Pomodoro.client_id == client_id
+        )
+    ).scalar_one_or_none()
+
+    if stored is None:
+        return SyncOutcome.APPLIED, None
+
+    if not _is_newer(claimed, stored.client_updated_at):
+        return (
+            SyncOutcome.DROPPED,
+            "That pomodoro was changed elsewhere after it was deleted here, so "
+            "it was kept",
         )
 
     db.delete(stored)

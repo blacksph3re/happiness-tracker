@@ -6,13 +6,8 @@
   import {
     createProject,
   } from '../../lib/generated/sdk.gen'
-  import {
-    elapsed,
-    formatShort,
-    localDay,
-    nowUtc,
-    utcOffset,
-  } from '../../lib/time/duration.js'
+  import { formatShort, localDay, nowUtc, utcOffset } from '../../lib/clock.js'
+import { elapsed } from '../../lib/time/duration.js'
   import { today } from '../../lib/day.js'
   import { nextColour } from '../../lib/time/palette.js'
   import { now } from '../../lib/time/tick.js'

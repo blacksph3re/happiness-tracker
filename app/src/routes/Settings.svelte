@@ -13,10 +13,51 @@
   import IconBin from '../lib/IconBin.svelte'
   import QrCode from '../lib/QrCode.svelte'
   import { resource } from '../lib/resource.svelte.js'
-  import { catalogues as catalogueStore, ensureCatalogues, ensureMe, me as meStore } from '../lib/store.js'
+  import {
+    catalogues as catalogueStore,
+    ensureCatalogues,
+    ensureMe,
+    ensurePreferences,
+    me as meStore,
+    persistPreferences,
+    preferenceSection,
+    preferences as preferenceStore,
+  } from '../lib/store.js'
+  import {
+    DEFAULT_BREAK_MINUTES,
+    DEFAULT_FOCUS_MINUTES,
+    MAX_MINUTES,
+  } from '../lib/pomodoro/mode.js'
+  import { AMBIENCES, CHIMES, playChime } from '../lib/pomodoro/sounds.js'
   import { connection } from '../lib/sync.js'
   import { navigate } from '../lib/router.js'
   import { pushToast } from '../lib/toasts.js'
+
+  const focus = $derived(preferenceSection($preferenceStore, 'focus'))
+
+  $effect(() => {
+    ensurePreferences()
+  })
+
+  /**
+   * Save one focus preference, leaving the others alone.
+   *
+   * These live in the preferences document rather than in a column: the
+   * backend has no opinion about what a pomodoro sounds like, and adding one
+   * would be a migration for a dropdown.
+   */
+  function chooseFocus(key, value) {
+    // Stored as a number so nothing downstream has to parse a field's string,
+    // and left alone while it is empty: clamping mid-typing turns backspacing
+    // "25" into "2" and then into a fight with the cursor.
+    const stored = key.endsWith('_minutes') ? Number(value) : value
+    if (key.endsWith('_minutes') && !Number.isFinite(stored)) return
+    persistPreferences('focus', { ...focus, [key]: stored })
+    // Played on selection, because the only way to choose a sound is to hear
+    // it — and a chime you first meet at the end of a focus block is one you
+    // find out you dislike at the worst moment.
+    if (key === 'chime') playChime(value)
+  }
 
   /** Nothing on this page queues, so nothing on it is offered without a connection. */
   const offline = $derived($connection !== 'online')
@@ -176,6 +217,74 @@
     </select>
   </div>
 
+  <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-focus-settings>
+    <h2 class="font-semibold">Focus</h2>
+    <p class="mt-1 text-sm text-haze">
+      The lengths a pomodoro runs for, and what it sounds like. Changing them
+      never rewrites a pomodoro already recorded.
+    </p>
+
+    <div class="mt-4 grid gap-4 sm:grid-cols-2">
+      <div>
+        <label class="meta block" for="focus-minutes">Focus, minutes</label>
+        <input
+          id="focus-minutes"
+          type="number"
+          min="1"
+          max={MAX_MINUTES}
+          step="1"
+          class="numeral mt-2 w-full rounded-lg border border-white/15 bg-ink px-4 py-3"
+          value={focus.focus_minutes ?? DEFAULT_FOCUS_MINUTES}
+          oninput={(event) => chooseFocus('focus_minutes', event.currentTarget.value)}
+        />
+      </div>
+      <div>
+        <label class="meta block" for="break-minutes">Break, minutes</label>
+        <input
+          id="break-minutes"
+          type="number"
+          min="0"
+          max={MAX_MINUTES}
+          step="1"
+          class="numeral mt-2 w-full rounded-lg border border-white/15 bg-ink px-4 py-3"
+          value={focus.break_minutes ?? DEFAULT_BREAK_MINUTES}
+          oninput={(event) => chooseFocus('break_minutes', event.currentTarget.value)}
+        />
+      </div>
+    </div>
+    <p class="meta mt-2 normal-case text-haze">
+      A break of zero is allowed, and means one pomodoro straight into the next.
+    </p>
+
+    <label class="meta mt-4 block" for="focus-chime">Sound when a phase ends</label>
+    <select
+      id="focus-chime"
+      class="mt-2 w-full rounded-lg border border-white/15 bg-ink px-4 py-3"
+      value={focus.chime ?? 'none'}
+      onchange={(event) => chooseFocus('chime', event.currentTarget.value)}
+    >
+      {#each CHIMES as chime (chime.id)}
+        <option value={chime.id}>{chime.label}</option>
+      {/each}
+    </select>
+
+    <label class="meta mt-4 block" for="focus-ambience">Focus sound</label>
+    <select
+      id="focus-ambience"
+      class="mt-2 w-full rounded-lg border border-white/15 bg-ink px-4 py-3"
+      value={focus.ambience ?? 'none'}
+      onchange={(event) => chooseFocus('ambience', event.currentTarget.value)}
+    >
+      {#each AMBIENCES as ambience (ambience.id)}
+        <option value={ambience.id}>{ambience.label}</option>
+      {/each}
+    </select>
+    <p class="mt-3 text-sm text-haze">
+      With no focus sound, a pomodoro that finishes while the app is closed is
+      reported when you come back rather than at the moment it ended.
+    </p>
+  </div>
+
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-totp>
     <h2 class="font-semibold">Second factor</h2>
     <p class="mt-1 text-sm text-haze">
@@ -331,7 +440,7 @@
       type="submit"
       disabled={offline}
       title={hint}
-      class="mt-4 rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift
+      class="mt-4 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift
              disabled:cursor-not-allowed disabled:opacity-40"
     >
       Change password

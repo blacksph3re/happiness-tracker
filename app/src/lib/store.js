@@ -1,10 +1,24 @@
 import { get, writable } from 'svelte/store'
 
 import { tokenHolder, unwrap } from './api.js'
-import { overlayAnswers, overlayEntries, withScores } from './projection.js'
+import {
+  overlayAnswers,
+  overlayEntries,
+  overlayPomodoros,
+  withScores,
+} from './projection.js'
+import { nowUtc } from './clock.js'
 import { startingDay } from './time/duration.js'
 import { summaryRows, trackedEdges } from './time/summary.js'
-import { connection, enqueue, enqueueAll, loadQueue, notices, queued } from './sync.js'
+import {
+  connection,
+  enqueue,
+  enqueueAll,
+  loadQueue,
+  notices,
+  queued,
+  settle,
+} from './sync.js'
 import {
   clearSnapshot,
   readSnapshot,
@@ -22,8 +36,10 @@ import {
   listProjects,
   listStatsVariables,
   listTags,
+  listPomodoros,
   listTimeEntries,
   setMyPreferences,
+  transferPomodoros,
   timeSummary,
   trackedRange,
 } from './generated/sdk.gen'
@@ -40,6 +56,9 @@ import {
 export const me = writable(null)
 export const catalogues = writable([])
 export const answers = writable([])
+
+/** Pomodoros the device knows about, over whatever range was last asked for. */
+export const pomodoros = writable([])
 
 /** Catalogue detail by id, so a page can read questions it did not fetch. */
 const catalogueDetails = writable({})
@@ -80,6 +99,9 @@ export const timeEntries = writable([])
  * would look like a cache hit and silently drop everything outside it.
  */
 let loadedRange = null
+
+/** The local-day range `pomodoros` currently covers, or null before any load. */
+let pomodoroRange = null
 
 /**
  * Tracked totals, keyed by the range and grouping they were asked for.
@@ -231,6 +253,7 @@ const PERSISTED = {
   tagRules,
   trackedDays,
   timeEntries,
+  pomodoros,
 }
 
 /**
@@ -903,6 +926,12 @@ export async function applyChanges(moved) {
     forgetSummaries()
   }
 
+  if (changed.has('pomodoros')) {
+    // For the range already held, as sessions are: a forced call with no bounds
+    // asks for every pomodoro the account has ever run.
+    loads.push(ensurePomodoros({ ...pomodoroRange, force: true }))
+  }
+
   if (changed.has('projects')) loads.push(ensureProjects({ force: true }))
   if (changed.has('tags')) loads.push(ensureTags({ force: true }))
   if (changed.has('rules')) loads.push(ensureTagRules({ force: true }))
@@ -949,8 +978,172 @@ export function resetStore() {
   tagRules.set(null)
   trackedDays.set(null)
   timeEntries.set([])
+  pomodoros.set([])
   loadedRange = null
+  pomodoroRange = null
   summaries.clear()
   persisted = null
   inFlight.clear()
+}
+
+/**
+ * Load the pomodoros of a range of local days.
+ *
+ * Widening the window refetches; narrowing it, or asking again for the same
+ * days, is answered from what is already held — the same contract
+ * `ensureTimeEntries` keeps, and for the same reason: opening the Focus page a
+ * second time must paint from the store rather than wait.
+ *
+ * @param {{start?: string, end?: string, force?: boolean}} options
+ * @returns {Promise<Array<object>>} Every cached pomodoro, not only the range asked for.
+ */
+export async function ensurePomodoros({ start, end, force = false } = {}) {
+  await ready()
+  const covers =
+    pomodoroRange &&
+    (!pomodoroRange.start || (start && start >= pomodoroRange.start)) &&
+    (!pomodoroRange.end || (end && end <= pomodoroRange.end))
+  if (!force && covers && fetched.has('pomodoros')) return get(pomodoros)
+
+  const wanted = {
+    start: pomodoroRange?.start && start ? min(pomodoroRange.start, start) : undefined,
+    end: pomodoroRange?.end && end ? max(pomodoroRange.end, end) : undefined,
+  }
+  return once(`pomodoros:${wanted.start ?? ''}:${wanted.end ?? ''}`, async () => {
+    const query = {}
+    if (wanted.start) query.start = wanted.start
+    if (wanted.end) query.end = wanted.end
+    const fresh = await quietly(() => listPomodoros({ query }))
+    // Unreachable: keep what the device holds, with the queue still laid over
+    // it. A pomodoro started here is not waiting on anybody.
+    if (!fresh) {
+      const held = overlayPomodoros(get(pomodoros), get(queued))
+      pomodoros.set(held)
+      return held
+    }
+    const loaded = overlayPomodoros(fresh, get(queued))
+    pomodoros.set(loaded)
+    pomodoroRange = wanted
+    fetched.add('pomodoros')
+    writeSnapshot('pomodoroRange', wanted)
+    return loaded
+  })
+}
+
+/**
+ * Record a pomodoro — new or corrected — on the device, and queue it.
+ *
+ * One call for both, as `saveEntry` is: correcting a pomodoro is writing it
+ * again under the same `client_id`.
+ *
+ * @param {object} pomodoro Without a `client_id` for a new one.
+ * @returns {Promise<string>} The identity it now has.
+ */
+export async function savePomodoro(pomodoro) {
+  const client_id = pomodoro.client_id ?? crypto.randomUUID()
+  const { client_id: _ignored, ...payload } = pomodoro
+  // Durable before it is visible — see `saveAnswer`.
+  await enqueue({ kind: 'pomodoro.upsert', client_id, payload })
+  rememberPomodoro({ ...payload, client_id })
+  return client_id
+}
+
+/**
+ * Write several pomodoros as one queue entry.
+ *
+ * Not a loop over `savePomodoro`, and not for speed: a `flush` started by the
+ * first call is already in flight when the second is appended, and that drain
+ * read the queue before the new intent was on it. The second write would then
+ * sit until the next wake event — up to half a minute later. Starting the next
+ * pomodoro during a break is exactly that shape, since it ends one and begins
+ * another in the same breath.
+ *
+ * @param {Array<object>} list In the order they should reach the server.
+ * @returns {Promise<Array<string>>} The identities they now have.
+ */
+export async function savePomodoros(list) {
+  const stamped = list.map((pomodoro) => ({
+    ...pomodoro,
+    client_id: pomodoro.client_id ?? crypto.randomUUID(),
+  }))
+  const stored = await enqueueAll(
+    stamped.map(({ client_id, ...payload }) => ({
+      kind: 'pomodoro.upsert',
+      client_id,
+      payload,
+    }))
+  )
+  // Durable before it is visible, as everywhere else: only what actually landed
+  // on the device becomes visible.
+  for (const pomodoro of stamped.slice(0, stored)) rememberPomodoro(pomodoro)
+  return stamped.slice(0, stored).map((pomodoro) => pomodoro.client_id)
+}
+
+/**
+ * Remove a pomodoro here, and tell the server when there is one.
+ *
+ * @param {string} client_id The pomodoro's own identity.
+ */
+export async function removePomodoro(client_id) {
+  await enqueue({ kind: 'pomodoro.delete', client_id })
+  forgetPomodoro(client_id)
+}
+
+/**
+ * Apply a pomodoro locally, so the page reflects it without a refetch.
+ *
+ * @param {object} pomodoro As the device holds it, or as the server returned it.
+ */
+export function rememberPomodoro(pomodoro) {
+  pomodoros.update((all) => [
+    ...all.filter((row) =>
+      pomodoro.client_id ? row.client_id !== pomodoro.client_id : row.id !== pomodoro.id
+    ),
+    pomodoro,
+  ])
+}
+
+/**
+ * Drop a pomodoro from the cache.
+ *
+ * @param {string} client_id The pomodoro's own identity.
+ */
+export function forgetPomodoro(client_id) {
+  pomodoros.update((all) => all.filter((row) => row.client_id !== client_id))
+}
+
+/**
+ * Copy a day's pomodoro time onto a project.
+ *
+ * Deliberately not queued for later, unlike every other write here. It reads
+ * server state to decide what is left to copy, and a queued transfer would be
+ * deciding that against a day that has moved on. Requiring a connection for one
+ * button is the smaller cost.
+ *
+ * @param {string} day Local day, `YYYY-MM-DD`.
+ * @param {number} project_id Where the session should land.
+ * @param {string} [started_at] Override placement, in UTC without a zone.
+ * @returns {Promise<object>} What the server wrote.
+ */
+export async function transferDay(day, project_id, started_at = undefined) {
+  // **Before anything else.** This is the one write that reads server state to
+  // decide what it does, so a pomodoro still sitting in the queue is one the
+  // server will not copy — and pressing the button a second afterwards would
+  // silently leave that hour behind. `settle` is exactly this case: the import
+  // needs it for the same reason.
+  await settle()
+  const written = await unwrap(() =>
+    transferPomodoros({
+      query: { as_of: nowUtc() },
+      body: { day, project_id, ...(started_at ? { started_at } : {}) },
+    })
+  )
+  // Both halves moved: the day's pomodoros are stamped, and the tracker has a
+  // session it did not have. Neither cache can work that out for itself.
+  await Promise.all([
+    ensurePomodoros({ ...pomodoroRange, force: true }),
+    ensureTimeEntries({ ...loadedRange, force: true }),
+  ])
+  forgetSummaries()
+  return written
 }

@@ -11,6 +11,8 @@
   import Record from './routes/time/Record.svelte'
   import Patterns from './routes/time/Patterns.svelte'
   import Projects from './routes/time/Projects.svelte'
+  import Focus from './routes/pomodoro/Focus.svelte'
+  import FocusStats from './routes/pomodoro/Stats.svelte'
   import Settings from './routes/Settings.svelte'
   import Users from './routes/Users.svelte'
   import Login from './routes/Login.svelte'
@@ -20,6 +22,7 @@
   import { forgetDigest, watchForChanges } from './lib/revalidate.js'
   import SyncBadge from './lib/SyncBadge.svelte'
   import { watch } from './lib/sync.js'
+  import { watchTitle } from './lib/pomodoro/title.js'
   import { applyUpdate, updateReady, watchForUpdates } from './lib/updates.js'
 
   const ROUTES = {
@@ -32,6 +35,8 @@
     '/time/record': Record,
     '/time/patterns': Patterns,
     '/time/projects': Projects,
+    '/focus': Focus,
+    '/focus/patterns': FocusStats,
     '/settings': Settings,
     '/people': Users,
     '/login': Login,
@@ -59,10 +64,33 @@
     watch()
     watchForChanges()
     watchForUpdates()
+    // Returned so the countdown stops with the tab rather than outliving it.
+    return watchTitle()
   })
 
-  /** Pages that belong to the account rather than to either half. */
+  /** Pages that belong to the account rather than to any of the three halves. */
   const ACCOUNT_PATHS = ['/', '/settings', '/people']
+
+  /**
+   * What to call where you are, beside the mark.
+   *
+   * Separate from `section`, which decides the accent colours and the nav.
+   * Settings and People are in no section — they take no accent and offer no
+   * section nav — but they are still somewhere, and saying nothing there left
+   * the header looking like the landing page while showing a form. The landing
+   * page is the one place with no answer, because it is the chooser.
+   */
+  const area = $derived(
+    section === 'time'
+      ? 'Time'
+      : section === 'focus'
+        ? 'Focus'
+        : section === 'wellbeing'
+          ? 'Wellbeing'
+          : $route === '/'
+            ? null
+            : 'Settings'
+  )
 
   // The two halves are separate places: inside one, the nav is only about that
   // one, and the logo is the way back to the chooser. That is also what makes
@@ -72,7 +100,13 @@
   // opening Settings from a running timer quietly moved you into the other
   // half; from here the way on is the chooser, whichever half you came from.
   const section = $derived(
-    $route.startsWith('/time') ? 'time' : ACCOUNT_PATHS.includes($route) ? null : 'wellbeing'
+    $route.startsWith('/time')
+      ? 'time'
+      : $route.startsWith('/focus')
+        ? 'focus'
+        : ACCOUNT_PATHS.includes($route)
+          ? null
+          : 'wellbeing'
   )
 
   // Questions is offered to everyone: a catalogue belongs to the account that
@@ -86,14 +120,19 @@
           ['/time/patterns', 'Patterns'],
           ['/time/projects', 'Projects'],
         ]
-      : section === 'wellbeing'
+      : section === 'focus'
         ? [
-            ['/answer', 'Answer'],
-            ['/table', 'Record'],
-            ['/stats', 'Patterns'],
-            ['/questions', 'Questions'],
+            ['/focus', 'Timer'],
+            ['/focus/patterns', 'Patterns'],
           ]
-        : []
+        : section === 'wellbeing'
+          ? [
+              ['/answer', 'Answer'],
+              ['/table', 'Record'],
+              ['/stats', 'Patterns'],
+              ['/questions', 'Questions'],
+            ]
+          : []
   )
 
   const ACCOUNT = $derived([
@@ -117,21 +156,29 @@
   <!-- The whole time half sits inside this class, which rebinds the accent
        colour variables. Every `bg-dusk` below it recolours itself; nothing
        needs a second set of class names. -->
-  <div class="min-h-screen" class:section-time={section === 'time'}>
+  <div
+    class="min-h-screen"
+    class:section-time={section === 'time'}
+    class:section-focus={section === 'focus'}
+  >
     <header class="border-b border-white/8">
       <nav class="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-5 py-4">
-        <a href="/" use:link class="flex items-baseline gap-2">
-          <span class="numeral text-xl">DT</span>
+        <!-- The badge sits *beside* the link, not inside it. Nested, its only
+             way to stay put was to swallow the parent's navigation, which made
+             it a span with a click handler and left one stray event away from
+             sending you to the landing page. Out here it is an ordinary
+             button. -->
+        <span class="flex items-baseline gap-2">
+          <a href="/" use:link class="flex items-baseline gap-2">
+            <span class="numeral text-xl">DT</span>
+          </a>
           <SyncBadge />
-          <!-- The label names the half you are in. On the landing page and in
-               Settings you are in neither, and "Tracker" there was a word that
-               only ever restated the mark beside it. -->
-          {#if section}
-            <span class="meta hidden sm:inline">
-              {section === 'time' ? 'Time' : 'Wellbeing'}
-            </span>
+          <!-- The label names where you are. The landing page is the one place
+               with no answer, because it is the chooser. -->
+          {#if area}
+            <span class="meta hidden sm:inline" data-area>{area}</span>
           {/if}
-        </a>
+        </span>
 
         <div class="hidden items-center gap-1 md:flex">
           {#each MENU as [href, label] (href)}

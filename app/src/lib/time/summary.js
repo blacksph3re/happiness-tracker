@@ -1,4 +1,5 @@
-import { dayOffsets, offsetLabel, slices, startingDay } from './duration.js'
+import { offsetLabel } from '../clock.js'
+import { dayOffsets, slices, startingDay } from './duration.js'
 
 /**
  * The totals `/api/time/summary` returns, worked out here.

@@ -33,6 +33,10 @@ The owner reviews by reading, then by using. Both are served by the same habits:
   request because it did not earn its place. Suggest the cut.
 - **Say what was verified and how.** Assertions without evidence get challenged,
   correctly. Screenshots, measurements and reproductions belong in the report.
+- **Mutate the fix to prove the test.** Not just "watch it fail once": break each
+  load-bearing behaviour in turn and confirm a *named* test fails for it. Five
+  such probes on the pomodoro rules caught nothing, which is the point — the run
+  is what makes the suite evidence rather than decoration.
 - **Format only what you touched.** `ruff format .` also reformats pre-existing
   drift across the repo — five hundred lines of line-joining in old migrations
   and scripts, mixed into a diff that was supposed to be reviewable. Name the
@@ -82,23 +86,58 @@ label it — `67h 35m across tags` — rather than quietly changing it.
 
 ## Where code goes
 
-The app is two trackers sharing a login, and the code says so. Three zones, and
+The app is three trackers sharing a login, and the code says so. Four zones, and
 **imports only ever point inward at the shared one — never across**:
 
-| | Wellbeing | Time | Shared |
-| --- | --- | --- | --- |
-| Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `auth.py`, `users.py`, `admin.py`, `changes.py` |
-| Services | `services/wellbeing.py` | `services/timetrack.py` | `services/__init__.py` re-exports both |
-| Routes | `routes/wellbeing/` | `routes/time/` | `routes/` — Landing, Login, Settings, Users |
-| Lib | `lib/wellbeing/` | `lib/time/` | `lib/store.js`, `api.js`, `router.js`, `facets.js`, `series.js`, `resource.svelte.js` |
+| | Wellbeing | Time | Focus | Shared |
+| --- | --- | --- | --- | --- |
+| Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `pomodoro.py` | `auth.py`, `users.py`, `admin.py`, `changes.py`, `sync.py` |
+| Services | `services/wellbeing.py` | `services/timetrack.py` | `services/pomodoro.py` | `services/clock.py`; `services/__init__.py` re-exports all |
+| Routes | `routes/wellbeing/` | `routes/time/` | `routes/pomodoro/` | `routes/` — Landing, Login, Settings, Users |
+| Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `period.js`, `Swimlanes.svelte`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js` |
+
+Focus is the newest and shows the rule working: it needs `saveEntry` and
+`projects`, both already exported from the shared `store.js`, so importing
+*those* points inward rather than across and the time zone is never touched.
+`local_day` moved to `services/clock.py` the moment a pomodoro also had to
+decide which local day a UTC instant lands in.
+
+The frontend has made the same move twice, and both were overdue rather than
+new. **`lib/clock.js`** holds the generic half of what was `lib/time/duration.js`
+— formatting a duration, reading a wall clock out of an instant and an offset,
+`fromLocal`, `nowUtc`. `store.js`, the landing page and every pomodoro view were
+reaching *across* for those, which is the tell. What stayed in
+`lib/time/duration.js` is genuinely about sessions: `elapsed`, `startingDay`,
+`dayOffsets`, `slices`. **`lib/Swimlanes.svelte`** is the other: one lane per
+project, one lane per day and the focus strip are all the same component now.
+What they share is not the drawing — that part is easy — but the axis thinning
+and the pointer label, which is a pin/dismiss machine with three global
+listeners and a phone caveat behind each one. **`lib/period.js`** followed for
+the same reason: named windows are calendar work, not session work.
+
+Because the component takes an axis rather than owning one, a caller can hand
+it a *relative* window. The focus strip does: two hours per lane, each labelled
+by the clock time it opened. A whole working day on one axis made a 25-minute
+block a few pixels wide, which is a picture of nothing.
+
+Two rules there are worth keeping straight, because they are easy to conflate.
+A pomodoro joins a lane on its **start** — inside the two hours, it belongs to
+that lane however far past the mark it runs. The **axis** then stretches to the
+furthest any lane reaches, for every lane at once, so the rows stay comparable
+and nothing is drawn clipped. Breaking on a count instead produces the same
+number of lanes in the obvious test case and a different composition, which is
+why the test asserts which pomodoro sits in which lane rather than how many
+lanes there are.
 
 If both halves need something, move it to the shared zone — the move is the
 signal it was shared all along. `movingAverage` and the "only days where" facets
 both arrived that way. `models.py` stays one file because SQLAlchemy wants one
 registry, but keeps the groups visibly sectioned.
 
-The two halves also do not link to each other in the UI. The landing page is the
-only bridge, which is what keeps "Record" and "Patterns" unambiguous inside each.
+The three halves also do not link to each other in the UI. The landing page is
+the only bridge, which is what keeps "Record" and "Patterns" unambiguous inside
+each — and it is the rule that gets tested first by anything new. Focus writes a
+session into Time and still may not link there.
 
 ## Styling
 
@@ -135,6 +174,12 @@ Three more v4 behaviours worth knowing, each of which cost a debugging session:
 - **v4 leaves buttons on the browser's default cursor.** `app.css` restores
   `cursor: pointer` for enabled buttons app-wide.
 
+**Equal padding does not make equal buttons.** Four controls in a question card
+all carried `py-2` and came out three different heights, because their contents
+did not: an arrow glyph, a 20px icon and `.meta` text have different line boxes.
+The row is `items-stretch`, which is what makes the padding decide. `e2e/mobile.spec.js`
+asserts the heights are one value, at phone width, by measurement.
+
 Hover has one answer per kind of control, listed at the top of `app.css`: outlined
 → `border-white/40`, destructive → `border-ember`, filled → `bg-dusk-lift`, card →
 `border-white/30` with `bg-dusk/10`, tinted band → `brightness-125`. Do not reach for
@@ -170,6 +215,96 @@ asserts the same thing from outside — no endpoint refetched, page still
 answering.
 
 Do not write `$effect(() => load(...))` where `load` assigns component state.
+
+## Two writes in one gesture go in one queue entry
+
+`enqueue` starts a `flush`, and a `flush` already in flight **read the queue
+before your second intent was on it** — `settle()`'s docstring has said so for a
+while, but the consequence is easy to miss from the calling side. A second
+`enqueue` in the same breath therefore sits in the outbox until the next wake
+event, up to `PROBE_EVERY` later.
+
+Anything that means *one* user action uses `enqueueAll` — `saveEntries`,
+`savePomodoros`. Starting a pomodoro during a break is exactly this shape: it
+ends one and begins another, and queued separately the second silently did not
+reach the server. It passed alone and failed under a full parallel run, which is
+the only reason it was found.
+
+## A write that reads server state drains the queue first
+
+`settle()` exists for the caller that has to know the server *has* something,
+and there are two: an import reporting how many sessions it wrote, and the
+pomodoro transfer. The transfer asks the server which pomodoros are still
+uncopied, so one sitting in the outbox is one it will not copy — the button
+would quietly leave that hour behind while reporting success on the rest.
+
+It costs nothing when the queue is empty, so `await settle()` in front of such a
+write is insurance rather than a trade.
+
+## Sound is measurable, so measure it
+
+Three defects shipped here in a row, each found by arithmetic rather than by
+listening, and none of them visible in the code:
+
+- **A clamped random walk is a square wave.** Brown noise is a *leaky* integral,
+  `(last + 0.02 * white) / 1.02`. Drop the divisor and it wanders past ±1, and
+  the clamp railed **99.4%** of samples.
+- **An equal-gain crossfade loses 3dB in the middle.** Two uncorrelated signals
+  faded across each other with weights `t` and `1-t` have combined power
+  `t² + (1-t)²`, which halves at the midpoint. Once per loop that is an audible
+  breath — measured at a steady −2.9dB for white, and reported as "pulsating".
+  The loop is closed by subtracting the straight line between its two ends
+  instead, which costs no level at all. White needs no treatment: consecutive
+  samples are already unrelated.
+- **Peak normalisation hands the level to one outlier**, and leaves two kinds of
+  noise at unrelated loudness. RMS is what a listener hears.
+
+`sounds.test.js` measures railing, the seam against the buffer's own steps, and
+window RMS where the fade used to be. Each fails when its defect is put back.
+
+## An audio context must be created inside a gesture
+
+The chime at the end of a focus block did not play, and the phase logic was only
+half of why. A browser refuses to start an `AudioContext` outside a user
+gesture, and a quiet pomodoro's *first* sound is its chime — twenty-five minutes
+after the only tap there was. Created then, the context arrives suspended and
+stays that way, silently. `unlockAudio()` runs on Start and plays a one-frame
+silent buffer, which is what actually moves iOS out of `suspended`.
+
+The other half: `running` goes undefined the moment a pomodoro finishes, so a
+phase read off it can never observe the end. `done` has to be a phase like any
+other, or the last boundary is the one that never rings.
+
+## Two numbers on one screen must come from one place
+
+The transfer button read its figure back from the server while the totals above
+it were computed on the device. The two answered slightly different questions —
+one excluded pomodoros already copied — and so showed different durations a few
+lines apart. Even once the rules agreed, the server round trip left the button a
+beat behind the totals.
+
+The fix was not to reconcile them but to delete one: the button is handed the
+same value the totals display. `GET /api/pomodoros/transfer` existed only to
+answer "what is left to copy", a question that no longer exists, so it went too.
+
+Where a number genuinely cannot be the same — the transfer excludes a running
+pomodoro, because a session needs an end — **say so on the screen**. That is the
+house rule about `67h 35m across tags`: label it rather than quietly changing it.
+
+## A shared one-second tick is not a stopwatch
+
+`lib/time/tick.js` fires on an interval that began whenever something first
+subscribed, which has nothing to do with when a timer started. Press Start 900ms
+into that interval and the countdown sits on its opening value for nearly two
+seconds — reported as "the first second feels longer than a second", and it was.
+A countdown schedules its own timeout against its own `started_at`.
+
+Doing that safely means the effect writing the aligned clock must not depend on
+anything derived from it. It first did — the clock decided which pomodoro was
+running, which decided what the effect watched — which is the feedback loop
+`resource()` exists to prevent. The partition reads the shared tick; only the
+countdown reads the aligned one.
+
 
 ## Everything belongs to somebody
 
@@ -210,7 +345,16 @@ result. `/api/time/summary` does the split and the grouping so the screen and
 the exported CSV cannot drift. The client mirrors `slices()` only to *draw* a session
 across two days without a round trip per day — never to report a number.
 
-`answers` and `time_entries` hold what happened. Anything else is a view.
+`answers`, `time_entries` and `pomodoros` hold what happened. Anything else is a
+view.
+
+A pomodoro is the sharpest case: its state is `ended_at ?? started_at + focus +
+break` compared against the two phase lengths, so **the three outcomes are
+derived and there is no `outcome` column**. That is not tidiness — it is what
+makes "completes at its planned end" free of any scheduler, and what makes
+retrospective editing need no special handling, since correcting a time re-reads
+the state. Only the phase *lengths* are stored, and deliberately: changing the
+mode from 25/5 to 50/10 is not a claim about yesterday.
 
 ## Days, instants and offsets
 
@@ -360,6 +504,16 @@ beside the server's own, when a cached worker is a release behind.
 - **The e2e clock is set, not frozen.** Freezing stops anything animating from a
   time delta, and a canvas chart then draws its axes and no data at all. Use
   `page.clock.setSystemTime` and `fastForward`.
+- **A poll cannot prove a negative.** `expect.poll` succeeds the moment *any*
+  sample satisfies it, so polling for "this page does not scroll sideways"
+  passes on the first frame — before the thing that overflows has rendered. It
+  passed against the very toolbar it was written for. Sample repeatedly and
+  assert on the **worst** value seen, and prove the test by reverting the fix.
+- **Check the harness before believing "vacuous".** A batch probe of three
+  fixes reported all three untested; the probe was grepping `tail -3`, which by
+  then held Playwright's trace hint rather than the summary line. Two of the
+  three were fine. A tool that reports everything as broken is usually the
+  broken thing.
 - **Screenshot the element, not the page,** when judging a detail. A full-page
   capture scaled to fit is too coarse to tell which button is highlighted — twice
   I reported a bug that was not there. Crop, or read `aria-pressed`.
@@ -393,6 +547,14 @@ Do not re-open these without being asked to; each was decided deliberately.
 | Deduction rules | On a tag, not on the account — a day of reading owes nobody a lunch break. A tag with a rule shows **reported time only** — except the Patterns group table, which keeps tracked beside reported |
 | Parallel timers | Several projects at once, yes. The same project twice over the same minutes, no |
 | Long sessions | Never auto-closed, no warning. A multi-day session is a hand-editing job |
+| Pomodoros | **Complete at their planned end**, because unlike a session that end was an *input*. `ended_at` is written only by an explicit stop — abandoning, or the next pomodoro cutting a break short — so nothing has to run for one to finish and there is no stored outcome an edit could contradict |
+| Breaks | Count as worked time. There is **no button to abort one**: the only way out of a break is starting the next pomodoro, and the part that was used still counts |
+| Taint | A label, never a deduction. Time spent is time spent |
+| Pomodoro → Time | **A copy, made on request, never a link.** One button writes one session of the day's summed focus and break time, placed at the first pomodoro; `transferred_at` stops the same hour going twice. Correcting a pomodoro afterwards cannot reach the session, which is exactly why there is no synchronisation to keep. An earlier design linked them and generated merge windows, a `source` column and four edit-propagation rules before it was thrown away |
+| A copied pomodoro | Still fully editable and deletable. Guards that froze one "so the two cannot disagree" were **removed on request** — the two are allowed to disagree, because a copy never promised otherwise, and the alternative was a row nobody could correct. Deleting one leaves its session behind; that is a job for the Time view |
+| Copying twice | Allowed to be attempted. The offer is the **whole day**, always, so it matches the total on the same screen; the second copy is then refused by the ordinary overlap rule on the project, and deleting the first session in the Time view is the way through. Filtering the offer by what had already been copied is what made two numbers on one screen disagree |
+| A running pomodoro | Is in the day's list and climbs the totals from the moment it starts. It carries no edit or delete control — an end time still moving is not something to correct — and it is **excluded from the transfer**, which needs a duration that is final. The card says so rather than quietly offering less |
+| Focus sounds | Synthesised, not shipped. **"None" stays a valid choice**, which is why audio cannot be relied on to keep a backgrounded tab alive — and so why a pomodoro finishing while the app is closed is reported late. See `PUSH_NOTIFICATIONS_PROPOSAL.md` |
 | Navigation | The landing page is the only bridge between the halves; neither links to the other |
 | Beartype | Test-time only. The image is built `--no-dev` and a running server never imports it |
 | Ruff | Backend only, via pre-commit. Lint rules, plus the numpy docstrings below |

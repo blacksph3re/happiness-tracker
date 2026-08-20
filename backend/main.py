@@ -17,6 +17,7 @@ from routers import (
     auth,
     catalogues,
     changes,
+    pomodoro,
     projects,
     stats,
     sync,
@@ -124,6 +125,7 @@ app.include_router(answers.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(time.router, prefix="/api")
+app.include_router(pomodoro.router, prefix="/api")
 app.include_router(sync.router, prefix="/api")
 app.include_router(changes.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")

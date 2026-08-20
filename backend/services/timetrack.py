@@ -7,11 +7,7 @@ or knows about HTTP.
 
 from datetime import date, datetime, time, timedelta
 
-MAX_UTC_OFFSET = 14 * 60
-"""Largest real UTC offset in minutes. Kiribati is +14; nowhere is further."""
-
-MIN_UTC_OFFSET = -12 * 60
-"""Smallest real UTC offset in minutes."""
+from services.clock import MAX_UTC_OFFSET, MIN_UTC_OFFSET, local_day
 
 
 class TimeRuleError(ValueError):
@@ -111,7 +107,7 @@ def starting_day(entry) -> date:
     datetime.date
         The local day the session began in.
     """
-    return (entry.started_at + timedelta(minutes=entry.utc_offset)).date()
+    return local_day(entry.started_at, entry.utc_offset)
 
 
 def day_offsets(entries: list) -> dict[date, int]:

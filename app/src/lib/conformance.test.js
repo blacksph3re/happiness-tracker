@@ -9,6 +9,7 @@ import {
   reportedFor,
   summarise,
 } from './time/summary.js'
+import { elapsedSeconds, pomodoroState, splitSeconds } from './pomodoro/derive.js'
 import { scoreForDay, systemValues } from './wellbeing/derive.js'
 
 /**
@@ -85,6 +86,20 @@ describe('a day carries its own auto-tracked values', () => {
   for (const one of corpus.days) {
     test(one.name, () => {
       expect(systemValues(one.day, one.local_hour)).toEqual(one.values)
+    })
+  }
+})
+
+describe('a pomodoro reads the same on both sides', () => {
+  for (const one of corpus.pomodoros) {
+    test(one.name, () => {
+      const now = asOf(one.as_of)
+      expect(pomodoroState(one.pomodoro, now)).toBe(one.state)
+      expect(elapsedSeconds(one.pomodoro)).toBe(one.elapsed)
+      expect(splitSeconds(one.pomodoro)).toEqual({
+        focus: one.focus_elapsed,
+        rest: one.break_elapsed,
+      })
     })
   }
 })

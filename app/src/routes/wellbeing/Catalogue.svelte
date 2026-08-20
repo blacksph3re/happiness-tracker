@@ -431,7 +431,7 @@
             {catalogue.name}
           </button>
         {/each}
-        <span class="ml-auto flex items-center gap-2">
+        <span class="ml-auto flex flex-wrap items-center gap-2">
           {#if selectedId}
             <button
               disabled={offline}
@@ -448,7 +448,8 @@
             placeholder="New catalogue"
             disabled={offline}
             title={hint}
-            class="rounded-md border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+            class="min-w-32 flex-1 rounded-md border border-white/15 bg-ink-soft px-3
+                   py-2 text-sm sm:flex-none"
           />
           <select
             bind:value={newTemplate}
@@ -487,8 +488,8 @@
             <p class="font-medium">{question.prompt}</p>
             <p class="meta mt-1 normal-case">{describe(question)}</p>
           </div>
-          <div class="flex shrink-0 items-center gap-2">
-            <span class="flex items-center gap-1">
+          <div class="flex shrink-0 items-stretch gap-2">
+            <span class="flex items-stretch gap-1">
               <button
                 class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
                        disabled:cursor-not-allowed disabled:opacity-30"

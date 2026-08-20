@@ -1,5 +1,6 @@
 <script>
   import { clearTokens } from './api.js'
+  import { revalidate } from './revalidate.js'
   import { navigate } from './router.js'
   import {
     conflicts,
@@ -89,24 +90,36 @@
   )
 </script>
 
-<!-- Inside the link to the landing page, so it cannot be a button. A span with
-     a click handler would be the a11y problem the app avoids elsewhere; this
-     opens on the parent's own navigation being suppressed instead. -->
+<!-- The wrapper carries the live region, so a change of state is announced
+     whether or not the button has focus; the button carries the press. It used
+     to be one span with a click handler on it, because it lived inside the link
+     to the landing page and had to suppress that link's navigation. It does not
+     live there any more.
+
+     The `pointerdown` guard stays, and is not about the link: the panel closes
+     on any pointerdown outside itself, and the badge is outside itself. Without
+     it, pressing the badge to close the panel closes it and then reopens it. -->
 <span
   class="relative inline-flex items-center {look.tone}"
   data-sync={$syncState}
   data-pending={$pending}
   role="status"
   aria-live="polite"
+>
+<button
+  type="button"
+  class="inline-flex items-center"
   aria-label={spoken}
   title={spoken}
   onpointerdown={(event) => event.stopPropagation()}
-  onclick={(event) => {
-    event.preventDefault()
-    event.stopPropagation()
+  onclick={() => {
     open = !open
     if (!open) return
     flush()
+    // Pressing the cloud is the closest thing this app has to a refresh button,
+    // and it should mean it: `force` skips the ten-second floor the background
+    // checks keep, because a person who just tapped it is not a timer.
+    revalidate({ force: true })
   }}
 >
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -128,6 +141,7 @@
   {#if $syncState === 'conflicts'}
     <span class="numeral ml-1 text-xs tabular-nums">{$conflicts.length}</span>
   {/if}
+</button>
 </span>
 
 {#if open}

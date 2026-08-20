@@ -61,6 +61,232 @@
       }
     }
   ],
+  "pomodoros": [
+    {
+      "as_of": "2026-06-15T09:10:00",
+      "break_elapsed": 300,
+      "elapsed": 1800,
+      "focus_elapsed": 1500,
+      "name": "ran to the end, mid-flight",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": null,
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "running"
+    },
+    {
+      "as_of": "2026-06-15T19:00:00",
+      "break_elapsed": 300,
+      "elapsed": 1800,
+      "focus_elapsed": 1500,
+      "name": "ran to the end, afterwards",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": null,
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "complete"
+    },
+    {
+      "as_of": "2026-06-15T09:10:00",
+      "break_elapsed": 0,
+      "elapsed": 180,
+      "focus_elapsed": 180,
+      "name": "abandoned early in the focus, mid-flight",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T09:03:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "abandoned"
+    },
+    {
+      "as_of": "2026-06-15T19:00:00",
+      "break_elapsed": 0,
+      "elapsed": 180,
+      "focus_elapsed": 180,
+      "name": "abandoned early in the focus, afterwards",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T09:03:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "abandoned"
+    },
+    {
+      "as_of": "2026-06-15T09:10:00",
+      "break_elapsed": 0,
+      "elapsed": 1440,
+      "focus_elapsed": 1440,
+      "name": "abandoned one second before the break, mid-flight",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T09:24:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "abandoned"
+    },
+    {
+      "as_of": "2026-06-15T19:00:00",
+      "break_elapsed": 0,
+      "elapsed": 1440,
+      "focus_elapsed": 1440,
+      "name": "abandoned one second before the break, afterwards",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T09:24:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "abandoned"
+    },
+    {
+      "as_of": "2026-06-15T09:10:00",
+      "break_elapsed": 120,
+      "elapsed": 1620,
+      "focus_elapsed": 1500,
+      "name": "break cut short by the next one, mid-flight",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T09:27:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "complete"
+    },
+    {
+      "as_of": "2026-06-15T19:00:00",
+      "break_elapsed": 120,
+      "elapsed": 1620,
+      "focus_elapsed": 1500,
+      "name": "break cut short by the next one, afterwards",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T09:27:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "complete"
+    },
+    {
+      "as_of": "2026-06-15T09:10:00",
+      "break_elapsed": 0,
+      "elapsed": 1500,
+      "focus_elapsed": 1500,
+      "name": "stopped exactly on the focus boundary, mid-flight",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T09:25:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "complete"
+    },
+    {
+      "as_of": "2026-06-15T19:00:00",
+      "break_elapsed": 0,
+      "elapsed": 1500,
+      "focus_elapsed": 1500,
+      "name": "stopped exactly on the focus boundary, afterwards",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T09:25:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "complete"
+    },
+    {
+      "as_of": "2026-06-15T09:10:00",
+      "break_elapsed": 300,
+      "elapsed": 1800,
+      "focus_elapsed": 1500,
+      "name": "end edited past the planned end, mid-flight",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T14:00:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "complete"
+    },
+    {
+      "as_of": "2026-06-15T19:00:00",
+      "break_elapsed": 300,
+      "elapsed": 1800,
+      "focus_elapsed": 1500,
+      "name": "end edited past the planned end, afterwards",
+      "pomodoro": {
+        "break_seconds": 300,
+        "ended_at": "2026-06-15T14:00:00",
+        "focus_seconds": 1500,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "complete"
+    },
+    {
+      "as_of": "2026-06-15T09:10:00",
+      "break_elapsed": 0,
+      "elapsed": 3000,
+      "focus_elapsed": 3000,
+      "name": "no break at all, mid-flight",
+      "pomodoro": {
+        "break_seconds": 0,
+        "ended_at": null,
+        "focus_seconds": 3000,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "running"
+    },
+    {
+      "as_of": "2026-06-15T19:00:00",
+      "break_elapsed": 0,
+      "elapsed": 3000,
+      "focus_elapsed": 3000,
+      "name": "no break at all, afterwards",
+      "pomodoro": {
+        "break_seconds": 0,
+        "ended_at": null,
+        "focus_seconds": 3000,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "complete"
+    },
+    {
+      "as_of": "2026-06-15T09:10:00",
+      "break_elapsed": 0,
+      "elapsed": 600,
+      "focus_elapsed": 600,
+      "name": "no break, abandoned, mid-flight",
+      "pomodoro": {
+        "break_seconds": 0,
+        "ended_at": "2026-06-15T09:10:00",
+        "focus_seconds": 3000,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "abandoned"
+    },
+    {
+      "as_of": "2026-06-15T19:00:00",
+      "break_elapsed": 0,
+      "elapsed": 600,
+      "focus_elapsed": 600,
+      "name": "no break, abandoned, afterwards",
+      "pomodoro": {
+        "break_seconds": 0,
+        "ended_at": "2026-06-15T09:10:00",
+        "focus_seconds": 3000,
+        "started_at": "2026-06-15T09:00:00"
+      },
+      "state": "abandoned"
+    }
+  ],
   "rules": [
     {
       "add_minutes": null,

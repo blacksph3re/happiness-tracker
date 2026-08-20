@@ -23,7 +23,7 @@
   import { connection } from '../../lib/sync.js'
   import { previewPoints } from '../../lib/time/deductions.js'
   import { addedFor, deductionFor } from '../../lib/time/summary.js'
-  import { formatDuration } from '../../lib/time/duration.js'
+  import { formatDuration } from '../../lib/clock.js'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'

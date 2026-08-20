@@ -167,3 +167,29 @@ export function overlayEntries(rows, queue) {
   }
   return out
 }
+
+/**
+ * Lay the queue over the pomodoros the server last gave.
+ *
+ * The same shape as `overlayEntries`, and separate for the same reason the two
+ * caches are: a device holds both, and a pomodoro folded into the session list
+ * would be a bug that only appeared offline.
+ *
+ * @param {Array<object>} rows What the server returned.
+ * @param {Array<object>} queue Intents waiting to be sent.
+ * @returns {Array<object>} What the device should show.
+ */
+export function overlayPomodoros(rows, queue) {
+  let out = rows
+  for (const intent of queue) {
+    if (intent.kind === 'pomodoro.delete') {
+      out = out.filter((row) => row.client_id !== intent.client_id)
+    } else if (intent.kind === 'pomodoro.upsert') {
+      out = [
+        ...out.filter((row) => row.client_id !== intent.client_id),
+        { ...intent.payload, client_id: intent.client_id },
+      ]
+    }
+  }
+  return out
+}

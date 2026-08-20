@@ -119,8 +119,11 @@ class Changes(BaseModel):
     rules: Fingerprint
     """Deduction bands, which change what reported time means."""
 
+    pomodoros: Fingerprint
+    """Every pomodoro of the signed-in account."""
+
     catalogues: Fingerprint
-    """Question catalogues, which are shared rather than per account."""
+    """Question catalogues, which belong to the account like everything else."""
 
     me: Fingerprint
     """The account row itself, whose default catalogue decides what is asked."""
@@ -858,6 +861,12 @@ class TimeEntryOut(BaseModel):
     note: str | None
     """Optional free text."""
 
+    source: str | None
+    """Where the session came from, when it was not tracked directly.
+
+    `pomodoro` for one written by the focus half's transfer, null otherwise.
+    """
+
 
 class CheckIn(BaseModel):
     """Payload for starting a timer."""
@@ -1021,7 +1030,13 @@ class SyncIntent(BaseModel):
     seq: int
     """The device's own ordering. Echoed back so it can retire the right entry."""
 
-    kind: Literal["answer.put", "entry.upsert", "entry.delete"]
+    kind: Literal[
+        "answer.put",
+        "entry.upsert",
+        "entry.delete",
+        "pomodoro.upsert",
+        "pomodoro.delete",
+    ]
     """What the intent does.
 
     `entry.upsert` covers creating and correcting alike, deliberately: a
@@ -1033,7 +1048,11 @@ class SyncIntent(BaseModel):
     """The device's clock at the moment of the tap. What decides who wins."""
 
     client_id: str | None = Field(default=None, max_length=36)
-    """The device's identity for a session. Required for the entry kinds."""
+    """The device's identity for a session or pomodoro.
+
+    Required for every kind but `answer.put`, which is keyed by question and day
+    instead.
+    """
 
     payload: dict = Field(default_factory=dict)
     """The write itself, in the shape the matching endpoint takes."""
@@ -1091,6 +1110,14 @@ class SyncResult(BaseModel):
     entry: TimeEntryOut | None = None
     """The session as it now stands, for the device to fold back in."""
 
+    pomodoro: PomodoroOut | None = None
+    """The pomodoro as it now stands, for the device to fold back in.
+
+    A separate field rather than a shared one: the two carry different columns,
+    and a client folding a response into the wrong cache is a bug that would
+    only show up offline.
+    """
+
 
 class SyncResponse(BaseModel):
     """The outcome of a whole queue."""
@@ -1100,3 +1127,178 @@ class SyncResponse(BaseModel):
 
     server_time: datetime
     """The server's clock, so a device can notice its own is wrong."""
+
+
+class PomodoroOut(BaseModel):
+    """One pomodoro as exposed by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    """Surrogate primary key."""
+
+    task: str | None
+    """What the focus was for, or null if nothing was typed."""
+
+    started_at: datetime
+    """When the focus began, in UTC."""
+
+    ended_at: datetime | None
+    """When something stopped it early, or null if nothing did.
+
+    Null is not "still running": a pomodoro left alone ends where it said it
+    would. `state` is the field to read for that.
+    """
+
+    utc_offset: int
+    """Minutes east of UTC when it started."""
+
+    focus_seconds: int
+    """Length of the focus phase as configured at the time."""
+
+    break_seconds: int
+    """Length of the break phase as configured at the time."""
+
+    tainted: bool
+    """Whether the focus was marked unsuccessful."""
+
+    transferred_at: datetime | None
+    """When this pomodoro's time was copied to a project, or null if never."""
+
+    client_id: str | None
+    """The identity the recording device gave it. See `TimeEntryOut`."""
+
+    state: str
+    """`running`, `abandoned` or `complete`, computed on read.
+
+    Sent rather than left to the client because the server is the authority on
+    it, and because the client would otherwise need the same three-way
+    comparison to draw a list it did not create.
+    """
+
+    elapsed_seconds: int
+    """How long it lasted in total, capped at its planned end."""
+
+    focus_elapsed_seconds: int
+    """How much of that was focus."""
+
+    break_elapsed_seconds: int
+    """How much of that was break. Zero for an abandoned pomodoro."""
+
+
+class PomodoroStart(BaseModel):
+    """Payload for starting a pomodoro."""
+
+    at: datetime
+    """The instant the focus began, in UTC, as the client reports it."""
+
+    utc_offset: int = Field(ge=-720, le=840)
+    """Minutes east of UTC where the client is."""
+
+    focus_seconds: int = Field(gt=0, le=86_400)
+    """Length of the focus phase, from the account's current mode."""
+
+    break_seconds: int = Field(ge=0, le=86_400)
+    """Length of the break phase, from the account's current mode."""
+
+    task: str | None = Field(default=None, max_length=500)
+    """Optional description. An empty one is valid."""
+
+    client_id: str | None = Field(default=None, max_length=36)
+    """The identity the device has already given it, if it minted one."""
+
+
+class PomodoroStop(BaseModel):
+    """Payload for ending a pomodoro before its planned end."""
+
+    at: datetime
+    """The instant it was stopped, in UTC, as the client reports it."""
+
+
+class PomodoroUpdate(BaseModel):
+    """Payload for correcting a pomodoro. Omitted fields are left alone."""
+
+    task: str | None = Field(default=None, max_length=500)
+    """Replacement description.
+
+    The commonest correction there is: starting on one thing and discovering a
+    minute in that it is really another.
+    """
+
+    started_at: datetime | None = None
+    """Corrected start, in UTC."""
+
+    ended_at: datetime | None = None
+    """Corrected end, in UTC."""
+
+    tainted: bool | None = None
+    """Whether to mark the focus unsuccessful."""
+
+
+class PomodoroDay(BaseModel):
+    """A day of pomodoros with the totals the Focus page shows."""
+
+    day: date
+    """The local day, read with each pomodoro's own offset."""
+
+    pomodoros: list[PomodoroOut]
+    """Every pomodoro that began on that day, earliest first."""
+
+    focus_seconds: int
+    """Total focus time on the day."""
+
+    break_seconds: int
+    """Total break time on the day."""
+
+    tainted_seconds: int
+    """How much of the total came from pomodoros marked tainted."""
+
+
+class TransferRequest(BaseModel):
+    """Payload for copying a day's pomodoro time onto a project."""
+
+    day: date
+    """The local day to copy."""
+
+    project_id: int
+    """Where the session should land."""
+
+    started_at: datetime | None = None
+    """Override for where the session begins, in UTC.
+
+    Offered because the natural placement can collide: a project tracked by
+    hand this morning *and* worked on in pomodoros leaves no room for a block
+    starting at the first one. Null takes the earliest untransferred pomodoro.
+    """
+
+
+class SyncPomodoroPayload(BaseModel):
+    """A pomodoro as a device queues it.
+
+    `ended_at` may be null, and usually is: it is written only by an explicit
+    stop, so a pomodoro that ran as declared queues with nothing there.
+    """
+
+    task: str | None = Field(default=None, max_length=500)
+    """Optional description."""
+
+    started_at: datetime
+    """When the focus began, in UTC."""
+
+    ended_at: datetime | None = None
+    """When something stopped it early, in UTC, or null if nothing did."""
+
+    utc_offset: int = Field(ge=-720, le=840)
+    """Minutes east of UTC where the client was."""
+
+    focus_seconds: int = Field(gt=0, le=86_400)
+    """Length of the focus phase as configured at the time."""
+
+    break_seconds: int = Field(ge=0, le=86_400)
+    """Length of the break phase as configured at the time."""
+
+    tainted: bool = False
+    """Whether the focus was marked unsuccessful."""
+
+
+SyncResult.model_rebuild()

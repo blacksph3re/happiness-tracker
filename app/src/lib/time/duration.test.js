@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
-import { formatDuration, slices } from './duration.js'
+import { formatDuration } from '../clock.js'
+import { slices } from './duration.js'
 
 /**
  * A first case for the runner itself, on the one derivation already shared

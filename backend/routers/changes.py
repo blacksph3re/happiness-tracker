@@ -8,6 +8,7 @@ from models import (
     Answer,
     Catalogue,
     DeductionBand,
+    Pomodoro,
     Project,
     Tag,
     TimeEntry,
@@ -63,7 +64,7 @@ def _fingerprint(db: Session, entity: type, where: ColumnElement[bool]) -> Finge
 def get_changes(user: CurrentUser, db: DbSession) -> Changes:
     """Report a fingerprint per collection for the authenticated user.
 
-    Cheap by design — seven aggregates over indexed foreign keys — because the
+    Cheap by design — eight aggregates over indexed foreign keys — because the
     common answer is that nothing has moved, and that case has to cost less than
     the re-read it saves.
 
@@ -92,9 +93,8 @@ def get_changes(user: CurrentUser, db: DbSession) -> Changes:
             DeductionBand,
             DeductionBand.tag_id.in_(select(Tag.id).where(Tag.user_id == user.id)),
         ),
-        # Catalogues carry no owner: they are shared, and an editor changing one
-        # changes it for everybody. So this fingerprint is global on purpose.
-        catalogues=_fingerprint(db, Catalogue, Catalogue.id.is_not(None)),
+        pomodoros=_fingerprint(db, Pomodoro, Pomodoro.user_id == user.id),
+        catalogues=_fingerprint(db, Catalogue, Catalogue.user_id == user.id),
         # Always exactly one row, so the count says nothing at all and the
         # timestamp carries the whole signal — which is what lets a default
         # catalogue changed on another device reach this one.

@@ -105,6 +105,7 @@ def test_every_collection_is_reported(client, admin_headers):
         "projects",
         "tags",
         "rules",
+        "pomodoros",
         "catalogues",
         "me",
     }
@@ -264,3 +265,18 @@ def test_one_account_never_sees_another_moving(
 
 def test_the_digest_needs_a_token(client):
     assert client.get("/api/changes").status_code == 401
+
+
+def test_another_accounts_catalogue_does_not_show_in_the_digest(client, admin_headers):
+    # Catalogues were global when this fingerprint was written, so it counted
+    # every row in the table. They have owners now, and a digest that moves
+    # because somebody else edited their own questions both leaks that they did
+    # and makes this account re-read for nothing.
+    _, other = make_user(client, admin_headers, "mallory")
+    before = client.get("/api/changes", headers=admin_headers).json()["catalogues"]
+
+    created = client.post("/api/catalogues", headers=other, json={"name": "Theirs"})
+    assert created.status_code == 201, created.text
+
+    after = client.get("/api/changes", headers=admin_headers).json()["catalogues"]
+    assert after == before

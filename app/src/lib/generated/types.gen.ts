@@ -116,6 +116,7 @@ export type Changes = {
     projects: Fingerprint;
     tags: Fingerprint;
     rules: Fingerprint;
+    pomodoros: Fingerprint;
     catalogues: Fingerprint;
     me: Fingerprint;
 };
@@ -379,6 +380,70 @@ export type PasswordReset = {
      * New Password
      */
     new_password: string;
+};
+
+/**
+ * PomodoroOut
+ *
+ * One pomodoro as exposed by the API.
+ */
+export type PomodoroOut = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Task
+     */
+    task: string | null;
+    /**
+     * Started At
+     */
+    started_at: string;
+    /**
+     * Ended At
+     */
+    ended_at: string | null;
+    /**
+     * Utc Offset
+     */
+    utc_offset: number;
+    /**
+     * Focus Seconds
+     */
+    focus_seconds: number;
+    /**
+     * Break Seconds
+     */
+    break_seconds: number;
+    /**
+     * Tainted
+     */
+    tainted: boolean;
+    /**
+     * Transferred At
+     */
+    transferred_at: string | null;
+    /**
+     * Client Id
+     */
+    client_id: string | null;
+    /**
+     * State
+     */
+    state: string;
+    /**
+     * Elapsed Seconds
+     */
+    elapsed_seconds: number;
+    /**
+     * Focus Elapsed Seconds
+     */
+    focus_elapsed_seconds: number;
+    /**
+     * Break Elapsed Seconds
+     */
+    break_elapsed_seconds: number;
 };
 
 /**
@@ -804,7 +869,7 @@ export type SyncIntent = {
     /**
      * Kind
      */
-    kind: 'answer.put' | 'entry.upsert' | 'entry.delete';
+    kind: 'answer.put' | 'entry.upsert' | 'entry.delete' | 'pomodoro.upsert' | 'pomodoro.delete';
     /**
      * Client Updated At
      */
@@ -868,6 +933,7 @@ export type SyncResult = {
      */
     detail?: string | null;
     entry?: TimeEntryOut | null;
+    pomodoro?: PomodoroOut | null;
 };
 
 /**
@@ -1025,6 +1091,10 @@ export type TimeEntryOut = {
      * Note
      */
     note: string | null;
+    /**
+     * Source
+     */
+    source: string | null;
 };
 
 /**
@@ -1109,6 +1179,26 @@ export type TrackedRange = {
      * Last
      */
     last: string | null;
+};
+
+/**
+ * TransferRequest
+ *
+ * Payload for copying a day's pomodoro time onto a project.
+ */
+export type TransferRequest = {
+    /**
+     * Day
+     */
+    day: string;
+    /**
+     * Project Id
+     */
+    project_id: number;
+    /**
+     * Started At
+     */
+    started_at?: string | null;
 };
 
 /**
@@ -2481,6 +2571,80 @@ export type TimeSummaryResponses = {
 };
 
 export type TimeSummaryResponse = TimeSummaryResponses[keyof TimeSummaryResponses];
+
+export type ListPomodorosData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Start
+         */
+        start?: string | null;
+        /**
+         * End
+         */
+        end?: string | null;
+        /**
+         * As Of
+         */
+        as_of?: string | null;
+    };
+    url: '/api/pomodoros';
+};
+
+export type ListPomodorosErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListPomodorosError = ListPomodorosErrors[keyof ListPomodorosErrors];
+
+export type ListPomodorosResponses = {
+    /**
+     * Response Listpomodoros
+     *
+     * Successful Response
+     */
+    200: Array<PomodoroOut>;
+};
+
+export type ListPomodorosResponse = ListPomodorosResponses[keyof ListPomodorosResponses];
+
+export type TransferPomodorosData = {
+    body: TransferRequest;
+    path?: never;
+    query?: {
+        /**
+         * As Of
+         */
+        as_of?: string | null;
+    };
+    url: '/api/pomodoros/transfer';
+};
+
+export type TransferPomodorosErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type TransferPomodorosError = TransferPomodorosErrors[keyof TransferPomodorosErrors];
+
+export type TransferPomodorosResponses = {
+    /**
+     * Response Transferpomodoros
+     *
+     * Successful Response
+     */
+    201: {
+        [key: string]: unknown;
+    };
+};
+
+export type TransferPomodorosResponse = TransferPomodorosResponses[keyof TransferPomodorosResponses];
 
 export type SyncIntentsData = {
     body: SyncRequest;

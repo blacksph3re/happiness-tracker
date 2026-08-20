@@ -2,7 +2,7 @@
   import { parseCsv } from '../csv.js'
   import { saveEntries } from '../store.js'
   import { settle } from '../sync.js'
-  import { formatDuration, offsetLabel, utcOffset } from './duration.js'
+  import { formatDuration, offsetLabel, utcOffset } from '../clock.js'
   import { crossesClockChange, guessColumns, planImport } from './import.js'
 
   /**

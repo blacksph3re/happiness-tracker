@@ -12,9 +12,11 @@ from fastapi import APIRouter
 from pydantic import ValidationError
 
 from deps import CurrentUser, DbSession
+from routers.pomodoro import pomodoro_out
 from schemas import (
     AnswerIn,
     SyncEntryPayload,
+    SyncPomodoroPayload,
     SyncRequest,
     SyncResponse,
     SyncResult,
@@ -24,7 +26,9 @@ from services.sync import (
     SyncOutcome,
     apply_answer,
     apply_entry,
+    apply_pomodoro,
     delete_entry,
+    delete_pomodoro,
 )
 
 router = APIRouter(tags=["sync"])
@@ -145,7 +149,33 @@ def sync_intents(
                 SyncResult(
                     seq=intent.seq,
                     outcome=SyncOutcome.CONFLICT,
-                    detail="This session arrived without the id its device gave it",
+                    detail="This write arrived without the id its device gave it",
+                )
+            )
+            continue
+
+        if intent.kind == "pomodoro.delete":
+            outcome, detail = delete_pomodoro(db, user.id, intent.client_id, claimed)
+            results.append(SyncResult(seq=intent.seq, outcome=outcome, detail=detail))
+            continue
+
+        if intent.kind == "pomodoro.upsert":
+            try:
+                queued = SyncPomodoroPayload.model_validate(intent.payload)
+            except ValidationError as invalid:
+                results.append(_malformed(intent.seq, invalid))
+                continue
+            outcome, detail, pomodoro = apply_pomodoro(
+                db, user.id, intent.client_id, claimed, queued, now
+            )
+            results.append(
+                SyncResult(
+                    seq=intent.seq,
+                    outcome=outcome,
+                    detail=detail,
+                    pomodoro=pomodoro_out(pomodoro, now)
+                    if pomodoro is not None and outcome != SyncOutcome.CONFLICT
+                    else None,
                 )
             )
             continue

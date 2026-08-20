@@ -1,4 +1,4 @@
-import { dayLabel, shiftDay } from '../day.js'
+import { dayLabel, shiftDay } from './day.js'
 
 /**
  * The windows the patterns page steps through, and what to call them.

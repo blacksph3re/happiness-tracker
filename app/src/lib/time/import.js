@@ -1,4 +1,4 @@
-import { offsetLabel } from './duration.js'
+import { offsetLabel } from '../clock.js'
 
 /**
  * Turning a spreadsheet of times into sessions, and saying what will happen.

@@ -18,11 +18,16 @@ Run it from `backend/` after touching anything in `services/`:
 import json
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from services.pomodoro import (  # noqa: E402
+    elapsed_seconds,
+    pomodoro_state,
+    split_seconds,
+)
 from services.timetrack import (  # noqa: E402
     added_for,
     day_offsets,
@@ -35,6 +40,16 @@ from services.wellbeing import _system_values, score_for_day  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[2] / "app" / "src" / "lib" / "derivations.json"
 """Where the corpus lands, beside the code it holds to account."""
+
+
+@dataclass
+class FakePomodoro:
+    """The four columns the pomodoro rules read, without the ORM."""
+
+    started_at: datetime
+    ended_at: datetime | None
+    focus_seconds: int
+    break_seconds: int
 
 
 @dataclass
@@ -178,6 +193,25 @@ SCORE_CASES = [
     ),
 ]
 
+# Each is (name, minutes after 09:00 that something stopped it, focus, break).
+# `None` for the stop is the ordinary case: nothing stopped it, so it ended
+# where it said it would.
+POMODORO_CASES = [
+    ("ran to the end", None, 25 * 60, 5 * 60),
+    ("abandoned early in the focus", 3, 25 * 60, 5 * 60),
+    ("abandoned one second before the break", 24, 25 * 60, 5 * 60),
+    ("break cut short by the next one", 27, 25 * 60, 5 * 60),
+    ("stopped exactly on the focus boundary", 25, 25 * 60, 5 * 60),
+    ("end edited past the planned end", 300, 25 * 60, 5 * 60),
+    ("no break at all", None, 50 * 60, 0),
+    ("no break, abandoned", 10, 50 * 60, 0),
+]
+
+# Two moments, because the state depends on one of them and the arithmetic does
+# not: a pomodoro reads as running before its planned end and complete after,
+# with the same elapsed seconds either side.
+POMODORO_MOMENTS = [("mid-flight", 10), ("afterwards", 600)]
+
 DAY_CASES = [
     ("2026-01-01", 9),
     ("2026-06-15", 0),
@@ -194,6 +228,7 @@ def main_() -> None:
         "rules": [],
         "scores": [],
         "days": [],
+        "pomodoros": [],
     }
 
     for name, entries in SESSION_CASES:
@@ -220,6 +255,36 @@ def main_() -> None:
                 },
             }
         )
+
+    for name, stopped, focus, rest in POMODORO_CASES:
+        started = datetime(2026, 6, 15, 9, 0, 0)
+        pomodoro = FakePomodoro(
+            started_at=started,
+            ended_at=None if stopped is None else started + timedelta(minutes=stopped),
+            focus_seconds=focus,
+            break_seconds=rest,
+        )
+        for moment, offset in POMODORO_MOMENTS:
+            as_of = started + timedelta(minutes=offset)
+            focus_used, break_used = split_seconds(pomodoro)
+            corpus["pomodoros"].append(
+                {
+                    "name": f"{name}, {moment}",
+                    "pomodoro": {
+                        "started_at": pomodoro.started_at.isoformat(),
+                        "ended_at": (
+                            pomodoro.ended_at.isoformat() if pomodoro.ended_at else None
+                        ),
+                        "focus_seconds": pomodoro.focus_seconds,
+                        "break_seconds": pomodoro.break_seconds,
+                    },
+                    "as_of": as_of.isoformat(),
+                    "state": pomodoro_state(pomodoro, as_of),
+                    "elapsed": elapsed_seconds(pomodoro),
+                    "focus_elapsed": focus_used,
+                    "break_elapsed": break_used,
+                }
+            )
 
     for name, bands in BAND_CASES:
         # 10_800 is three hours: the length in the reported case, which only
