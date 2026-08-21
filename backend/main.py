@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -19,11 +20,13 @@ from routers import (
     changes,
     pomodoro,
     projects,
+    push,
     stats,
     sync,
     time,
     users,
 )
+from services.announcer import announce_forever
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 """Directory holding the compiled frontend, produced by `pnpm build` in `app/`."""
@@ -31,11 +34,17 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Seed the initial account and catalogue on startup.
+    """Seed the initial account and catalogue on startup, and run the announcer.
 
     The schema itself is not created here. A database that has not been
     migrated makes startup fail rather than quietly growing tables that no
     migration accounts for; run ``alembic upgrade head`` first.
+
+    The announcer is the **only** thing this application has ever run on its
+    own, and it starts only where web push is configured — so a deployment
+    without VAPID keys is exactly the server it was before, with no background
+    task at all. It is cancelled on shutdown; a pass interrupted mid-send loses
+    at most one notification, which is already what the grace period accepts.
 
     Parameters
     ----------
@@ -55,7 +64,17 @@ async def lifespan(app: FastAPI):
     settings.totp_key  # noqa: B018  - the read itself is the check
     with SessionLocal() as db:
         bootstrap(db, settings)
-    yield
+
+    announcer = (
+        asyncio.create_task(announce_forever()) if settings.push_configured else None
+    )
+    try:
+        yield
+    finally:
+        if announcer is not None:
+            announcer.cancel()
+            with suppress(asyncio.CancelledError):
+                await announcer
 
 
 API_TAGS = [
@@ -126,6 +145,7 @@ app.include_router(stats.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(time.router, prefix="/api")
 app.include_router(pomodoro.router, prefix="/api")
+app.include_router(push.router, prefix="/api")
 app.include_router(sync.router, prefix="/api")
 app.include_router(changes.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")

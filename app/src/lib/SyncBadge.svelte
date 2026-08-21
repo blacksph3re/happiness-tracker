@@ -1,5 +1,6 @@
 <script>
   import { clearTokens } from './api.js'
+  import { purgePush } from './push.js'
   import { revalidate } from './revalidate.js'
   import { navigate } from './router.js'
   import {
@@ -23,7 +24,10 @@
    * the going: same two calls `signOut` in `App.svelte` makes, because leaving
    * for the login form is leaving for the login form, however it was reached.
    */
-  function signInAgain() {
+  async function signInAgain() {
+    // The same two calls `signOut` makes, and for the same reason: leaving is
+    // leaving, however it was reached, and a subscription outlives a token.
+    await purgePush()
     clearTokens()
     navigate('/login')
   }

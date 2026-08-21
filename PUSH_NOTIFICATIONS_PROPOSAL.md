@@ -1,9 +1,34 @@
 # Push notifications — step 2 of pomodoro tracking
 
-*Discussion document, written because the MVP's late-on-wake alert is explicitly
-a stopgap. Scope is deliberately narrow: **one notification, on time, when the
-app is not running.** `[open]` marks a decision I think is yours; `[verify]`
-marks something I could not prove on this machine.*
+*Third draft, and now a record rather than a plan: **phases one to three are
+built.** What follows is why, kept because the reasoning is not obvious from the
+code. `[verify]` marks something I could not prove on this machine.*
+
+**What exists**
+
+| | |
+| --- | --- |
+| Subscription lifecycle | Built. Enrol, re-enrol on launch, forget — and purge on sign-out or an account switch |
+| Sending | Built. `pywebpush`, VAPID signing, `410`/`404` pruning, tested against a local push service |
+| The scheduler | Built, and **smaller than this document proposed** — see below |
+| The real device | **Not done.** The one thing no test here can stand in for |
+
+**The scheduler is not what §1 describes.** That section calls for a
+`scheduled_pushes` table and a task polling it, which is the right shape when
+the thing being announced is arbitrary. It is not: a pomodoro already records
+when it started and how long its focus runs, so *when to send* is derivable and
+only *whether it was sent* has to be written down. That is
+`pomodoros.notified_at` — one nullable column, which doubles as the claim.
+The section is left as written because the reasoning about background execution
+still holds; only the storage turned out to be unnecessary.
+
+**Settled so far**
+
+| | |
+| --- | --- |
+| Grace period | **One minute.** A notification whose moment passed more than that ago is dropped rather than sent |
+| Scheduler | **In the web process**, one worker, guarded by a claim |
+| VAPID subject | A `mailto:`, **from an environment variable** — which also keeps it out of the repository, as the domain is |
 
 **Read [POMODORO_DISCUSSION.md](POMODORO_DISCUSSION.md) first** — this only makes
 sense as the thing that fixes the one limitation step 1 ships with.
@@ -74,17 +99,16 @@ an alert 25 minutes from now means introducing background execution:
 - claim-then-send, so a restart mid-send does not deliver twice;
 - and a decision about what a *missed* window means: if the container was down for ten minutes, does a pomodoro that ended eight minutes ago still get its alert, or is it dropped as stale?
 
-`[open]` **How late is too late to still send?** A 60-second grace is defensible
-and so is dropping anything past its moment. This is small, but it is the kind of
-thing that is unpleasant to decide after the fact.
+**One minute of grace.** A phase boundary that passed more than sixty seconds
+ago is dropped, not sent: the app's own late-on-wake notice covers that case
+already and says the honest thing, while a push arriving ten minutes late says
+"your pomodoro is over" about something you finished, made tea after, and
+started another one since.
 
-`[open]` **Does the scheduler run in the same process as the web server?** In one
-process it is a few lines in the lifespan and shares the connection pool; the
-cost is that it is duplicated if the app is ever run with more than one worker,
-which today it is not. A separate process is correct and doubles the deployment.
-I lean **one process, one worker, guarded by a claim** — matching how small this
-deployment actually is, with the claim making the multi-worker case merely
-wasteful rather than wrong.
+**In the web process**, one worker, with the claim doing the work. A few lines
+in the lifespan, sharing the connection pool, matching how small this deployment
+actually is. The claim is what keeps the multi-worker case merely wasteful
+rather than wrong, so the decision is reversible if the deployment ever grows.
 
 ### 2. A subscription table, and Safari making it hard to prune
 
@@ -116,20 +140,31 @@ reach the client, which is a new kind of thing to plumb: it can be baked at buil
 time or served from an endpoint, and serving it is better, because otherwise
 rotating the key means rebuilding the frontend.
 
-`[open]` Rotating VAPID keys **invalidates every existing subscription**. Like
-`JWT_SECRET` rotation signing everyone out, this should be written down where the
-other two are described, so it is known before it is done rather than after.
+Rotating VAPID keys **invalidates every existing subscription** — every device
+has to be re-enrolled, silently, because nothing tells them. Like `JWT_SECRET`
+rotation signing everyone out, that consequence has to be written down before
+somebody rotates and finds out.
+
+**Where** was my question and it was a poor one, because it reads as a storage
+question and it is not. The key lives in the environment beside the other two,
+never in the database: a secret in the database is one a database backup
+carries, and `happiness-dump` already holds password hashes and encrypted TOTP
+secrets without also holding the keys that unlock them.
+
+What I am proposing is a **line in `CLAUDE.md`'s Secrets row**, which is where
+the other two rotations are described and the only place anyone looks before
+touching one. The table there would gain a third entry saying that rotating
+VAPID re-enrols every device.
 
 The sharp edge: a VAPID claim set needs a `sub` that is **either a `mailto:`
 address or a full HTTPS URL** ([py-vapid](https://pypi.org/project/py-vapid/)) —
 and the HTTPS URL would be the deployment's domain, which **must never be in the
-repository**. Use the `mailto:` form. It sidesteps the rule entirely instead of
-adding a second thing that has to stay out of git.
+repository**. The `mailto:` form sidesteps that rule instead of adding a second
+thing to keep out of git, and it comes from an environment variable, so the
+address is not in the repository either. It is contact information for the push
+service, not an identifier, so any mailbox does.
 
-`[open]` Which address. Any mailbox works; it is contact information for the push
-service, not an identifier.
-
-### 4. A service worker we have to own
+### 4. A service worker we have to own, and one that may be a release old
 
 Currently `vite-plugin-pwa` runs in its default `generateSW` mode: there is no
 service worker file in this repo, Workbox writes it. **A `push` handler cannot be
@@ -142,10 +177,38 @@ Not hard. But it is a config line that quietly transfers a file's worth of
 Workbox behaviour onto us, and it is invisible in a diff that looks like "add
 push".
 
-It also interacts with `registerType: 'prompt'`. The comment in `vite.config.js`
-is explicit that a worker must not swap itself mid-session because the app holds
-a queue — so the new worker needs to keep that property, and a push arriving for
-a worker version the user has not accepted yet is a case to think about once.
+**And it interacts with `registerType: 'prompt'` in a way that is easy to miss.**
+This was question 5, and it deserves the explanation rather than the question.
+
+The app prompts rather than updating itself, because a worker that swapped
+mid-session would reload a page holding answers that have not reached the
+server. So after a deploy the new worker downloads, then **waits**, while the old
+one keeps serving — until somebody presses *Reload to update*, which on a phone
+they may not do for days.
+
+A push is delivered to whichever worker is **active**. That is the old one. So:
+
+- **The handler that receives a push can be any release still installed
+  anywhere**, not the one that was deployed with the sender. The server is new;
+  the code reading its payload is old.
+- If a later release changes the payload's shape, the old handler does not
+  understand it — and `userVisibleOnly` means the browser will not let it stay
+  silent. It substitutes its own generic *"This site has been updated in the
+  background"*, which is worse than nothing: it is a notification the app did
+  not write, about something that did not happen.
+- If the click-through URL changes, the old handler opens the old route.
+
+None of that needs machinery, but it does need a rule, and the rule is cheap if
+it is adopted before the first payload rather than after the third:
+
+> **The push payload is append-only.** Title, body and a path. New fields may be
+> added and old ones must keep working; nothing is renamed or removed. The
+> handler ignores what it does not recognise, and falls back to a generic title
+> of *its own* rather than letting the browser invent one.
+
+Worth stating in the same breath: a notification's click can be the thing that
+finally applies the update, since the tab it opens is a fresh load. That is a
+nice property to have and a poor one to rely on.
 
 ---
 
@@ -191,18 +254,18 @@ capability Apple has already tried to take away once.
 
 ---
 
-## Open questions, collected
+## What is left
 
-1. **How late is too late to still send** a notification whose moment passed
-   while the server was down?
-2. **Scheduler in the web process or its own?** I lean the same process, one
-   worker, guarded by a claim.
-3. **Which `mailto:` address** for the VAPID subject.
-4. **Where does rotation get written down?** VAPID rotation drops every
-   subscription, and the other two secrets have their consequences documented.
-5. **Does a push arriving for an unaccepted worker version need handling,** given
-   `registerType: 'prompt'` exists precisely so workers do not swap mid-session?
+Nothing is open. Two things want a yes rather than an answer:
 
-And the one to check on the phone before any of it: **is the app installed to the
-Home Screen?** Push does not exist in a Safari tab, so that install is the
-feature's precondition, not a nicety.
+1. **The rotation note goes in `CLAUDE.md`'s Secrets row** — a third entry
+   saying that rotating VAPID re-enrols every device, beside the two that
+   already say what they cost. The key itself stays in the environment; the
+   database never holds it. -- fine for me.
+2. **The push payload is append-only**, per the rule above, because the handler
+   receiving a push may be a release behind the server that sent it. -- sounds reasonable, though a breaking change is also fine as I currently personally know the entire userbase.
+
+And the one thing to check on the phone before any of this is built: **is the
+app installed to the Home Screen?** Push does not exist in a Safari tab, so that
+install is the feature's precondition, not a nicety — and it is a five-second
+check that decides whether the rest is worth writing. -- yes it is on the home screen.

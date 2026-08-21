@@ -543,6 +543,86 @@ export type ProjectUpdate = {
 };
 
 /**
+ * PushEndpoint
+ *
+ * The one field needed to forget a device.
+ */
+export type PushEndpoint = {
+    /**
+     * Endpoint
+     */
+    endpoint: string;
+};
+
+/**
+ * PushKey
+ *
+ * Whether this server can send push notifications, and the key to use.
+ */
+export type PushKey = {
+    /**
+     * Configured
+     */
+    configured: boolean;
+    /**
+     * Public Key
+     */
+    public_key: string | null;
+};
+
+/**
+ * PushSubscriptionIn
+ *
+ * A browser registering itself, as `PushSubscription.toJSON()` gives it.
+ */
+export type PushSubscriptionIn = {
+    /**
+     * Endpoint
+     */
+    endpoint: string;
+    /**
+     * P256Dh
+     */
+    p256dh: string;
+    /**
+     * Auth
+     */
+    auth: string;
+    /**
+     * Label
+     */
+    label?: string | null;
+};
+
+/**
+ * PushSubscriptionOut
+ *
+ * One registered device, as a list of them shows it.
+ *
+ * **No endpoint.** It is a capability URL: anything holding one can send a
+ * notification to that browser, and there is no reason for it to travel back
+ * out of the server that stored it.
+ */
+export type PushSubscriptionOut = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Label
+     */
+    label: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
  * QuestionCreate
  *
  * Payload for adding a question to a catalogue.
@@ -2645,6 +2725,90 @@ export type TransferPomodorosResponses = {
 };
 
 export type TransferPomodorosResponse = TransferPomodorosResponses[keyof TransferPomodorosResponses];
+
+export type GetPushKeyData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/push/key';
+};
+
+export type GetPushKeyResponses = {
+    /**
+     * Successful Response
+     */
+    200: PushKey;
+};
+
+export type GetPushKeyResponse = GetPushKeyResponses[keyof GetPushKeyResponses];
+
+export type ForgetPushSubscriptionData = {
+    body: PushEndpoint;
+    path?: never;
+    query?: never;
+    url: '/api/push/subscriptions';
+};
+
+export type ForgetPushSubscriptionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ForgetPushSubscriptionError = ForgetPushSubscriptionErrors[keyof ForgetPushSubscriptionErrors];
+
+export type ForgetPushSubscriptionResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type ForgetPushSubscriptionResponse = ForgetPushSubscriptionResponses[keyof ForgetPushSubscriptionResponses];
+
+export type ListPushSubscriptionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/push/subscriptions';
+};
+
+export type ListPushSubscriptionsResponses = {
+    /**
+     * Response Listpushsubscriptions
+     *
+     * Successful Response
+     */
+    200: Array<PushSubscriptionOut>;
+};
+
+export type ListPushSubscriptionsResponse = ListPushSubscriptionsResponses[keyof ListPushSubscriptionsResponses];
+
+export type RegisterPushSubscriptionData = {
+    body: PushSubscriptionIn;
+    path?: never;
+    query?: never;
+    url: '/api/push/subscriptions';
+};
+
+export type RegisterPushSubscriptionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RegisterPushSubscriptionError = RegisterPushSubscriptionErrors[keyof RegisterPushSubscriptionErrors];
+
+export type RegisterPushSubscriptionResponses = {
+    /**
+     * Successful Response
+     */
+    201: PushSubscriptionOut;
+};
+
+export type RegisterPushSubscriptionResponse = RegisterPushSubscriptionResponses[keyof RegisterPushSubscriptionResponses];
 
 export type SyncIntentsData = {
     body: SyncRequest;

@@ -342,3 +342,36 @@ def make_user(client, admin_headers, username, **flags):
     )
     assert login.status_code == 200
     return response.json(), {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+@pytest.fixture
+def push_client(tmp_path, monkeypatch):
+    """Yield a TestClient for an application with web push configured.
+
+    A separate fixture rather than a flag on `client`, because "push is not
+    configured" is a state worth testing on its own: it is what every existing
+    deployment looks like until somebody puts keys in `.env`.
+    """
+    yield from build_client(
+        tmp_path,
+        monkeypatch,
+        {
+            "VAPID_PRIVATE_KEY": (
+                "MHcCAQEEIB1S2Q3vQ0e0kJ5H8k1e9K8x1r3o0Q0z1kQ8x1r3o0QwoAoGCCqGSM49"
+            ),
+            "VAPID_PUBLIC_KEY": (
+                "BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkTtGxhY0eSl5m0nP2b8YtQ0Xk"
+            ),
+            "VAPID_SUBJECT": "mailto:someone@example.com",
+        },
+    )
+
+
+@pytest.fixture
+def push_headers(push_client):
+    """Return authorization headers for the admin of a push-enabled server."""
+    response = push_client.post(
+        "/api/login", json={"username": "admin", "password": "admin-password"}
+    )
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}

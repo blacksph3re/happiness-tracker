@@ -1,7 +1,7 @@
 {
   "name": "app",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "license": "MPL-2.0",
   "scripts": {
@@ -20,7 +20,9 @@
     "@hey-api/openapi-ts": "^0.99.0",
     "@playwright/test": "^1.62.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "workbox-precaching": "^7.4.1",
+    "workbox-routing": "^7.4.1"
   },
   "dependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.2.0",

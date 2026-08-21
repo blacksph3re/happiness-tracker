@@ -1,6 +1,6 @@
 [project]
 name = "backend"
-version = "0.3.0"
+version = "0.4.0"
 description = "Add your description here"
 readme = "README.md"
 license = "MPL-2.0"
@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "pyjwt>=2.13.0",
     "pyotp>=2.10.0",
+    "pywebpush>=2.4.0",
     "sqlalchemy>=2.0.51",
 ]
 

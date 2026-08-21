@@ -924,6 +924,19 @@ class Pomodoro(Base):
     spent is time spent — and exists only to be shown.
     """
 
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When the end of this pomodoro's focus was announced, or NULL if never.
+
+    The whole of the scheduler's state. A generic `scheduled_pushes` table was
+    the obvious design and is one table too many: a pomodoro already records
+    when it starts and how long its focus runs, so *when to send* is derivable
+    and only *whether it was sent* has to be written down.
+
+    It is also the claim. Marking the row `WHERE notified_at IS NULL` and
+    sending only when that update touched something is what stops two workers,
+    or a restart mid-send, announcing one boundary twice.
+    """
+
     transferred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     """When this pomodoro's time was copied to a project, or NULL if never.
 
@@ -956,3 +969,61 @@ class Pomodoro(Base):
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
     """Timestamp set on insert and refreshed on every update."""
+
+
+class PushSubscription(Base):
+    """One browser's standing permission to be sent a notification."""
+
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (
+        # The endpoint *is* the identity: the push service mints one per
+        # browser per registration, and re-subscribing the same browser returns
+        # the same URL. Unique globally rather than per user, because two
+        # accounts claiming one endpoint would mean one of them is stale and
+        # sending to it would deliver somebody else's notification.
+        UniqueConstraint("endpoint", name="uq_push_endpoint"),
+        Index("ix_push_subscriptions_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    """Whose device this is. Deleted with the account."""
+
+    endpoint: Mapped[str] = mapped_column(Text, nullable=False)
+    """Where the push service takes messages for this browser.
+
+    A URL and nothing more — which is what makes the whole thing testable
+    without an account anywhere: point it at a local mock and the encryption and
+    signing happen exactly as they would against Apple or Google.
+    """
+
+    p256dh: Mapped[str] = mapped_column(String(255), nullable=False)
+    """The browser's public key, base64url. Half of what encrypts a payload."""
+
+    auth: Mapped[str] = mapped_column(String(255), nullable=False)
+    """The browser's auth secret, base64url. The other half."""
+
+    label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    """What to call this device in a list. Best-effort, from the user agent."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    """Timestamp set by the database when the row is inserted."""
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    """Refreshed every time the browser re-registers.
+
+    Load-bearing rather than bookkeeping. A subscription is supposed to be
+    pruned when the push service answers `410 Gone`, but Apple has been
+    reported to answer `201` for one it has already replaced — so dead
+    endpoints accumulate looking healthy. The client re-registers on every
+    launch, which moves this; anything that has not moved in months is a device
+    that is not coming back.
+    """

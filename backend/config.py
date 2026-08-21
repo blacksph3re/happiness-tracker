@@ -89,6 +89,28 @@ class Settings(BaseSettings):
     lying about for the sake of one line in `.env`.
     """
 
+    vapid_private_key: str = ""
+    """Signing key for web push, in PEM or base64url form. Optional.
+
+    **The one secret here that does not stop the server.** The other two guard
+    something — a token nobody may forge, a stored TOTP secret nobody may read —
+    so a deployment missing them is unsafe and should fail loudly. This one
+    switches a feature on. Absent, `/api/push/*` reports that push is not
+    configured and the client never offers it, which is a working server with
+    one less thing on it rather than a broken one.
+    """
+
+    vapid_public_key: str = ""
+    """The half handed to the browser, base64url, uncompressed P-256 point."""
+
+    vapid_subject: str = ""
+    """Contact for the push service, as `mailto:someone@example.com`.
+
+    From the environment rather than the repository, like the domain: the other
+    form the spec accepts is a full HTTPS URL, which would be the deployment's
+    own and is exactly what must not be committed.
+    """
+
     jwt_algorithm: str = "HS256"
     """Algorithm used to sign and verify tokens."""
 
@@ -157,6 +179,24 @@ class Settings(BaseSettings):
             Parsed lockout window.
         """
         return _parse_duration(self.login_lockout_window)
+
+    @property
+    def push_configured(self) -> bool:
+        """Report whether web push has everything it needs.
+
+        All three or none: a key pair with no subject is refused by the push
+        services, and a subject with no keys signs nothing. Reporting the group
+        as one avoids a half-configured deployment that accepts subscriptions
+        and can never send to them.
+
+        Returns
+        -------
+        bool
+            True when the private key, the public key and the subject are set.
+        """
+        return bool(
+            self.vapid_private_key and self.vapid_public_key and self.vapid_subject
+        )
 
     @property
     def signing_key(self) -> str:

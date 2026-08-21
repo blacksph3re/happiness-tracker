@@ -170,3 +170,39 @@ test('settings names the running version, and metrics are for admins alone', asy
   await expect(metrics.locator('[data-uptime]')).not.toHaveText('')
   await expect(metrics.locator('[data-disk-free]')).toContainText(/\d/)
 })
+
+test('a device a release behind is offered the way forward', async ({
+  page,
+  account,
+  admin,
+}) => {
+  await grant(admin, account, { is_admin: true })
+
+  // The server claiming a newer version is the only way this state occurs in
+  // life: a browser holding a worker from before the last deploy. Faked here
+  // because the alternative is deploying mid-test.
+  await page.route('**/api/admin/metrics', async (route) => {
+    const response = await route.fetch()
+    const body = await response.json()
+    await route.fulfill({ json: { ...body, version: '99.0.0' } })
+  })
+
+  await page.goto('/settings')
+  const about = page.locator('[data-about]')
+  await expect(about).toContainText('99.0.0')
+  await expect(about).toContainText('older copy')
+  // The remedy, not just the diagnosis.
+  await expect(page.locator('[data-force-update]')).toBeVisible()
+})
+
+test('a device that is current is offered nothing to fix', async ({
+  page,
+  account,
+  admin,
+}) => {
+  await grant(admin, account, { is_admin: true })
+  await page.goto('/settings')
+
+  await expect(page.locator('[data-server-metrics]')).toBeVisible()
+  await expect(page.locator('[data-force-update]')).toHaveCount(0)
+})

@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store'
 
 import { tokenHolder, unwrap } from './api.js'
+import { purgePush } from './push.js'
 import {
   overlayAnswers,
   overlayEntries,
@@ -320,6 +321,15 @@ async function hydrate() {
   const owner = await snapshotOwner()
   if (owner !== null && holder !== null && owner !== holder) {
     await clearSnapshot()
+    // Somebody else has signed in on this device. Their data is gone from the
+    // snapshot above; the *subscription* has to go too, or the browser keeps
+    // the previous account's enrolment and shows their pomodoro notifications
+    // to whoever is holding the phone now.
+    //
+    // The local unsubscribe is what actually stops delivery — the row the old
+    // account left on the server can no longer be deleted with this token, and
+    // is pruned instead the next time something is sent to a dead endpoint.
+    await purgePush()
   } else if (holder !== null) {
     const stored = await readSnapshot()
     for (const [name, store] of Object.entries(PERSISTED)) {

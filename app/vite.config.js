@@ -25,6 +25,18 @@ export default defineConfig({
       // Prompted, never automatic. A worker that swaps itself mid-session is
       // wrong for an app being typed into, and worse for one holding a queue.
       registerType: 'prompt',
+      // Ours rather than generated, because a `push` handler cannot be added to
+      // a worker Workbox writes. The cost is real and easy to miss in a diff
+      // that reads as "add push": the precache manifest, the navigation
+      // fallback and the `/api/` denylist stop being configuration and become
+      // code in `src/sw.js`.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+      },
       includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'Daily Tracker',
@@ -47,22 +59,6 @@ export default defineConfig({
             purpose: 'maskable',
           },
         ],
-      },
-      workbox: {
-        // ECharts is most of this and is not optional weight: the patterns page
-        // has to draw with no connection, so the charting library is part of
-        // the offline product rather than something to fetch when needed.
-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
-        // Every navigation is the same shell; the router does the rest. Without
-        // this a reload on /time/record with no connection is a browser error
-        // page rather than the app.
-        navigateFallback: 'index.html',
-        // The API is never cached. What the app knows offline is in IndexedDB,
-        // deliberately, and a stale response pretending to be fresh would be a
-        // second source of truth with no way to tell them apart.
-        navigateFallbackDenylist: [/^\/api\//],
-        runtimeCaching: [],
       },
       devOptions: { enabled: false },
     }),

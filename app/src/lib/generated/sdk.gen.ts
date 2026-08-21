@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, BeginTotpEnrolmentData, BeginTotpEnrolmentResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, ClearUserTotpData, ClearUserTotpErrors, ClearUserTotpResponses, ConfirmTotpEnrolmentData, ConfirmTotpEnrolmentErrors, ConfirmTotpEnrolmentResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, DisableTotpData, DisableTotpErrors, DisableTotpResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetChangesData, GetChangesResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetServerMetricsData, GetServerMetricsResponses, GetTagRuleData, GetTagRuleErrors, GetTagRuleResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListCatalogueTemplatesData, ListCatalogueTemplatesResponses, ListPomodorosData, ListPomodorosErrors, ListPomodorosResponses, ListProjectsData, ListProjectsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, LoginTotpData, LoginTotpErrors, LoginTotpResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, SetTagRuleData, SetTagRuleErrors, SetTagRuleResponses, SyncIntentsData, SyncIntentsErrors, SyncIntentsResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, TrackedRangeData, TrackedRangeResponses, TransferPomodorosData, TransferPomodorosErrors, TransferPomodorosResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
+import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, BeginTotpEnrolmentData, BeginTotpEnrolmentResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, ClearUserTotpData, ClearUserTotpErrors, ClearUserTotpResponses, ConfirmTotpEnrolmentData, ConfirmTotpEnrolmentErrors, ConfirmTotpEnrolmentResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, DisableTotpData, DisableTotpErrors, DisableTotpResponses, ForgetPushSubscriptionData, ForgetPushSubscriptionErrors, ForgetPushSubscriptionResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetChangesData, GetChangesResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetPushKeyData, GetPushKeyResponses, GetServerMetricsData, GetServerMetricsResponses, GetTagRuleData, GetTagRuleErrors, GetTagRuleResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListCatalogueTemplatesData, ListCatalogueTemplatesResponses, ListPomodorosData, ListPomodorosErrors, ListPomodorosResponses, ListProjectsData, ListProjectsResponses, ListPushSubscriptionsData, ListPushSubscriptionsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, LoginTotpData, LoginTotpErrors, LoginTotpResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RegisterPushSubscriptionData, RegisterPushSubscriptionErrors, RegisterPushSubscriptionResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, SetTagRuleData, SetTagRuleErrors, SetTagRuleResponses, SyncIntentsData, SyncIntentsErrors, SyncIntentsResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, TrackedRangeData, TrackedRangeResponses, TransferPomodorosData, TransferPomodorosErrors, TransferPomodorosResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -628,6 +628,70 @@ export const listPomodoros = <ThrowOnError extends boolean = false>(options?: Op
 export const transferPomodoros = <ThrowOnError extends boolean = false>(options: Options<TransferPomodorosData, ThrowOnError>): RequestResult<TransferPomodorosResponses, TransferPomodorosErrors, ThrowOnError> => (options.client ?? client).post<TransferPomodorosResponses, TransferPomodorosErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/pomodoros/transfer',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Whether push works here, and the key to subscribe with
+ *
+ * A browser needs the server's VAPID public key before it can subscribe. A deployment without one reports `configured: false` rather than an error, because push being off is a configuration and not a fault.
+ */
+export const getPushKey = <ThrowOnError extends boolean = false>(options?: Options<GetPushKeyData, ThrowOnError>): RequestResult<GetPushKeyResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetPushKeyResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/push/key',
+    ...options
+});
+
+/**
+ * Stop sending notifications to this browser
+ *
+ * Idempotent. A browser whose permission was revoked reports it on its next launch, which may be long after the row was already pruned.
+ */
+export const forgetPushSubscription = <ThrowOnError extends boolean = false>(options: Options<ForgetPushSubscriptionData, ThrowOnError>): RequestResult<ForgetPushSubscriptionResponses, ForgetPushSubscriptionErrors, ThrowOnError> => (options.client ?? client).delete<ForgetPushSubscriptionResponses, ForgetPushSubscriptionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/push/subscriptions',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * The devices this account has enrolled
+ *
+ * List the authenticated user's registered browsers.
+ *
+ * Parameters
+ * ----------
+ * user : User
+ * The authenticated user.
+ * db : sqlalchemy.orm.Session
+ * Active database session.
+ *
+ * Returns
+ * -------
+ * list of PushSubscription
+ * Never another account's, and never carrying an endpoint.
+ */
+export const listPushSubscriptions = <ThrowOnError extends boolean = false>(options?: Options<ListPushSubscriptionsData, ThrowOnError>): RequestResult<ListPushSubscriptionsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListPushSubscriptionsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/push/subscriptions',
+    ...options
+});
+
+/**
+ * Register this browser for notifications
+ *
+ * Safe to call on every launch, which is what the client does: an endpoint already stored is updated rather than duplicated. That re-registration is also what prunes devices that stop coming back, since a push service cannot be relied on to report one as gone.
+ */
+export const registerPushSubscription = <ThrowOnError extends boolean = false>(options: Options<RegisterPushSubscriptionData, ThrowOnError>): RequestResult<RegisterPushSubscriptionResponses, RegisterPushSubscriptionErrors, ThrowOnError> => (options.client ?? client).post<RegisterPushSubscriptionResponses, RegisterPushSubscriptionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/push/subscriptions',
     ...options,
     headers: {
         'Content-Type': 'application/json',

@@ -13,6 +13,13 @@
   import IconBin from '../lib/IconBin.svelte'
   import QrCode from '../lib/QrCode.svelte'
   import { resource } from '../lib/resource.svelte.js'
+  import { forceUpdate } from '../lib/updates.js'
+  import {
+    disablePush,
+    enablePush,
+    pushSupport,
+    readPushSupport,
+  } from '../lib/push.js'
   import {
     catalogues as catalogueStore,
     ensureCatalogues,
@@ -34,6 +41,39 @@
   import { pushToast } from '../lib/toasts.js'
 
   const focus = $derived(preferenceSection($preferenceStore, 'focus'))
+
+  /** Why the notification switch is unavailable, or null when it is not. */
+  const pushBlocked = $derived(
+    !$pushSupport.available
+      ? 'Notifications need the app added to the Home Screen. In a browser tab there is no way to receive one.'
+      : !$pushSupport.configured
+        ? 'This server has no notification keys, so it cannot send any.'
+        : $pushSupport.permission === 'denied'
+          ? 'Notifications are blocked for this site in the browser’s own settings, which is the only place that can undo it.'
+          : null
+  )
+
+  let pushBusy = $state(false)
+
+  $effect(() => {
+    // Reads the existing permission and asks for none, so it shows no prompt.
+    readPushSupport()
+  })
+
+  /** Turn notifications on or off. Called from a click, which is required. */
+  async function togglePush() {
+    pushBusy = true
+    try {
+      if ($pushSupport.subscribed) {
+        await disablePush()
+        return
+      }
+      const { ok, reason } = await enablePush()
+      if (!ok) pushToast(reason)
+    } finally {
+      pushBusy = false
+    }
+  }
 
   $effect(() => {
     ensurePreferences()
@@ -285,6 +325,37 @@
     </p>
   </div>
 
+  <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-push>
+    <h2 class="font-semibold">Notifications</h2>
+    <p class="mt-1 text-sm text-haze">
+      A notification when a focus block ends, so the phone can be in a pocket.
+      Without it the app tells you when you next open it, which may be a while
+      after the fact.
+    </p>
+
+    {#if pushBlocked}
+      <p class="mt-3 text-sm text-haze" data-push-blocked>{pushBlocked}</p>
+    {:else}
+      <p class="mt-3 text-sm">
+        {$pushSupport.subscribed
+          ? 'This device will be notified.'
+          : 'This device is not being notified.'}
+      </p>
+      <button
+        data-push-toggle
+        class="mt-3 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
+               hover:bg-dusk-lift disabled:opacity-40"
+        disabled={pushBusy}
+        onclick={togglePush}
+      >
+        {$pushSupport.subscribed ? 'Stop notifying this device' : 'Notify this device'}
+      </button>
+      <p class="meta mt-3 normal-case text-haze">
+        Per device, not per account: each browser asks for itself.
+      </p>
+    {/if}
+  </div>
+
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-totp>
     <h2 class="font-semibold">Second factor</h2>
     <p class="mt-1 text-sm text-haze">
@@ -465,8 +536,19 @@
     </dl>
     {#if behind}
       <p class="meta mt-3 normal-case">
-        This device is running an older copy. Reload to pick up the new one.
+        This device is running an older copy.
       </p>
+      <!-- The remedy beside the fact. Reading "you are a version behind" and
+           being left to work out that a reload is what fixes it — and that an
+           ordinary reload may not, because the worker serves its own cache —
+           is the page stopping one step short. -->
+      <button
+        data-force-update
+        class="mt-3 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift"
+        onclick={forceUpdate}
+      >
+        Reload to update
+      </button>
     {/if}
 
     {#if me?.is_admin}

@@ -1302,3 +1302,64 @@ class SyncPomodoroPayload(BaseModel):
 
 
 SyncResult.model_rebuild()
+
+
+class PushKey(BaseModel):
+    """Whether this server can send push notifications, and the key to use."""
+
+    configured: bool
+    """False when the deployment has no VAPID keys.
+
+    Reported rather than raised: a server without them is a working server with
+    one less feature, and the client has to be able to tell without guessing
+    from an error.
+    """
+
+    public_key: str | None
+    """The VAPID public key, base64url, or null when unconfigured."""
+
+
+class PushSubscriptionIn(BaseModel):
+    """A browser registering itself, as `PushSubscription.toJSON()` gives it."""
+
+    endpoint: str = Field(max_length=2000)
+    """Where the push service takes messages for this browser."""
+
+    p256dh: str = Field(max_length=255)
+    """The browser's public key, base64url."""
+
+    auth: str = Field(max_length=255)
+    """The browser's auth secret, base64url."""
+
+    label: str | None = Field(default=None, max_length=80)
+    """What to call this device in a list."""
+
+
+class PushSubscriptionOut(BaseModel):
+    """One registered device, as a list of them shows it.
+
+    **No endpoint.** It is a capability URL: anything holding one can send a
+    notification to that browser, and there is no reason for it to travel back
+    out of the server that stored it.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    """Surrogate primary key."""
+
+    label: str | None
+    """What to call this device."""
+
+    created_at: datetime
+    """When the browser first registered."""
+
+    updated_at: datetime
+    """When it last re-registered, which it does on every launch."""
+
+
+class PushEndpoint(BaseModel):
+    """The one field needed to forget a device."""
+
+    endpoint: str = Field(max_length=2000)
+    """The endpoint to remove, if this account still holds it."""

@@ -23,6 +23,7 @@
   import SyncBadge from './lib/SyncBadge.svelte'
   import { watch } from './lib/sync.js'
   import { watchTitle } from './lib/pomodoro/title.js'
+  import { purgePush, refreshSubscription } from './lib/push.js'
   import { applyUpdate, updateReady, watchForUpdates } from './lib/updates.js'
 
   const ROUTES = {
@@ -64,6 +65,11 @@
     watch()
     watchForChanges()
     watchForUpdates()
+    // Silent, and a no-op unless this browser is already enrolled: it asks for
+    // nothing and shows nothing. What it buys is the timestamp saying the
+    // device still exists, since a push service cannot be relied on to report
+    // one as gone.
+    refreshSubscription()
     // Returned so the countdown stops with the tab rather than outliving it.
     return watchTitle()
   })
@@ -142,11 +148,18 @@
 
   const MENU = $derived([...NAV, ...ACCOUNT])
 
-  /** End the session and return to the sign-in form. */
-  function signOut() {
+  /** End the session and return to the sign-in form.
+   *
+   * The push subscription goes first, while there is still a token to tell the
+   * server with. Signing out means "stop telling me about pomodoros", and a
+   * subscription does not expire with a token — left alone, the browser would
+   * go on being notified by an account nobody is signed in to.
+   */
+  async function signOut() {
+    menuOpen = false
+    await purgePush()
     clearTokens()
     navigate('/login')
-    menuOpen = false
   }
 </script>
 

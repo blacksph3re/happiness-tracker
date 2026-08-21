@@ -216,6 +216,51 @@ answering.
 
 Do not write `$effect(() => load(...))` where `load` assigns component state.
 
+## Push notifications
+
+Built, except the device check. `PUSH_NOTIFICATIONS_PROPOSAL.md` holds the
+reasoning; what is load-bearing:
+
+- **The announcer is the only thing this app runs on its own.** Everything else
+  happens because a request arrived. It starts from the lifespan **only when
+  VAPID keys are configured**, so a deployment without them is exactly the
+  server it was before, with no background task at all.
+- **There is no `scheduled_pushes` table**, though the proposal called for one.
+  A pomodoro already records when it started and how long its focus runs, so
+  *when to send* is derivable and only *whether it was sent* has to be stored —
+  which is `pomodoros.notified_at`, one nullable column.
+- **That column is also the claim.** `UPDATE ... WHERE notified_at IS NULL`, send
+  only if it touched a row. The worst a crash mid-send can do is lose one
+  notification, never repeat one, and losing one is already what the grace
+  period accepts. It needs its own test: the query that finds due pomodoros
+  already excludes announced ones, so a second pass proves nothing about the
+  race the claim exists for.
+- **One minute of grace**, which is also what makes it safe to switch on: every
+  pomodoro already in the database is far outside the window, so the first pass
+  announces nothing.
+- **Abandoned pomodoros are never announced.** Abandoning is a decision, and
+  whoever made it was looking at the screen.
+- **The payload is append-only.** `registerType: 'prompt'` means a worker waits
+  until somebody accepts an update, so the handler receiving a push may be an
+  older release than the server that sent it. Fields may be added; none is
+  renamed or removed, and the handler always shows *something* — a `push`
+  handler that shows nothing gets the browser's own "This site has been updated
+  in the background" shown for it, which is a message the app did not write
+  about something that did not happen.
+- **A subscription outlives a token**, so signing out purges it and so does
+  signing in as somebody else. The server is told first, while there is still a
+  token to tell it with; then the browser unsubscribes, which is the half that
+  actually stops delivery and happens whether or not the server was reachable.
+- **A subscription is keyed on its endpoint alone**, never on `(user, endpoint)`.
+  The endpoint belongs to a *browser*, so a second account on one device moves
+  it rather than adding a row — two rows would put one person's notifications on
+  another person's screen. The endpoint is never sent back out: it is a
+  capability URL.
+- **Pruning cannot be trusted to the push service.** `410` and `404` mean gone,
+  but Apple has been seen answering `201` for an endpoint it had already
+  replaced — so the client re-registers on every launch, and `updated_at` is
+  what says a device still exists.
+
 ## Two writes in one gesture go in one queue entry
 
 `enqueue` starts a `flush`, and a `flush` already in flight **read the queue
@@ -535,6 +580,7 @@ Do not re-open these without being asked to; each was decided deliberately.
 | | |
 | --- | --- |
 | Secrets | `JWT_SECRET`, `TOTP_ENCRYPTION_KEY` and `ADMIN_PASSWORD` have no defaults. The server crashes without them rather than generating one. The two keys are separate on purpose: rotating the signing key is routine and signs everyone out, and one key would make it also destroy every second-factor enrolment |
+| VAPID keys | `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY` and `VAPID_SUBJECT` are the one **optional** secret, all three or none. The others guard something, so missing them is unsafe and must fail loudly; these switch a feature on, so missing them means `/api/push/*` reports `configured: false` and the client never offers it. **Rotating them re-enrols every device** — silently, because nothing tells them. They live in the environment and never in the database, which `happiness-dump` copies |
 | Second factor | TOTP, opt-in per account, asked for at login and nowhere else. **No recovery codes** — an admin clears a locked-out user, and `scripts/clear_totp.py` clears an admin. Wrong codes share the password's per-username budget. Turning one off, by anybody, bumps `token_version` so it cannot be done to somebody silently |
 | Login attempts | 5 failures per username per 15 minutes, counted in process memory and cleared by a restart. Keyed on the **submitted username**, never the client IP — the app sits behind nginx and does not trust proxy headers, so every request would otherwise share one key. A locked username answers `429` whether or not the account exists |
 | Schema | The server never creates tables. An unmigrated database fails with `no such table` |

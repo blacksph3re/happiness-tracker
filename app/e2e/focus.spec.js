@@ -609,6 +609,10 @@ test('the time record says when an hour came from focus', async ({ page, account
   await page.locator('[data-open-transfer]').click()
   await page.getByRole('button', { name: 'The rewrite' }).click()
   await page.locator('[data-confirm-transfer]').click()
+  // The dialog closes when the write has landed. Navigating on the click alone
+  // raced the round trip and, under a full parallel run, sometimes reached the
+  // record before the session existed.
+  await expect(page.locator('[data-confirm-transfer]')).toHaveCount(0)
 
   await page.goto('/time/record')
   await expect(page.locator('[data-from-focus]').first()).toContainText('from focus')
