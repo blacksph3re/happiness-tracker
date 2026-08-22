@@ -228,3 +228,19 @@ test('the badge does not call a write unsynced until a grace period has passed',
   release?.()
   await expect(badge).toHaveAttribute('data-sync', 'synced')
 })
+
+test('pressing the cloud asks the server what moved', async ({ page }) => {
+  await page.goto('/focus')
+  // Let the check that runs on navigation pass, and its ten-second floor start.
+  await page.waitForTimeout(600)
+
+  let asked = 0
+  page.on('request', (request) => {
+    if (request.url().includes('/api/changes')) asked += 1
+  })
+
+  await page.locator('[data-sync] button').click()
+  // Forced, so the floor that stops background checks stacking does not also
+  // stop a person who just pressed the thing.
+  await expect.poll(() => asked).toBeGreaterThan(0)
+})

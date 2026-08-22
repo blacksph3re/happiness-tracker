@@ -370,3 +370,15 @@ test('answering offline says nothing about the server', async ({
   // The badge is the one thing that speaks, and it is already saying it.
   await expect(badge(page)).toHaveAttribute('data-sync', 'offline')
 })
+
+test('pressing the cloud leaves you where you are', async ({ page }) => {
+  await page.goto('/focus/patterns')
+  await page.locator('[data-sync] button').click()
+  // It used to live inside the link to the landing page and stayed put only by
+  // swallowing that link's navigation.
+  await expect(page).toHaveURL(/\/focus\/patterns$/)
+
+  await page.goto('/time/record')
+  await page.locator('[data-sync] button').click()
+  await expect(page).toHaveURL(/\/time\/record$/)
+})

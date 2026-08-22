@@ -549,6 +549,14 @@ beside the server's own, when a cached worker is a release behind.
 - **The e2e clock is set, not frozen.** Freezing stops anything animating from a
   time delta, and a canvas chart then draws its axes and no data at all. Use
   `page.clock.setSystemTime` and `fastForward`.
+- **A poll is right for a positive claim and wrong for a negative one.** The
+  same tool, opposite verdicts. Waiting for a chart to hold the counts it was
+  given is a positive claim, and the first sample that satisfies it is a true
+  one — so poll. "This page does not scroll sideways" is a negative one, and
+  the first sample satisfies it before anything has rendered. A chart is
+  *visible* before the data it draws has arrived, which is how an
+  `expect(...).toBeVisible()` followed by a one-shot read of its options
+  produced `[0, 0, 0]` about once per full suite run.
 - **A poll cannot prove a negative.** `expect.poll` succeeds the moment *any*
   sample satisfies it, so polling for "this page does not scroll sideways"
   passes on the first frame — before the thing that overflows has rendered. It

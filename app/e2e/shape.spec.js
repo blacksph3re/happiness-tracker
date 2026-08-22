@@ -157,3 +157,19 @@ test('dragging a continuous slider answers it rather than turning the page', asy
   // The question is still on screen: the drag belonged to the slider.
   await expect(heading).toHaveText('How much of the day was yours')
 })
+
+test('the header names the area, and the landing page does not', async ({ page }) => {
+  // The label beside the mark, not the header at large — a Settings *link*
+  // lives up there on every page.
+  await page.goto('/')
+  await expect(page.locator('[data-area]')).toHaveCount(0)
+
+  await page.goto('/settings')
+  await expect(page.locator('[data-area]')).toHaveText('Settings')
+
+  await page.goto('/focus')
+  await expect(page.locator('[data-area]')).toHaveText('Focus')
+
+  await page.goto('/time')
+  await expect(page.locator('[data-area]')).toHaveText('Time')
+})

@@ -372,3 +372,67 @@ def test_a_dead_browser_is_pruned_by_the_announcer(
     # The push service says that browser is finished, so the row goes: nothing
     # else prunes one reliably.
     assert push_client.get("/api/push/subscriptions", headers=push_headers).json() == []
+
+
+def test_a_pomodoro_is_not_burnt_when_there_is_nowhere_to_send_it(
+    push_client, push_headers, push_service, monkeypatch
+):
+    """Enrol inside the grace period and still get the announcement.
+
+    The claim used to be taken before the subscriptions were looked up, so an
+    account with no enrolled device had its pomodoro stamped as announced and
+    nothing sent — and enrolling a moment later, still well inside the grace
+    period, could never recover it.
+    """
+    from datetime import datetime, timedelta
+
+    import services.announcer as announcer
+    from config import Settings, get_settings
+
+    started = datetime(2026, 8, 21, 9, 0)
+    push_client.post(
+        "/api/sync",
+        headers=push_headers,
+        json={
+            "intents": [
+                {
+                    "seq": 1,
+                    "kind": "pomodoro.upsert",
+                    "client_id": "p1",
+                    "client_updated_at": "2026-08-21T08:00:00",
+                    "payload": {
+                        "started_at": started.isoformat(),
+                        "utc_offset": 0,
+                        "focus_seconds": 1500,
+                        "break_seconds": 300,
+                    },
+                }
+            ]
+        },
+    )
+
+    real = Settings(
+        jwt_secret="x",
+        db_storage=get_settings().db_storage,
+        vapid_private_key=_KEY,
+        vapid_public_key="ignored",
+        vapid_subject="mailto:someone@example.com",
+    )
+    monkeypatch.setattr(announcer, "get_settings", lambda: real)
+
+    ends = started + timedelta(seconds=1500)
+    assert announcer.announce_once(now=ends) == 0
+
+    # Now a device appears, and the moment has not passed.
+    subscription = browser(push_service)
+    push_client.post(
+        "/api/push/subscriptions",
+        headers=push_headers,
+        json={
+            "endpoint": subscription.endpoint,
+            "p256dh": subscription.p256dh,
+            "auth": subscription.auth,
+        },
+    )
+
+    assert announcer.announce_once(now=ends + timedelta(seconds=30)) == 1

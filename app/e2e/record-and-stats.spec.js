@@ -244,9 +244,18 @@ test('an enum-only catalogue still gets its Totals', async ({ page, account, adm
 
   const selector = `[data-totals-chart][data-question="q${question.id}"]`
   await expect(page.locator(selector)).toBeVisible()
+
+  // Polled, not read once. The chart is drawn from the *question*, so it is
+  // visible — with its axis already right — before the answers it counts have
+  // arrived, and reading it on that frame gets `[0, 0, 0]`. Visible is not
+  // populated. A poll is the right tool here and only here: this is a positive
+  // claim, so the first sample that satisfies it is a true one.
+  await expect
+    .poll(async () => (await chartOption(page, selector)).series[0].data)
+    .toEqual([2, 1, 0])
+
   const option = await chartOption(page, selector)
   expect(option.xAxis[0].data).toEqual(['Walked', 'Cycled', 'Drove'])
-  expect(option.series[0].data).toEqual([2, 1, 0])
 })
 
 test('deep links open the page they name', async ({ page }) => {

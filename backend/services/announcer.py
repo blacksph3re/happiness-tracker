@@ -127,8 +127,14 @@ def announce_once(now: datetime | None = None) -> int:
     sent = 0
     with SessionLocal() as db:
         for pomodoro in _due(db, moment):
-            if not _claim(db, pomodoro, moment):
-                continue
+            # Before the claim, not after. The claim exists to stop one
+            # boundary being announced twice, and there is nothing to announce
+            # twice if the account has no enrolled device — but taking it
+            # anyway stamped the row as done, so enrolling a moment later and
+            # still inside the grace period could never recover it.
+            #
+            # Reordering is safe for the race the claim guards: two workers may
+            # both find subscriptions, but only one of them can win the claim.
             subscriptions = list(
                 db.execute(
                     select(PushSubscription).where(
@@ -137,6 +143,8 @@ def announce_once(now: datetime | None = None) -> int:
                 ).scalars()
             )
             if not subscriptions:
+                continue
+            if not _claim(db, pomodoro, moment):
                 continue
             result = send_to(subscriptions, announcement(pomodoro), settings)
             sent += result.sent
