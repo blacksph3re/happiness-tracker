@@ -3,6 +3,7 @@ import {
   chartOption,
   expect,
   expectSettled,
+  installed,
   makeProject,
   makeTag,
   realQuestions,
@@ -302,6 +303,60 @@ test('the record reads by tag as a day of each tag', async ({ page, account }) =
   await expect(day.getByRole('button', { name: 'Edit' })).toHaveCount(3)
 })
 
+test('a running session keeps a tag total moving without a navigation', async ({
+  page,
+  account,
+}) => {
+  const work = await makeTag(account, 'Work')
+  const project = await makeProject(account, 'Backend', { tag_ids: [work.id] })
+
+  await page.goto('/time')
+  await toggleTo(page, project, 'yes')
+  // A few seconds tracked, so the tag has something to show at all: a session
+  // with nothing yet elapsed contributes no row to total.
+  await page.clock.fastForward('00:05')
+
+  await page.goto('/time/record')
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  await page.locator('[data-group-by="tag"]').click()
+  await expect(day.locator('[data-row]')).toContainText('0h 00m')
+
+  // A minute of wall clock, with the page left open on the tag total rather
+  // than navigated away from and back to it — the same thing a project's own
+  // row already does live.
+  await page.clock.fastForward('01:05')
+  await expect(day.locator('[data-row]')).toContainText('0h 01m')
+})
+
+test('a running tag total keeps moving with no connection', async ({
+  page,
+  account,
+  context,
+}) => {
+  // A tag's total used to be a server figure, fetched and then left to go
+  // stale. It is worked out on the device now, from sessions and rules this
+  // page already holds — so it has no reason to need a connection at all.
+  const work = await makeTag(account, 'Work')
+  const project = await makeProject(account, 'Backend', { tag_ids: [work.id] })
+
+  await page.goto('/time')
+  await toggleTo(page, project, 'yes')
+  await page.clock.fastForward('00:05')
+
+  await page.goto('/time/record')
+  await installed(page)
+  await page.locator('[data-group-by="tag"]').click()
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  await expect(day.locator('[data-row]')).toContainText('0h 00m')
+
+  await context.setOffline(true)
+  // A minute of wall clock with the network cut outright — Playwright refuses
+  // every request at the connection itself, so nothing here could be a request
+  // that quietly succeeded anyway.
+  await page.clock.fastForward('01:05')
+  await expect(day.locator('[data-row]')).toContainText('0h 01m')
+})
+
 test('a tag rule is applied in the record too', async ({ page, account }) => {
   const work = await makeTag(account, 'Work')
   const project = await makeProject(account, 'Backend', { tag_ids: [work.id] })
@@ -326,6 +381,34 @@ test('a tag rule is applied in the record too', async ({ page, account }) => {
   await expect(day.locator('[data-row]')).toContainText('−0h 45m')
   await expect(day.locator('[data-row]')).not.toContainText('8h 00m')
   await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('7h 15m')
+})
+
+test('a tag addition is named in the record too, not only a deduction', async ({
+  page,
+  account,
+}) => {
+  const errands = await makeTag(account, 'Errands')
+  const project = await makeProject(account, 'Groceries', { tag_ids: [errands.id] })
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T09:30:00`)
+
+  await page.goto('/time/projects')
+  await page
+    .locator(`[data-tag-row="${errands.id}"]`)
+    .getByRole('button', { name: 'Rule' })
+    .click()
+  await page.getByLabel('Add to every tracked day').fill('15')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+
+  await page.goto('/time/record')
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  // By project it is the thirty minutes that were tracked...
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('0h 30m')
+
+  // ...and by tag the addition is named, the same way a deduction is.
+  await page.locator('[data-group-by="tag"]').click()
+  await expect(day.locator('[data-row]')).toContainText('0h 45m')
+  await expect(day.locator('[data-row]')).toContainText('+0h 15m')
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('0h 45m')
 })
 
 test('going to a year reaches it without scrolling there', async ({ page, account }) => {

@@ -36,6 +36,53 @@ export const queued = writable([])
 /** How many writes are on this device and nowhere else. */
 export const pending = writable(0)
 
+/**
+ * How long a change may sit unconfirmed before the badge calls it unsynced.
+ *
+ * Most writes round-trip well inside this, so without it the cloud would flip
+ * to "unsynced" and back on every ordinary tap — a flicker that teaches nobody
+ * anything. The grace period only delays the *badge*: `pending` itself is set
+ * the moment a write is queued, so a caller that needs the real count (the
+ * numeral beside the icon, `hasPending`) still sees it immediately.
+ */
+const SYNC_GRACE_MS = 1000
+
+/**
+ * What the badge should call `pending`, after the grace period.
+ *
+ * Debounced on the way up only: a write that is still queued once the grace
+ * period elapses is shown right away, and further growth of the queue while
+ * already showing is not delayed a second time. A drop back to zero — the
+ * write settled — is never delayed, since there is nothing misleading about
+ * reporting synced the moment it is true.
+ */
+export const pendingDisplay = writable(0)
+
+let graceTimer = null
+let pastGrace = false
+pending.subscribe((count) => {
+  if (count === 0) {
+    if (graceTimer) {
+      clearTimeout(graceTimer)
+      graceTimer = null
+    }
+    pastGrace = false
+    pendingDisplay.set(0)
+    return
+  }
+  if (pastGrace) {
+    pendingDisplay.set(count)
+    return
+  }
+  if (!graceTimer) {
+    graceTimer = setTimeout(() => {
+      graceTimer = null
+      pastGrace = true
+      pendingDisplay.set(get(pending))
+    }, SYNC_GRACE_MS)
+  }
+})
+
 /** Intents the server could not settle, kept until a person looks at them. */
 export const conflicts = writable([])
 
@@ -61,11 +108,11 @@ export const connection = writable('online')
 
 /** The single word the badge shows. */
 export const syncState = derived(
-  [pending, conflicts, connection],
-  ([$pending, $conflicts, $connection]) => {
+  [pendingDisplay, conflicts, connection],
+  ([$pendingDisplay, $conflicts, $connection]) => {
     if ($conflicts.length) return 'conflicts'
     if ($connection !== 'online') return $connection
-    return $pending ? 'pending' : 'synced'
+    return $pendingDisplay ? 'pending' : 'synced'
   }
 )
 
