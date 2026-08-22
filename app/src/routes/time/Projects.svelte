@@ -17,6 +17,7 @@
     ensureTimeEntries,
     forgetSummaries,
     projects as projectStore,
+    rememberTagRule,
     tags as tagStore,
     timeEntries,
   } from '../../lib/store.js'
@@ -201,7 +202,9 @@
     const saved = await attempt(() => setTagRule({ path: { tag_id: tag.id }, body }))
     if (!saved) return
     // The rule changes what every day of this tag reports, including the ones
-    // already on screen elsewhere.
+    // already on screen elsewhere — `rememberTagRule` for a page computing its
+    // own totals from `tagRules`, `forgetSummaries` for one still fetching them.
+    rememberTagRule(tag.id, saved)
     forgetSummaries()
     editingBands = null
     pushToast(`Saved the rule for ${tag.name}`, 'ok')

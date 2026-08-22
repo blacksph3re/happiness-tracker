@@ -1,4 +1,13 @@
-import { expect, makeProject, privateCatalogue, realQuestions, test } from './fixtures.js'
+import {
+  expect,
+  makeEnumCatalogue,
+  makeProject,
+  privateCatalogue,
+  realQuestions,
+  recentDays,
+  seedAnswer,
+  test,
+} from './fixtures.js'
 
 /**
  * What a phone gets.
@@ -116,5 +125,32 @@ test.describe('at phone width', () => {
         box.x + box.width + 1
       )
     }
+  })
+
+  test('the questions Totals view does not scroll sideways', async ({ page, account, admin }) => {
+    const catalogue = await makeEnumCatalogue(admin, account, [
+      [
+        'How did you get to work today, all things considered',
+        ['Walked', 'Cycled', 'Drove', 'Bus', 'Train', 'Car share', 'Worked from home'],
+      ],
+      ['How was the weather', ['Sunny', 'Cloudy', 'Rainy', 'Snowy']],
+      ['What did you eat for lunch', ['Nothing', 'Something light', 'A proper meal', 'Leftovers']],
+    ])
+    const questions = realQuestions(catalogue)
+    const days = recentDays(6)
+    for (const question of questions) {
+      for (const [index, day] of days.entries()) {
+        await seedAnswer(account.api, {
+          day,
+          question_id: question.id,
+          option_id: question.options[index % question.options.length].id,
+        })
+      }
+    }
+
+    await page.goto('/stats')
+    await expect(page.getByRole('button', { name: 'Totals' })).toBeVisible()
+    await page.getByText(/^Show ·/).click()
+    expect(await worstOverflow(page), '/stats Totals scrolls sideways').toBeLessThanOrEqual(1)
   })
 })

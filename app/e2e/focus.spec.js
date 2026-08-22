@@ -327,6 +327,35 @@ test('the lengths are minutes, and the timer uses them', async ({ page }) => {
   await expect(page.locator('[data-running]')).toContainText('Break')
 })
 
+test('an edit survives the settings load that was still in flight when it was made', async ({
+  page,
+}) => {
+  // The page's own mount-time fetch of preferences is a GET issued before any
+  // edit — and under load it can *answer* after an edit has already saved.
+  // Delaying only the delivery of that answer (the server itself replies
+  // immediately, from whatever it holds at that instant) reproduces the race
+  // without depending on how fast this machine happens to be today.
+  let release
+  const held = new Promise((resolve) => (release = resolve))
+  await page.route('**/api/me/preferences', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue()
+    const response = await route.fetch()
+    await held
+    await route.fulfill({ response })
+  })
+
+  await page.goto('/settings')
+  await savesView(page, () => page.getByLabel('Focus, minutes').fill('12'))
+
+  // The stale GET, issued before that edit, is only delivered now — after the
+  // edit has already reached the server.
+  release()
+  await savesView(page, () => page.getByLabel('Break, minutes').fill('3'))
+
+  await page.goto('/focus')
+  await expect(page.getByRole('link', { name: /settings/ })).toContainText('12 / 3')
+})
+
 test('the focus strip carries times and answers a pointer', async ({ page }) => {
   await page.goto('/focus')
   await start(page, 'Charted')
@@ -609,9 +638,9 @@ test('the time record says when an hour came from focus', async ({ page, account
   await page.locator('[data-open-transfer]').click()
   await page.getByRole('button', { name: 'The rewrite' }).click()
   await page.locator('[data-confirm-transfer]').click()
-  // The dialog closes when the write has landed. Navigating on the click alone
-  // raced the round trip and, under a full parallel run, sometimes reached the
-  // record before the session existed.
+  // The click only dispatches the event; the write it starts is still async,
+  // and navigating away mid-request cancels it. Waiting for the dialog to
+  // close is how the other transfer tests know the write has landed.
   await expect(page.locator('[data-confirm-transfer]')).toHaveCount(0)
 
   await page.goto('/time/record')

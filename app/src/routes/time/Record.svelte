@@ -5,7 +5,7 @@
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
   import { link } from '../../lib/router.js'
   import { period, weekHeading } from '../../lib/period.js'
-  import { exportTables } from '../../lib/time/summary.js'
+  import { exportTables, summaryRows } from '../../lib/time/summary.js'
   import { resource } from '../../lib/resource.svelte.js'
   import {
     clockLabel,
@@ -13,7 +13,6 @@
     formatDuration,
     fromLocal,
     localDay,
-    nowUtc,
     offsetLabel,
     utcOffset,
   } from '../../lib/clock.js'
@@ -26,14 +25,13 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
   import {
     ensureTagRules,
     ensureProjects,
-    ensureSummary,
     ensureTags,
     ensureTimeEntries,
     ensureTrackedRange,
     projects as projectStore,
     removeEntry,
     saveEntry,
-    summaryRevision,
+    tagRules,
     tags as tagStore,
     timeEntries,
     trackedDays,
@@ -59,21 +57,6 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
 
   /** `project` or `tag` — what a row stands for, as on the patterns page. */
   let by = $state('project')
-
-  /**
-   * How many times the cached totals have been thrown away.
-   *
-   * The session cache updates itself from what a write returns, but the tag
-   * totals are computed server-side, so without this a session added while
-   * reading by tag would not appear until the window moved.
-   *
-   * Read from the store rather than counted here. This page used to bump a
-   * local counter after each of its own writes, which covered exactly the
-   * changes it made itself — not one arriving from another device, and not one
-   * made on the projects page. `forgetSummaries` is what actually knows the
-   * totals are stale, whoever caused it.
-   */
-  const revision = $derived($summaryRevision)
 
   /**
    * Whether a row can be worked on rather than only read.
@@ -138,6 +121,7 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
       Promise.all([
         ensureProjects(),
         ensureTags(),
+        ensureTagRules(),
         ensureTrackedRange(),
         ensureTimeEntries(range),
       ]),
@@ -145,21 +129,47 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
   )
 
   /**
-   * A day's totals per tag, after each tag's rule, as the server works them out.
-   *
-   * Read rather than derived, and only in tag mode: a deduction belongs to a
-   * whole day of a tag and cannot be divided across the sessions under it, so
-   * there is no honest way to compute these from the sessions this page holds.
-   * It is also the same call the patterns page makes, so the two cannot
-   * disagree about what a tag reports.
+   * Which projects a tag total counts, matching `_summary_rows` on the server:
+   * an archived project stays in the sessions and the export, but drops out of
+   * a pattern nobody tracks any more.
    */
-  const summary = resource(
-    () => ({ grouping: by, start: windowStart, end: today(), revision }),
-    ({ grouping, start, end }) =>
-      grouping === 'tag'
-        ? ensureSummary({ start, end, by: 'tag', as_of: nowUtc() })
-        : [],
-    { name: 'time record tags', initial: [] }
+  const liveProjects = $derived(
+    new Set(($projectStore ?? []).filter((project) => project.active).map((p) => p.id))
+  )
+
+  /** `{project_id: [tag_id, …]}`, for regrouping sessions under their tags. */
+  const tagsOf = $derived(
+    Object.fromEntries(
+      ($projectStore ?? []).map((project) => [project.id, (project.tags ?? []).map((t) => t.id)])
+    )
+  )
+
+  /**
+   * A day's totals per tag, after each tag's rule.
+   *
+   * Computed here rather than fetched: `entries`, `tagsOf` and the rules
+   * themselves are already on the device — the export runs the identical
+   * arithmetic — so there is nothing a round trip would know that this does
+   * not. That is also what makes it work with no connection and what makes a
+   * running session's total move on its own, the same way a project's row
+   * already does; asking a server on a timer to follow one ticking session was
+   * the trade `lib/time/summary.js`'s own module docstring exists to avoid.
+   *
+   * `summaryRows` is the second, tested implementation of the arithmetic the
+   * server owns — see that file for what holds the two together.
+   */
+  const tagSummary = $derived(
+    by === 'tag'
+      ? summaryRows({
+          entries: $timeEntries.filter((entry) => liveProjects.has(entry.project_id)),
+          asOf: $now,
+          by: 'tag',
+          tagsOf,
+          rulesOf: $tagRules ?? {},
+          start: windowStart,
+          end: today(),
+        })
+      : []
   )
 
   const loading = $derived(loaded.loading && $timeEntries.length === 0)
@@ -176,7 +186,7 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
   })
 
   /**
-   * A day's tag rows, from the server's totals.
+   * A day's tag rows, from `tagSummary`.
    *
    * One row per tag per day rather than per session, because that is the unit a
    * tag actually has: sessions belong to projects, a deduction belongs to a
@@ -186,13 +196,14 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
    */
   const tagRows = $derived.by(() => {
     const map = new Map()
-    for (const row of summary.data ?? []) {
+    for (const row of tagSummary) {
       if (row.day < windowStart || row.day > today()) continue
       if (!map.has(row.day)) map.set(row.day, [])
       map.get(row.day).push({
         key: `${row.day}:${row.key}`,
         group: row.key,
         seconds: row.reported ?? row.seconds,
+        added: row.added ?? 0,
         deduction: row.deduction ?? 0,
         daily: true,
         entries: [],
@@ -218,7 +229,7 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
    * not worked. The two numbers disagreeing is the point of merging, so the
    * view says so rather than leaving it to be discovered.
    *
-   * By tag the rows come from the server instead — see `tagRows`.
+   * By tag the rows come from `tagSummary` instead — see `tagRows`.
    */
   const byDay = $derived.by(() => {
     if (by === 'tag') return tagRows
@@ -826,12 +837,20 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
                                  its own part, and says where the rest of it went. -->
                             {#if row.daily}
                               <!-- A day of a tag has no single start and end,
-                                   so the line carries what the rule took off
+                                   so the line carries what the rule moved
                                    instead — and nothing at all where no rule
-                                   applies. -->
-                              {#if row.deduction > 0}
+                                   applies. Both halves count: an addition
+                                   moves the number just as surely as a
+                                   deduction does. -->
+                              {#if row.added > 0 || row.deduction > 0}
                                 <p class="meta mt-0.5 normal-case text-haze">
-                                  after rule · −{formatDuration(row.deduction)}
+                                  after rule
+                                  {#if row.added > 0}
+                                    · +{formatDuration(row.added)}
+                                  {/if}
+                                  {#if row.deduction > 0}
+                                    · −{formatDuration(row.deduction)}
+                                  {/if}
                                 </p>
                               {/if}
                             {:else}

@@ -541,18 +541,32 @@ export async function ensureVariables({ force = false } = {}) {
   })
 }
 
-/** Load the saved view state, unless it is already known. */
+/**
+ * Load the saved view state, unless it is already known.
+ *
+ * A page mounting is what starts this request, and a page mounting is also
+ * when a person is most likely to change a view straight away — so the two
+ * routinely overlap. Laying `held` back over what came back is what stops the
+ * answer, arriving late, from overwriting an edit it left before it knew
+ * about: the same principle that keeps a freshly fetched collection from
+ * erasing what the offline queue is still holding.
+ */
 export async function ensurePreferences({ force = false } = {}) {
   await ready()
   const cached = get(preferences)
   if (!force && cached && fetched.has('preferences')) return cached
   return once('preferences', async () => {
     const loaded = (await quietly(() => getMyPreferences())) ?? get(preferences) ?? {}
-    held = loaded
-    preferences.set(loaded)
+    const merged = { ...loaded, ...(held ?? {}) }
+    held = merged
+    preferences.set(merged)
     fetched.add('preferences')
+    // Against what the server actually confirmed, not the merged copy: an
+    // edit folded back in here has not been sent yet, and marking it sent
+    // early is what the comment on `persistPreferences` warns a failed save
+    // must not be able to do.
     persisted = JSON.stringify(loaded)
-    return loaded
+    return merged
   })
 }
 
@@ -741,6 +755,22 @@ export async function ensureTagRules({ force = false } = {}) {
     fetched.add('rules')
     return rules
   })
+}
+
+/**
+ * Apply a tag's rule locally, so a page reading it reflects the edit at once.
+ *
+ * Tag totals are worked out on the device now — see `lib/time/summary.js` —
+ * which means nothing re-reads this from the server on its own the way a
+ * summary fetch used to. Editing a rule without this would still save, but a
+ * page already open on that tag would go on reporting the old one until
+ * something else happened to reload it.
+ *
+ * @param {number} tagId
+ * @param {{add_minutes: number|null, bands: Array<object>}} rule
+ */
+export function rememberTagRule(tagId, rule) {
+  tagRules.update((all) => ({ ...(all ?? {}), [tagId]: rule }))
 }
 
 /**

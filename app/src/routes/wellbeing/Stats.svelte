@@ -656,9 +656,13 @@
           <p class="text-haze">No discrete or enum questions to total yet.</p>
         </div>
       {:else}
-        <div class="grid gap-4 sm:grid-cols-2">
+        <div class="grid min-w-0 gap-4 sm:grid-cols-2">
           {#each totalsPlots as plot (plot.variable.key)}
-            <div class="rounded-xl border border-white/10 bg-ink-soft p-4">
+            <!-- min-w-0: a grid item defaults to min-width: auto, so a card
+                 holding a chart would otherwise refuse to shrink below the
+                 canvas ECharts drew before the grid narrowed it, blowing the
+                 track — and the page — out past the viewport. -->
+            <div class="min-w-0 rounded-xl border border-white/10 bg-ink-soft p-4">
               <p class="meta mb-2 truncate normal-case text-paper" title={plot.variable.label}>
                 {plot.variable.label}
               </p>

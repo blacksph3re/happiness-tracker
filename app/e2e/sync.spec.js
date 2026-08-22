@@ -199,3 +199,32 @@ test('revalidating while a write is queued does not erase it', async ({ page }) 
   // back over it would have dropped the answer here.
   await expect(badge).toHaveAttribute('data-pending', '1')
 })
+
+test('the badge does not call a write unsynced until a grace period has passed', async ({
+  page,
+}) => {
+  // Held rather than answered, so the write sits queued for as long as the
+  // test needs it to — most writes round-trip well inside the grace period,
+  // and this is what stands in for one that has not yet.
+  let release
+  await page.route('**/api/sync', async (route) => {
+    await new Promise((resolve) => (release = resolve))
+    await route.continue()
+  })
+
+  await page.goto('/answer')
+  await page.getByRole('group').getByRole('button').first().click()
+  const badge = page.locator('[data-sync]')
+
+  // Queued, and still inside the grace period: flipping the badge here would
+  // be the flicker the grace period exists to remove.
+  await expect(badge).toHaveAttribute('data-pending', '1')
+  await expect(badge).toHaveAttribute('data-sync', 'synced')
+
+  // Past it, with the write still unsettled — now the badge admits it.
+  await page.clock.fastForward(1100)
+  await expect(badge).toHaveAttribute('data-sync', 'pending')
+
+  release?.()
+  await expect(badge).toHaveAttribute('data-sync', 'synced')
+})
