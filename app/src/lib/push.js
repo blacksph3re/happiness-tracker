@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store'
 
 import { unwrap } from './api.js'
+import { keyBytes } from './push-key.js'
 import {
   forgetPushSubscription,
   getPushKey,
@@ -48,15 +49,6 @@ export function pushAvailable() {
     'PushManager' in window &&
     'Notification' in window
   )
-}
-
-/** Turn the server's base64url VAPID key into the bytes `subscribe` wants. */
-function keyBytes(base64url) {
-  const padded = (base64url + '='.repeat((4 - (base64url.length % 4)) % 4))
-    .replace(/-/g, '+')
-    .replace(/_/g, '/')
-  const raw = atob(padded)
-  return Uint8Array.from(raw, (character) => character.charCodeAt(0))
 }
 
 /** A short name for this device, so a list of them can be told apart. */

@@ -55,6 +55,18 @@ export const BACKEND_ENV = {
   ADMIN_PASSWORD: ADMIN.password,
   BOOTSTRAP_QUESTION_CATALOGUE: '1',
   PASSWORD_MIN_LENGTH: '8',
+  // Real VAPID keys, so the enrolment path can actually be walked. A throwaway
+  // pair generated for the suite: they sign nothing that leaves this machine,
+  // and a deployment's own live in `.env` and never here.
+  //
+  // Configured rather than absent, because the *unconfigured* state is cheap to
+  // simulate per-test by intercepting `/api/push/key` while the configured one
+  // is not simulable at all — it needs a server that will really store a
+  // subscription. Only one can be the default, so it is the one with something
+  // to exercise.
+  VAPID_PRIVATE_KEY: 'CJYwByeXbRKfIfLuHzcA_bnXf3UssmYgM7eaNU1pDjA',
+  VAPID_PUBLIC_KEY: 'BJclr2R4EcnlPEWpkTyDC9-Ig3C_g7FpAxs5xDCxhidRfWXr3M9mdBn8BRcyPs56lontiTtkJBT6eBXQQe-M0dQ',
+  VAPID_SUBJECT: 'mailto:e2e@example.invalid',
 }
 
 export default defineConfig({
