@@ -6,14 +6,17 @@ import { elapsed } from '../lib/time/duration.js'
   import { dayTotals, pomodoroState, RUNNING } from '../lib/pomodoro/derive.js'
   import {
     answers as answerStore,
+    catalogueDetails,
     ensureAnswers,
     ensureCatalogue,
     ensureMe,
     ensurePomodoros,
     ensureProjects,
     ensureTimeEntries,
+    me as account,
     pomodoros as pomodoroStore,
     projects as projectStore,
+    ready,
     timeEntries,
   } from '../lib/store.js'
   import { today } from '../lib/day.js'
@@ -29,10 +32,27 @@ import { elapsed } from '../lib/time/duration.js'
    * which is what keeps "Record" and "Patterns" unambiguous inside each.
    */
 
-  let loading = $state(true)
-  let questions = $state([])
+  // What the disk has been asked for, and what the network has finished
+  // answering. Both, because they end the ellipsis for different reasons: the
+  // snapshot is what makes a bad connection paint at all, and a device that has
+  // never reached this account has nothing to restore and must still stop
+  // waiting once the attempt is over.
+  let hydrated = $state(false)
+  let settled = $state(false)
 
   const day = today()
+
+  // True only while there is genuinely nothing to show. A restored snapshot
+  // brings the account back with everything else it holds, so `me` standing in
+  // for "the device knows this account" is what lets all three cards paint
+  // before a single request has answered.
+  const loading = $derived(!hydrated || (!$account && !settled))
+
+  const questions = $derived(
+    ($catalogueDetails[$account?.default_catalogue_id]?.questions ?? []).filter(
+      (question) => question.active && question.origin === 'asked'
+    )
+  )
 
   const answeredToday = $derived(
     new Set(
@@ -70,27 +90,38 @@ import { elapsed } from '../lib/time/duration.js'
   )
   const focusTotals = $derived(dayTotals(todaysPomodoros, $now))
 
+  // No reactive dependency: this runs once, on mount, and assigns nothing the
+  // markup below feeds back into. Everything it loads is read from the store.
   $effect(() => {
-    load()
+    void load()
   })
 
+  /**
+   * Restore what the device kept, then ask the server what has changed.
+   *
+   * The two are awaited separately and deliberately. Hydration is a disk read
+   * that always finishes; the fetches behind it may not, and a card that waited
+   * on them showed an ellipsis for the whole of a tunnel while the answer sat
+   * in IndexedDB. Nothing below the first `await` is allowed to gate the paint.
+   */
   async function load() {
+    await ready()
+    hydrated = true
     try {
-      const [user] = await Promise.all([
-        ensureMe(),
+      await Promise.all([
+        // Chained rather than listed: which catalogue to read is the account's
+        // to say, and it must not hold up the four loads that already know
+        // what they are asking for.
+        ensureMe().then((user) =>
+          user?.default_catalogue_id ? ensureCatalogue(user.default_catalogue_id) : null
+        ),
         ensureAnswers(),
         ensureProjects(),
         ensureTimeEntries({ start: day, end: day }),
         ensurePomodoros({ start: day, end: day }),
       ])
-      if (user?.default_catalogue_id) {
-        const detail = await ensureCatalogue(user.default_catalogue_id)
-        questions = (detail?.questions ?? []).filter(
-          (question) => question.active && question.origin === 'asked'
-        )
-      }
     } finally {
-      loading = false
+      settled = true
     }
   }
 </script>

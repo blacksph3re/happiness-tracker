@@ -379,12 +379,31 @@ export async function recordSession(account, projectId, startedAt, endedAt, offs
 }
 
 /**
+ * How long the page must go without saving before its view state is settled.
+ *
+ * Longer than the 600ms debounce in `persistPreferences`, so a save prompted by
+ * `act` has certainly been *issued* by the time this much silence has passed.
+ */
+const SAVES_QUIET_MS = 1200
+
+/**
  * Run something and wait for the view state it changes to reach the server.
  *
- * The save is debounced by 600ms, so every caller used to sleep for 900 and
- * hope. Waiting for the request itself is both quicker and steadier: it returns
- * the moment the save lands rather than always burning the worst case, and it
- * cannot pass by accident on a slow machine where 900ms was not enough.
+ * Waits for the page to stop saving, not for one response. Waiting for a
+ * response was wrong in a way that only showed under load: the save is
+ * debounced, so a click made *before* this was called can still be inside its
+ * 600ms window, and the request it eventually sends satisfies a waiter that was
+ * registered afterwards. The caller then reloads, believing its own change is
+ * on the server, and takes the real save down with the page.
+ *
+ * That is not hypothetical — it is `untracked days are left out of the weekday
+ * average`, which failed roughly one run in three until this was fixed. The
+ * sequence was logged: `PUT includeUntrackedDays=false` landing between "act"
+ * and the reload, and the server still holding `false` afterwards.
+ *
+ * Quiet on both counts, deliberately: `SAVES_QUIET_MS` since the last save
+ * *and* since `act` returned. The first alone would settle in the gap between
+ * an older save and the one being waited for.
  *
  * Only for asserting that a save *happened*. A test claiming nothing was sent
  * has to wait out a real interval — there is no event for the absence of one.
@@ -393,13 +412,32 @@ export async function recordSession(account, projectId, startedAt, endedAt, offs
  * @param {() => Promise<void>} act What changes the view state.
  */
 export async function savesView(page, act) {
-  const landed = page.waitForResponse(
-    (response) =>
-      response.url().includes('/api/me/preferences') &&
-      response.request().method() === 'PUT'
-  )
-  await act()
-  await landed
+  let lastSaveAt = null
+  const noteSave = (response) => {
+    const request = response.request()
+    if (
+      request.method() === 'PUT' &&
+      request.url().includes('/api/me/preferences')
+    ) {
+      lastSaveAt = Date.now()
+    }
+  }
+  page.on('response', noteSave)
+  try {
+    await act()
+    const actedAt = Date.now()
+    await expect
+      .poll(
+        () =>
+          lastSaveAt !== null &&
+          Date.now() - lastSaveAt > SAVES_QUIET_MS &&
+          Date.now() - actedAt > SAVES_QUIET_MS,
+        { timeout: 20_000, intervals: [100] }
+      )
+      .toBe(true)
+  } finally {
+    page.off('response', noteSave)
+  }
 }
 
 /**

@@ -61,8 +61,14 @@ export const answers = writable([])
 /** Pomodoros the device knows about, over whatever range was last asked for. */
 export const pomodoros = writable([])
 
-/** Catalogue detail by id, so a page can read questions it did not fetch. */
-const catalogueDetails = writable({})
+/**
+ * Catalogue detail by id, so a page can read questions it did not fetch.
+ *
+ * Exported to be *read*: a view that snapshots the questions out of
+ * `await ensureCatalogue()` cannot see a later load, which is the whole reason
+ * a component reads from the store rather than from its loader.
+ */
+export const catalogueDetails = writable({})
 
 /** Plottable variables, as the server derives them from what has been answered. */
 export const variables = writable(null)

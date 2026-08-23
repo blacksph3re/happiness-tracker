@@ -73,6 +73,14 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.js'],
     environment: 'node',
+    // The same zone `playwright.config.js` pins the browser to, and for the
+    // same reason: some of what is tested here reads the *device's* clock.
+    // `crossesClockChange` asks whether a range spans a daylight-saving change,
+    // so on a machine set to UTC — where there is no such change — its test
+    // asserted something that was simply not true of that device, and failed
+    // with `expected false to be true`. Left unpinned, these tests pass or fail
+    // by where the person running them happens to be.
+    env: { TZ: 'Europe/Berlin' },
   },
   server: {
     // During `pnpm dev` the Svelte dev server proxies API calls to the

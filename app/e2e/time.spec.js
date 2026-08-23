@@ -20,6 +20,23 @@ function card(page, id) {
 }
 
 /**
+ * Wait for a saved tag rule to have reached the server.
+ *
+ * The editor closes only after the `PUT` resolves, so its disappearance is the
+ * app's own statement that the rule is stored — which is what every caller here
+ * needs, because each one then navigates. A full page load can abort a request
+ * still in the air, and the read that follows it can overtake one that is not
+ * aborted; either way the record recomputes from the rule as it was.
+ *
+ * Reasoned rather than reproduced: this shape flaked once in eight full runs
+ * and never under `--repeat-each`, so what is claimed here is that the wait was
+ * missing, not that it was the cause.
+ */
+async function savedRule(page) {
+  await expect(page.getByRole('button', { name: 'Save rule' })).toBeHidden()
+}
+
+/**
  * Scroll the record to the foot of the list until `selector` is on the page.
  *
  * One scroll is not enough on purpose: each pass loads four more weeks, so
@@ -368,6 +385,7 @@ test('a tag rule is applied in the record too', async ({ page, account }) => {
   await page.getByLabel('Band 1 threshold').fill('360')
   await page.getByLabel('Band 1 deduction').fill('45')
   await page.getByRole('button', { name: 'Save rule' }).click()
+  await savedRule(page)
 
   await page.goto('/time/record')
   const day = page.locator(`[data-day="${TODAY}"]`)
@@ -398,6 +416,7 @@ test('a tag addition is named in the record too, not only a deduction', async ({
     .click()
   await page.getByLabel('Add to every tracked day').fill('15')
   await page.getByRole('button', { name: 'Save rule' }).click()
+  await savedRule(page)
 
   await page.goto('/time/record')
   const day = page.locator(`[data-day="${TODAY}"]`)
@@ -1129,6 +1148,7 @@ test('a tag rule turns tracked time into reported time', async ({ page, account 
   await page.getByLabel('Band 1 threshold').fill('360')
   await page.getByLabel('Band 1 deduction').fill('45')
   await page.getByRole('button', { name: 'Save rule' }).click()
+  await savedRule(page)
 
   await page.goto('/time/patterns')
   await page.getByRole('button', { name: 'By tag' }).click()
@@ -1161,6 +1181,7 @@ test('a capping band holds the day at its threshold', async ({ page, account }) 
   // The preview says what the rule does before it is saved.
   await expect(page.locator(`[data-bands="${work.id}"]`)).toContainText('10h 00m')
   await page.getByRole('button', { name: 'Save rule' }).click()
+  await savedRule(page)
 
   await page.goto('/time/patterns')
   await page.getByRole('button', { name: 'By tag' }).click()
@@ -1595,6 +1616,7 @@ test('a tag rule can add time, and the bands measure what it added', async ({
   await expect(editor).toContainText('1h 00m')
 
   await page.getByRole('button', { name: 'Save rule' }).click()
+  await savedRule(page)
 
   await page.goto('/time/patterns')
   await page.getByRole('button', { name: 'By tag' }).click()
@@ -1615,6 +1637,7 @@ test('a tag that only adds still reports more than it tracked', async ({
   await page.locator(`[data-tag-row="${work.id}"]`).getByRole('button', { name: 'Rule' }).click()
   await page.getByLabel('Add to every tracked day').fill('60')
   await page.getByRole('button', { name: 'Save rule' }).click()
+  await savedRule(page)
 
   await page.goto('/time/patterns')
   await page.getByRole('button', { name: 'By tag' }).click()

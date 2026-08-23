@@ -265,15 +265,36 @@ reasoning; what is load-bearing:
 
 `enqueue` starts a `flush`, and a `flush` already in flight **read the queue
 before your second intent was on it** — `settle()`'s docstring has said so for a
-while, but the consequence is easy to miss from the calling side. A second
-`enqueue` in the same breath therefore sits in the outbox until the next wake
-event, up to `PROBE_EVERY` later.
+while, but the consequence is easy to miss from the calling side.
 
 Anything that means *one* user action uses `enqueueAll` — `saveEntries`,
 `savePomodoros`. Starting a pomodoro during a break is exactly this shape: it
 ends one and begins another, and queued separately the second silently did not
 reach the server. It passed alone and failed under a full parallel run, which is
 the only reason it was found.
+
+That is still the rule, but it was never the whole of the problem, and this
+passage used to say the stranded write "sits in the outbox until the next wake
+event, up to `PROBE_EVERY` later". **It did not come back at all.** While the
+connection is good, nothing flushes on a timer: `watch`'s interval calls
+`onReachable` and `wake` returns early, so both go to `revalidate`, which reads.
+The only things that flush are a new write, the cloud in `SyncBadge`, startup
+and `settle`. A write stranded behind a slow request therefore waited for the
+person to happen to write again, behind a badge that said one change was
+waiting.
+
+`flush` now takes a **trailing pass**: asking for one while a drain is running
+sets a flag, and the drain starts a fresh one when it finishes. A request buys
+exactly one more pass, so it is not a retry loop — a queue that will not empty
+still stops. `e2e/outbox.spec.js` holds the first `/api/sync` open, makes a
+second write in a second gesture, and requires the outbox to empty with no
+navigation, no tap on the cloud and no thirty-second tick.
+
+What is **not** fixed, and is a judgement call rather than an oversight: a drain
+that gets a response the server rejects — a 500, or a 422 on an intent it will
+never accept — leaves everything queued and nothing retries it either. Retrying
+would loop for ever on the intent that cannot be accepted, which is why the
+current answer is to stop.
 
 ## A write that reads server state drains the queue first
 
@@ -426,6 +447,22 @@ on the far side. Storing an IANA zone name instead would fix that, at the cost o
 resolving a zone on every read and of deciding what a session means when a zone's
 rules change under it — considered, and deliberately not done.
 
+Measure what that costs before widening it, because it is narrower than it
+sounds: **no duration and no day total is wrong**. Durations come from the
+instants, and the slices still sum to them — a session from 23:00 CET to 10:00
+CEST is ten hours, one on the day it started and nine on the next, on both
+sides. What moves is only where the far end is *drawn*: it is shown ending at
+09:00 rather than 10:00. `derivations.json` pins all of that — the corpus holds
+a spring-forward session, an autumn-back one and one crossing the midnight that
+ends a leap day, so a change to either implementation shows up as a difference
+between them.
+
+Leap years need no special handling anywhere and have none: every calendar step
+goes through `Date.UTC` on the client and `date`/`timedelta` on the server, both
+of which normalise. `day_of_year` is bounded at 366 rather than 365 for the same
+reason. `lib/period.test.js` is where that is asserted — including the century
+rule, since "every fourth year" gets 2100 wrong.
+
 ## Migrations
 
 SQLite cannot alter a column in place, so `env.py` sets `render_as_batch=True`
@@ -546,6 +583,14 @@ beside the server's own, when a cached worker is a release behind.
   ways: **adding** a label breaks somebody else's locator, and a new
   `aria-label="Starter questions"` is what made an existing `getByLabel('Question')`
   ambiguous. Renaming the newcomer beat loosening the test that was already right.
+- **Pin the timezone for the unit tests too, not only the browser.**
+  `playwright.config.js` pins `Europe/Berlin`; vitest had no equivalent, so
+  anything reading the *device's* clock was really testing where the person
+  running it happened to be. `crossesClockChange` asks whether a range spans a
+  daylight-saving change, and on a machine set to UTC — where there is none —
+  its test failed with `expected false to be true`, which names neither the zone
+  nor the reason. `vite.config.js` now sets `test.env.TZ` to the same zone, and
+  the test asserts the zone it assumes so an unpinned run says so directly.
 - **The e2e clock is set, not frozen.** Freezing stops anything animating from a
   time delta, and a canvas chart then draws its axes and no data at all. Use
   `page.clock.setSystemTime` and `fastForward`.
@@ -562,6 +607,20 @@ beside the server's own, when a cached worker is a release behind.
   passes on the first frame — before the thing that overflows has rendered. It
   passed against the very toolbar it was written for. Sample repeatedly and
   assert on the **worst** value seen, and prove the test by reverting the fix.
+- **Waiting for *a* request is not waiting for *your* request.** `savesView`
+  waited for any `PUT /api/me/preferences`, and the save is debounced by 600ms —
+  so a click made *before* the call could still be inside its window, and the
+  request it eventually sent satisfied a waiter registered after it. The caller
+  then reloaded believing its own change was safe and took the real save down
+  with the page. One run in three, and only under a full parallel load. It waits
+  for the page to stop saving now. Where a helper waits on traffic it did not
+  cause, wait for **quiet**, not for one response.
+- **A flake that only appears in the full suite is still a bug.** Six different
+  tests failed once each across eight runs here and every one passed alone.
+  Three were one defect — a write stranded in the outbox — and one was this
+  `savesView` race. `--repeat-each` did not reproduce either; the whole suite
+  did, so run it several times and read the *assertion* rather than reaching for
+  `retries`.
 - **Check the harness before believing "vacuous".** A batch probe of three
   fixes reported all three untested; the probe was grepping `tail -3`, which by
   then held Playwright's trace hint rather than the summary line. Two of the

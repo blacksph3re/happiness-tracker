@@ -375,9 +375,18 @@ describe('planImport', () => {
 })
 
 describe('crossesClockChange', () => {
-  // The suite runs in Europe/Berlin, where the last Sunday in March is an hour
-  // short. A file spanning it is imported an hour out on one side, and saying
-  // so is the whole of what the app does about it.
+  // This reads the *device's* clock, so what it answers depends on where the
+  // suite thinks it is — and the answer below is only true somewhere that has a
+  // daylight-saving change at all. Named rather than assumed: unpinned, this
+  // failed on a machine set to UTC with `expected false to be true`, which says
+  // nothing about the zone being the reason.
+  test('the suite is pinned to a zone whose clock changes', () => {
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe('Europe/Berlin')
+  })
+
+  // Europe/Berlin, where the last Sunday in March is an hour short. A file
+  // spanning it is imported an hour out on one side, and saying so is the whole
+  // of what the app does about it.
   test('a range spanning the change says so', () => {
     expect(crossesClockChange(['2026-03-01', '2026-04-01'])).toBe(true)
   })

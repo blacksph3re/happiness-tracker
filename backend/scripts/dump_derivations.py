@@ -143,6 +143,25 @@ SESSION_CASES = [
         [_entry(1, "2026-06-10T20:00:00", "2026-06-11T00:00:00")],
     ),
     (
+        # The offset is captured at check-in and never revised, so a session
+        # running through a daylight-saving change keeps the one it started
+        # with. What must hold is that nothing is invented or lost by it: the
+        # duration comes from the instants, and the slices still sum to it.
+        # Only where the far end is *drawn* moves, by the hour the clock did.
+        "a session running through a spring-forward change",
+        [_entry(1, "2026-03-28T22:00:00", "2026-03-29T08:00:00", offset=60)],
+    ),
+    (
+        "a session running through an autumn-back change",
+        [_entry(1, "2026-10-24T21:30:00", "2026-10-25T09:00:00", offset=120)],
+    ),
+    (
+        # 2024 is a leap year, so this session's day exists only every fourth
+        # one, and the day after it is March rather than the 30th of February.
+        "a session across the midnight ending the leap day",
+        [_entry(1, "2024-02-29T22:00:00", "2024-03-01T02:00:00")],
+    ),
+    (
         "several short sessions on one project",
         [
             _entry(1, "2026-06-10T09:00:00", "2026-06-10T09:15:00"),

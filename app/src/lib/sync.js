@@ -119,6 +119,14 @@ export const syncState = derived(
 let flushing = null
 
 /**
+ * Whether a flush was asked for while one was already running.
+ *
+ * The drain in flight read the outbox before that request was made, so it
+ * cannot be carrying what prompted it — see `flush`.
+ */
+let flushAgain = false
+
+/**
  * How often an unreachable server is asked again, in milliseconds.
  *
  * Only ever while it is unreachable. Polling a server that is answering would
@@ -288,10 +296,33 @@ export async function loadQueue() {
  * That is safe on the server — a replayed intent comes back as superseded — but
  * it doubles the traffic and makes the pending count flicker.
  *
+ * One *more* afterwards, though, when somebody asked while that one was
+ * running. `drain` reads the outbox before it sends, so a write queued while a
+ * request is in the air is not in it — and handing that caller the running
+ * drain told it the write was on its way when it was not. Nothing came back for
+ * it: while the connection is good, no timer and no wake-up flushes, so it sat
+ * in the outbox behind a contented badge until the person happened to write
+ * again. `enqueueAll` covers two writes in one gesture; this covers two
+ * gestures, and a slow connection is what makes the second one likely.
+ *
+ * A trailing pass, not a retry loop: the flag is set by a *request*, so each
+ * one buys exactly one more pass and a queue that will not empty stops rather
+ * than hammering.
+ *
  * @returns {Promise<void>}
  */
 export function flush() {
-  if (!flushing) flushing = drain().finally(() => (flushing = null))
+  if (flushing) {
+    flushAgain = true
+    return flushing
+  }
+  flushAgain = false
+  flushing = drain()
+    .finally(() => (flushing = null))
+    // After `flushing` is cleared, so this starts a fresh drain rather than
+    // being handed the one that is finishing. Callers awaiting the first pass
+    // adopt the second, which is what makes `settle` see the whole queue.
+    .then(() => (flushAgain ? flush() : undefined))
   return flushing
 }
 
@@ -303,8 +334,10 @@ export function flush() {
  * — it hands back whichever drain is already in flight, and that one read the
  * queue before these intents were on it.
  *
- * Two passes at most. A third would be a retry loop, and a queue that will not
- * empty is a lost connection rather than something to keep hammering.
+ * Two passes here. `flush` may add a trailing one to either, so the ceiling is
+ * four rather than the two this used to claim — still bounded, and still not a
+ * retry loop: every pass is bought by a call, and a queue that will not empty
+ * is a lost connection rather than something to keep hammering.
  *
  * @returns {Promise<boolean>} Whether the queue is empty afterwards.
  */
