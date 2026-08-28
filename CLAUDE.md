@@ -328,6 +328,22 @@ listening, and none of them visible in the code:
 `sounds.test.js` measures railing, the seam against the buffer's own steps, and
 window RMS where the fade used to be. Each fails when its defect is put back.
 
+**A fourth was not in the samples at all**, and no measurement of the buffer
+could have found it. "Pulsating with small gaps" came back a second time, and
+this time the noise was perfect: the *page* was rebuilding it once a second.
+Twelve fresh seconds of brown noise generated, the old source stopped — the
+gap — and the new one started from sample zero, so the same first second played
+over and over, which is a one-hertz pulse. Counted from inside the page: six
+buffers in five seconds. `e2e/ambience.spec.js` counts them now.
+
+The lesson is not about audio. **An effect must read something whose value holds
+still**, and `progress()` returns a fresh object on every tick, so an effect
+reading `bar?.phase` re-ran once a second. A `$derived` string in between fixes
+it because `$derived` is lazy: it recomputes each tick, returns the same string,
+and an unchanged primitive marks nothing downstream dirty. Reading `bar?.phase`
+*inside that derived* is therefore still fine — both were tried, and only the
+effect reading `bar` itself is caught by the test.
+
 ## An audio context must be created inside a gesture
 
 The chime at the end of a focus block did not play, and the phase logic was only

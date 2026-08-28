@@ -133,14 +133,6 @@
     ensurePreferences()
   })
 
-  // The focus sound follows the phase rather than the pomodoro: it belongs to
-  // concentrating, so it stops for the break and comes back with the next one.
-  $effect(() => {
-    if (bar?.phase === 'focus') playAmbience(settings.ambience ?? 'none')
-    else stopAmbience()
-    return stopAmbience
-  })
-
   /**
    * Which phase the page is showing, including after the pomodoro has ended.
    *
@@ -149,6 +141,36 @@
    * end of the last break never played. `done` is a phase like any other here.
    */
   const phase = $derived(bar ? bar.phase : todays.length ? 'done' : 'idle')
+
+  /**
+   * Which focus sound should be playing, as one string.
+   *
+   * The sound follows the phase rather than the pomodoro: it belongs to
+   * concentrating, so it stops for the break and comes back with the next one.
+   *
+   * What matters is that the effect below reads something whose *value* holds
+   * still. It used to read `bar?.phase`, and `bar` is a fresh object on every
+   * tick of the countdown, so the effect re-ran once a second: it tore the
+   * sound down and generated twelve fresh seconds of noise to replace it.
+   * Restarting the same buffer from sample zero once a second is a one-hertz
+   * pulse with the teardown's gap in it, which is how it was reported. Nothing
+   * was wrong with the samples, which is why `sounds.test.js` could not see it.
+   *
+   * `phase` is what breaks the chain, and it does so because `$derived` is
+   * lazy: it recomputes every tick and comes back with the same string, and an
+   * unchanged primitive marks nothing downstream dirty. Reading `bar?.phase`
+   * *here* would therefore still be fine — what may not happen is an effect
+   * reading `bar` itself. Both were tried as probes; only the second is caught
+   * by `e2e/ambience.spec.js`, which is what says where the rule really is.
+   */
+  const wantedAmbience = $derived(
+    phase === 'focus' ? (settings.ambience ?? 'none') : 'none'
+  )
+
+  $effect(() => {
+    playAmbience(wantedAmbience)
+    return stopAmbience
+  })
 
   // One chime, when the **focus** ends — not when the break does. A break
   // running out needs no announcement: either you are back and can see it, or
