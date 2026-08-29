@@ -708,7 +708,20 @@ class Variable(BaseModel):
     """Choices, for enum variables."""
 
     question_ids: list[int] = []
-    """Every question id contributing to this variable."""
+    """Every question id contributing to this variable.
+
+    What the variable *is*. A list rather than one id only because auto-tracked
+    variables are merged across catalogues by their system key, so one weekday
+    variable can span several question rows.
+    """
+
+    component_ids: list[int] = []
+    """The questions a computed variable is defined over, empty for the rest.
+
+    What the variable is *made of*, which `question_ids` cannot say. A score
+    correlates with each of its own components by construction, so the stats
+    page needs to recognise that pair and decline to rank it.
+    """
 
     roles: list[str] = []
     """Which plot roles the variable supports: ``axis``, ``group``, ``radar``."""

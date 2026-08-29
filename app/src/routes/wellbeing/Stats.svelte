@@ -3,14 +3,19 @@
   import { chart as chartAction } from '../../lib/chart-action.js'
   import {
     PALETTE,
-    baseOptions,
     boxOptions,
     lineOptions,
     radarOptions,
     scatterOptions,
     totalsOptions,
   } from '../../lib/chart-options.js'
-  import { fiveNumberSummary, movingAverage, tallyChoices, tallyPairs } from '../../lib/series.js'
+  import {
+    fiveNumberSummary,
+    movingAverage,
+    rankPairs,
+    tallyChoices,
+    tallyPairs,
+  } from '../../lib/series.js'
   import { plotWindow } from '../../lib/timeline.js'
   import {
     answers as answerStore,
@@ -36,8 +41,10 @@
   const loading = $derived(!loaded && variables.length === 0)
 
   let view = $state('line')
-  let scatterX = $state('')
-  let scatterY = $state('')
+  // Which ranked pair is open, as `x.key|y.key`. Not persisted: preferences
+  // remember the shape of the view, never the position in it, and a scatter
+  // left open on Tuesday is a position.
+  let openPair = $state(null)
   // Real questions are plotted by default; the auto-tracked variables start
   // hidden, since weekday and day-of-year drown out everything else.
   let chosen = $state(new Set())
@@ -64,6 +71,19 @@
   let showOpen = $state(false)
   let ready = $state(false)
 
+  /**
+   * Shared days a pair needs before it is ranked rather than listed below.
+   *
+   * Fixed rather than a fraction of the window. Proportional sounded right and
+   * is not: on a year it would demand 183 shared days, so a question added two
+   * months ago ranks against nothing at all and drops off the page with nothing
+   * saying why.
+   */
+  const MINIMUM_OVERLAP = 10
+
+  /** A pair's identity, order-independent because a correlation has no direction. */
+  const keyOf = (x, y) => [x.key, y.key].sort().join('|')
+
   const VIEWS = [
     ['line', 'Over time'],
     ['radar', 'Shape'],
@@ -73,8 +93,8 @@
   ]
 
   const numeric = $derived(variables.filter((v) => v.roles.includes('axis')))
-  // Enum answers carry no scale, so they never become an axis. They colour the
-  // correlation plot and filter the timeline instead.
+  // Enum answers carry no scale, so they never become an axis. They filter the
+  // timeline and partition the correlation ranking instead.
   const groupings = $derived(variables.filter((v) => v.roles.includes('group')))
   // Auto-tracked variables exist only to narrow the data. Scaled ones (year,
   // hour) are offered as chips over the values actually recorded, which keeps
@@ -85,9 +105,6 @@
       (variable) => facetChoices(variable).length > 1
     )
   )
-  // A scatter axis can be categorical, so enum variables belong here even
-  // though they can never carry a line, a radar spoke or a box.
-  const axisChoices = $derived([...numeric, ...groupings])
   const plotted = $derived(numeric.filter((v) => chosen.has(v.key)))
 
   // Every view but Totals plots a scale, so a catalogue of nothing but enum
@@ -120,8 +137,6 @@
     const loadedVariables = (await ensureVariables()) ?? []
     await ensureAnswers()
     const axes = loadedVariables.filter((v) => v.roles.includes('axis'))
-    scatterX = axes[0]?.key ?? ''
-    scatterY = axes[1]?.key ?? axes[0]?.key ?? ''
     chosen = new Set(axes.filter((v) => v.origin === 'asked').map((v) => v.key))
 
     const stored = preferenceSection(await ensurePreferences(), 'stats')
@@ -136,9 +151,6 @@
           .map(([key, values]) => [key, new Set(values)])
       )
     }
-    if (stored.scatterX) scatterX = stored.scatterX
-    if (stored.scatterY) scatterY = stored.scatterY
-
     loaded = true
     ready = true
   }
@@ -155,8 +167,6 @@
           .map(([key, values]) => [key, [...values].sort()])
           .sort(([a], [b]) => (a < b ? -1 : 1))
       ),
-      scatterX,
-      scatterY,
     }
   }
 
@@ -349,11 +359,33 @@
     }),
   })
 
-  const scatterPair = $derived.by(() => {
-    const x = axisChoices.find((v) => v.key === scatterX)
-    const y = axisChoices.find((v) => v.key === scatterY)
-    if (!x || !y) return null
-    return { x, y, ...tallyPairs(days, axisValues(x), axisValues(y)) }
+  /**
+   * Every pair of scaled variables, strongest first.
+   *
+   * Enum variables are deliberately absent. `axisValues` maps an enum answer to
+   * its option's *position in the list*, which is a display order somebody
+   * dragged into place — a coefficient against it changes when the options are
+   * reordered. They earn their place here as filters instead: `days` is already
+   * the facet-filtered window, so narrowing to weekends recomputes every
+   * coefficient over weekends, which is the more honest thing to do with a
+   * category.
+   */
+  const ranked = $derived(
+    rankPairs(numeric, axisValues, days, { minimumOverlap: MINIMUM_OVERLAP })
+  )
+
+  /** The pair whose scatter is open, with its points, or null when none is. */
+  const openPairPlot = $derived.by(() => {
+    const pair = ranked.find(({ x, y }) => keyOf(x, y) === openPair)
+    if (!pair) return null
+    return {
+      pair,
+      options: scatterOptions({
+        x: pair.x,
+        y: pair.y,
+        ...tallyPairs(days, axisValues(pair.x), axisValues(pair.y)),
+      }),
+    }
   })
 
   const boxSummaries = $derived({
@@ -386,9 +418,6 @@
 
   const options = $derived.by(() => {
     if (activeView === 'radar') return radarOptions(radarShape)
-    if (activeView === 'scatter') {
-      return scatterPair ? scatterOptions(scatterPair) : baseOptions()
-    }
     if (activeView === 'box') return boxOptions(boxSummaries)
     return lineOptions({
       days: timelineDays,
@@ -619,37 +648,73 @@
     </div>
 
     {#if activeView === 'scatter'}
-      <!-- Stacked and width-constrained: a long prompt in a select must not
-           push the control off a narrow screen. -->
-      <div class="mb-4 grid gap-3 sm:grid-cols-2">
-        <label class="meta flex min-w-0 items-center gap-2">
-          X
-          <select
-            bind:value={scatterX}
-            class="min-w-0 flex-1 truncate rounded-md border border-white/15 bg-ink-soft
-                   px-2 py-2 normal-case"
-          >
-            {#each axisChoices as variable (variable.key)}
-              <option value={variable.key}>{variable.label}</option>
-            {/each}
-          </select>
-        </label>
-        <label class="meta flex min-w-0 items-center gap-2">
-          Y
-          <select
-            bind:value={scatterY}
-            class="min-w-0 flex-1 truncate rounded-md border border-white/15 bg-ink-soft
-                   px-2 py-2 normal-case"
-          >
-            {#each axisChoices as variable (variable.key)}
-              <option value={variable.key}>{variable.label}</option>
-            {/each}
-          </select>
-        </label>
-      </div>
-    {/if}
-
-    {#if activeView === 'totals'}
+      {#if ranked.length === 0}
+        <div class="flex h-[26rem] items-center justify-center rounded-xl border
+                    border-white/10 bg-ink-soft px-6 text-center">
+          <p class="text-haze">
+            Two scaled questions with answers on the same days are needed to
+            compare any.
+          </p>
+        </div>
+      {:else}
+        <p class="meta mb-2 normal-case text-haze">
+          Every pair, strongest first. {activeFilters.length
+            ? 'Computed over the days the filters keep.'
+            : 'Tap a pair to see it plotted.'}
+        </p>
+        <!-- Scrolls itself rather than the page: the point of the list is
+             comparing the top of it against what follows, and a page-length
+             list puts the strongest pair off screen the moment one is opened. -->
+        <ul
+          class="max-h-[32rem] overflow-y-auto rounded-xl border border-white/10 bg-ink-soft"
+          data-correlations
+        >
+          {#each ranked as pair (keyOf(pair.x, pair.y))}
+            {@const id = keyOf(pair.x, pair.y)}
+            <li class="border-b border-white/5 last:border-b-0">
+              <button
+                class="flex w-full items-baseline justify-between gap-3 px-4 py-3
+                       text-left transition hover:bg-dusk/10
+                       {pair.ranked ? '' : 'opacity-45'}"
+                aria-expanded={openPair === id}
+                data-pair={id}
+                onclick={() => (openPair = openPair === id ? null : id)}
+              >
+                <span class="min-w-0 truncate text-sm">
+                  {pair.x.label} <span class="text-haze">↔</span> {pair.y.label}
+                </span>
+                <span class="flex shrink-0 items-baseline gap-3">
+                  <!-- The number alone, with no "strong" or "weak" beside it:
+                       where those thresholds sit is a matter of taste, and the
+                       word would read as the app's opinion rather than as data. -->
+                  <span class="numeral tabular-nums" data-rho>
+                    {pair.rho === null ? '—' : pair.rho.toFixed(2)}
+                  </span>
+                  <span class="meta shrink-0" data-overlap>
+                    {pair.reason === 'constant'
+                      ? 'no variation'
+                      : `${pair.overlap} ${pair.overlap === 1 ? 'day' : 'days'}`}
+                  </span>
+                </span>
+              </button>
+              {#if openPair === id && openPairPlot}
+                <!-- Its own instance rather than the shared canvas above: only
+                     one row is ever open, and `chartAction` already owns the
+                     init, the resize listener and the dispose. -->
+                <div use:chartAction={openPairPlot.options} class="h-80 w-full" data-scatter></div>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+        {#if ranked.some((pair) => !pair.ranked)}
+          <p class="meta mt-2 normal-case text-haze">
+            Dimmed pairs were answered together on fewer than {MINIMUM_OVERLAP} days,
+            or one of them never varied. They are still plottable; the number under
+            them is not worth ranking.
+          </p>
+        {/if}
+      {/if}
+    {:else if activeView === 'totals'}
       {#if totalsPlots.length === 0}
         <div class="flex h-[26rem] items-center justify-center rounded-xl border border-white/10
                     bg-ink-soft px-6 text-center">
@@ -676,7 +741,7 @@
           {/each}
         </div>
       {/if}
-    {:else if plotted.length === 0 && activeView !== 'scatter'}
+    {:else if plotted.length === 0}
       <div class="flex h-[26rem] items-center justify-center rounded-xl border border-white/10
                   bg-ink-soft px-6 text-center">
         <p class="text-haze">Choose a variable above to plot it.</p>

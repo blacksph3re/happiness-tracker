@@ -42,6 +42,14 @@ The owner reviews by reading, then by using. Both are served by the same habits:
   and scripts, mixed into a diff that was supposed to be reviewable. Name the
   files. If unrelated churn does creep in, `git diff -w --ignore-blank-lines`
   tells you which files are cosmetic-only so they can be reverted.
+- **Committing is the owner's job.** Stage nothing, commit nothing, push
+  nothing unless asked for that in so many words. Leave the work in the tree
+  and say what is in it; which changes belong together in one commit, and what
+  the message claims about them, is a judgement about the project's history
+  rather than a step in the task. "Deploy it" is **not** that permission — it
+  reads like it, because an image ought to be reproducible from a tagged state,
+  and 0.5.0 was committed on exactly that reasoning. Build and ship from the
+  working tree, then hand the commit back.
 
 ## Non-functional requirements
 
@@ -373,6 +381,28 @@ Where a number genuinely cannot be the same — the transfer excludes a running
 pomodoro, because a session needs an end — **say so on the screen**. That is the
 house rule about `67h 35m across tags`: label it rather than quietly changing it.
 
+## A control that is not on screen still applies
+
+The smoothing slider on the time patterns page is drawn beside the *line*, and
+only there. `smoothing` is a saved preference, so on a short window it came back
+at whatever the last month had been left at — and `seriesInput` fed both charts.
+"Hours per day" was therefore a moving average with no control anywhere on the
+page to say so, and no way to turn it off: a week whose only business trip was
+Friday drew that Friday's ten hours across four days it did not happen on,
+because `movingAverage` skips the days a group has nothing on, so a window whose
+single reading is Friday averages to exactly Friday.
+
+The tell was on the screen the whole time. The donut, the table and the
+`47h 15m tracked` caption all read raw totals, so the bars disagreed with three
+things beside them — which is the rule above, arrived at from the other
+direction. The fix is one derived value, `span = asLine ? smoothing : 1`, and
+what makes it the right shape is that it names the coupling: the span exists
+where its slider does.
+
+Worth checking whenever state outlives the control that sets it. Everything in
+`snapshot()` on both patterns pages is restored regardless of which window is
+in force.
+
 ## A shared one-second tick is not a stopwatch
 
 `lib/time/tick.js` fires on an interval that began whenever something first
@@ -387,6 +417,42 @@ running, which decided what the effect watched — which is the feedback loop
 `resource()` exists to prevent. The partition reads the shared tick; only the
 countdown reads the aligned one.
 
+
+## Correlations rank every pair; they never ask you for two
+
+The Correlation view was two selects and one scatter, which made finding
+anything a walk through *n(n−1)/2* pairs by hand. It now ranks them all and
+draws nothing until a row is tapped. Four rules decide what is in that list:
+
+- **Spearman, not Pearson.** A 1-5 answer is ordinal — the step from 2 to 3 is
+  not the same quantity as the step from 4 to 5 — so ranks are what the scale
+  supports, and a real but curved relationship still reads as one. Ranked
+  *within each pair's overlap*, not once globally, which costs 190 sorts on a
+  year and buys the exact answer where two variables have different coverage.
+  The test that holds the line is the monotone-but-not-linear one: `y = x³`
+  scores 1 under Spearman and about 0.92 under Pearson.
+- **Enum variables are not ranked, they partition.** `axisValues` maps an enum
+  answer to its option's *position in the list*, which is a display order
+  somebody dragged into place: a coefficient against it changes when the options
+  are reordered. As a filter the same variable is worth more, because the
+  ranking reads the facet-filtered `days` — so "how do these correlations look
+  on weekends" is a question the page answers by narrowing rather than by
+  plotting a category against a scale.
+- **A score is never paired with its own component.** That correlation is
+  guaranteed by the definition, so it is not a finding, and left in those pairs
+  take the top of the list. `question_ids` cannot see it — that says what a
+  variable *is* — so `Variable` carries `component_ids` for what it is *made
+  of*. Eagerly loaded on both queries in `stats.py`, or it is an N+1.
+- **Ten shared days to be ranked; thinner pairs are dimmed, not dropped.** The
+  floor was briefly going to be half the window, which sounds proportional and
+  is not: on a year it demands 183 days, so a question added two months ago
+  ranks against nothing and vanishes with nothing saying why. A pair below the
+  floor keeps its row, its count and its scatter — the house rule about
+  labelling a number rather than quietly changing it.
+
+Cost is 12-17ms for 190 pairs over 365 days, on a user action rather than per
+frame. `series.test.js` holds a budget so a regression surfaces there rather
+than as a frozen tab.
 
 ## Everything belongs to somebody
 
@@ -642,6 +708,19 @@ beside the server's own, when a cached worker is a release behind.
   then held Playwright's trace hint rather than the summary line. Two of the
   three were fine. A tool that reports everything as broken is usually the
   broken thing.
+- **A behaviour enforced twice cannot be probed by breaking one half.** The
+  correlation ranking reads the filtered day set through *both* `seriesFor`'s
+  default window and the `days` it is passed, and either alone produces the
+  right answer — so two separate mutations each left the test passing and it
+  looked vacuous. It was not: breaking both together failed it by name.
+  Redundancy is a property of the implementation, not a weakness of the test,
+  and the way to tell them apart is to break every path at once before
+  concluding anything.
+- **`toContainText` cannot see a plural go wrong.** "Streak · 1 days" contains
+  "Streak · 1 day", so the assertion written to pin the singular passed against
+  the bug it was written for — the same substring trap as `getByLabel`, one
+  matcher along. `toHaveText` compares the whole (whitespace-normalised) string
+  and catches it in both directions.
 - **Screenshot the element, not the page,** when judging a detail. A full-page
   capture scaled to fit is too coarse to tell which button is highlighted — twice
   I reported a bug that was not there. Crop, or read `aria-pressed`.

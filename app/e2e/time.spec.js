@@ -1083,6 +1083,11 @@ test('a wide smoothing span bridges a gap instead of breaking the line there', a
   // masking step threw away exactly the value smoothing had just worked out.
   // A fourteen-day average centred near here sees both tracked days.
   expect(option.series[0].data[at]).not.toBeNull()
+  // And greater than zero, which is the half that needs smoothing to have run.
+  // `not.toBeNull()` alone passed with smoothing disabled outright: untracked
+  // days count as zero unless the toggle below says otherwise, so the middle of
+  // the gap was already a number before any average reached it.
+  expect(option.series[0].data[at], 'the gap was not bridged').toBeGreaterThan(0)
 })
 
 test('leaving untracked days out of the average does not also reopen the gap', async ({
@@ -1106,6 +1111,62 @@ test('leaving untracked days out of the average does not also reopen the gap', a
   const at = option.xAxis[0].data.indexOf('2026-06-10')
 
   expect(option.series[0].data[at]).not.toBeNull()
+})
+
+test('a smoothing span left over from a long window does not average the daily bars', async ({
+  page,
+  account,
+}) => {
+  // The slider is drawn beside the line and only there, so on a week there is
+  // nothing on screen saying a span is in force - but it is a saved preference
+  // and comes back at whatever the last month was left at. Applied to "Hours
+  // per day" it copied one day's work onto its neighbours: `movingAverage`
+  // skips the days a project has nothing on, so a window whose only reading is
+  // Friday's trip averages to exactly Friday, on every day it reaches.
+  const work = await makeProject(account, 'Work')
+  const trip = await makeProject(account, 'Dienstreise')
+  for (const day of ['08', '09', '10', '11']) {
+    await recordSession(
+      account,
+      work.id,
+      `2026-06-${day}T09:00:00`,
+      `2026-06-${day}T18:00:00`
+    )
+  }
+  await recordSession(account, trip.id, '2026-06-12T08:00:00', '2026-06-12T18:45:00')
+
+  await page.goto('/time/patterns')
+  await expect(page.locator('[data-period]')).toBeVisible()
+  // Set on the month, where the control exists, rather than written into
+  // preferences behind the page's back: this is the way a person reaches it.
+  await page.getByRole('button', { name: 'Month', exact: true }).click()
+  await page.getByLabel('Smoothing').fill('14')
+  await page.getByRole('button', { name: 'Week', exact: true }).click()
+  await page.getByRole('button', { name: '← Previous' }).click()
+
+  const FRIDAY = '2026-06-12'
+  await expect(page.locator('[data-day-chart]')).toBeVisible()
+  const trips = async () => {
+    const option = await chartOption(page, '[data-day-chart]')
+    const at = option.xAxis[0].data.indexOf(FRIDAY)
+    return option.series.find((one) => one.name === 'Dienstreise')?.data?.[at] ?? null
+  }
+  // Polled first, and only for the positive half: the chart is mounted before
+  // the totals behind it arrive, and a one-shot read of an empty chart would
+  // satisfy every "nothing here" assertion below without drawing anything.
+  await expect.poll(trips, { message: 'the trip never reached the chart' }).toBe(10.75)
+
+  const option = await chartOption(page, '[data-day-chart]')
+  const days = option.xAxis[0].data
+  const spread = days
+    .map((day, at) => [day, option.series.find((one) => one.name === 'Dienstreise').data[at]])
+    .filter(([day, value]) => day !== FRIDAY && value)
+  expect(spread, 'the trip was drawn on days it did not happen').toEqual([])
+
+  // The other half of the same claim: what is left is the day itself, not an
+  // average that happens to land near it.
+  const worked = option.series.find((one) => one.name === 'Work').data
+  expect(worked[days.indexOf('2026-06-08')], 'Monday was averaged').toBe(9)
 })
 
 test('untagged time is reported below the total, not inside the charts', async ({

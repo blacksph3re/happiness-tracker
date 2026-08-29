@@ -142,10 +142,16 @@ test('every stats view renders, and the controls survive a reload', async ({
   await page.goto('/stats')
 
   const chart = page.locator('canvas')
-  for (const view of ['Over time', 'Shape', 'Correlation', 'Spread', 'Totals']) {
+  for (const view of ['Over time', 'Shape', 'Spread', 'Totals']) {
     await page.getByRole('button', { name: view }).click()
     await expect(chart.first()).toBeVisible()
   }
+
+  // Correlation is the one view that draws nothing until it is asked to: it
+  // ranks every pair and opens a plot only for the one you tap.
+  await page.getByRole('button', { name: 'Correlation' }).click()
+  await expect(page.locator('[data-correlations]')).toBeVisible()
+  await expect(chart).toHaveCount(0)
 
   // The chosen view is remembered across a reload.
   await savesView(page, () =>
@@ -320,4 +326,190 @@ test('revisiting the stats page re-reads nothing, and saves only on a change', a
   // And it survives a reload.
   await page.reload()
   await expect(page.getByRole('button', { name: 'Spread' })).toHaveClass(/border-ember/)
+})
+
+/**
+ * The correlation view ranks every pair rather than asking for two.
+ *
+ * Seeded so exactly one pair is unambiguous: the first two questions carry
+ * identical answers, which is a Spearman of 1, and nothing else reaches 0.19.
+ * The remaining three follow unrelated cycles, so the ordering below is a
+ * property of the data rather than of the order the questions were created in.
+ */
+async function withRelatedAnswers(account, dayCount = 21) {
+  const questions = realQuestions(await catalogueOf(account.api))
+  const days = recentDays(dayCount)
+  await seedAnswers(account.api, questions, days, (day, index) =>
+    index <= 1 ? day % 6 : index === 2 ? (day * 3) % 5 : index === 3 ? (day * 7) % 4 : (day * 5) % 6
+  )
+  return { questions, days }
+}
+
+/** Open the correlation view and wait for its list. */
+async function correlations(page) {
+  await page.getByRole('button', { name: 'Correlation' }).click()
+  const list = page.locator('[data-correlations]')
+  await expect(list).toBeVisible()
+  return list
+}
+
+const CHEERFUL = 'I have felt cheerful and in good spirits'
+const CALM = 'I have felt calm and relaxed'
+
+test('the strongest pair is at the top of the list', async ({ page, account }) => {
+  await withRelatedAnswers(account)
+  await page.goto('/stats')
+  const list = await correlations(page)
+
+  // Polled, not read once: the list is on screen before the answers behind it
+  // have arrived, and a one-shot read of an empty list satisfies nothing
+  // honestly. The row order is the positive claim, so polling is right here.
+  await expect
+    .poll(async () => (await list.locator('[data-rho]').first().textContent())?.trim())
+    .toBe('1.00')
+
+  const first = list.locator('li').first()
+  await expect(first).toContainText(CHEERFUL)
+  await expect(first).toContainText(CALM)
+  await expect(first.locator('[data-overlap]')).toHaveText('21 days')
+})
+
+test('a pair plots only once it is asked to', async ({ page, account }) => {
+  await withRelatedAnswers(account)
+  await page.goto('/stats')
+  const list = await correlations(page)
+  await expect.poll(() => list.locator('li').count()).toBeGreaterThan(0)
+
+  // Nothing is drawn until a row is opened - the whole point of replacing two
+  // selects with a ranking.
+  await expect(page.locator('canvas')).toHaveCount(0)
+
+  await list.locator('li').first().getByRole('button').click()
+  await expect(page.locator('[data-scatter] canvas')).toBeVisible()
+
+  // And it is *that* pair's plot, not merely a plot: the axes name the two
+  // questions the row does.
+  const option = await chartOption(page, '[data-scatter]')
+  const named = [option.xAxis[0].name, option.yAxis[0].name].sort()
+  expect(named).toEqual([CHEERFUL, CALM].sort())
+
+  await list.locator('li').first().getByRole('button').click()
+  await expect(page.locator('[data-scatter]')).toHaveCount(0)
+})
+
+test('a score is never ranked against a question it is made of', async ({
+  page,
+  account,
+}) => {
+  // The starter catalogue ships "Raw score" over all five questions, so every
+  // pair it could form is one of its own components and it appears in none.
+  // Without `component_ids` those five pairs exist and sit near the top, since
+  // a sum correlates with its parts by construction.
+  await withRelatedAnswers(account)
+  await page.goto('/stats')
+  const list = await correlations(page)
+  await expect.poll(() => list.locator('li').count()).toBeGreaterThan(0)
+
+  await expect(list).not.toContainText('Raw score')
+})
+
+test('a filter narrows what the coefficients are computed over', async ({
+  page,
+  account,
+}) => {
+  // Enum variables are not ranked - an option's position in a list is a display
+  // order, not a scale. They earn their place by partitioning instead, and this
+  // is the test that says the ranking reads the *filtered* window rather than
+  // the raw one.
+  await withRelatedAnswers(account)
+  await page.goto('/stats')
+  const list = await correlations(page)
+  await expect(list.locator('[data-overlap]').first()).toHaveText('21 days')
+
+  await page.getByRole('button', { name: /^Show/ }).click()
+  await page.getByRole('button', { name: 'Mon', exact: true }).click()
+
+  // Three Mondays in three weeks, so the pair is now measured over three days
+  // rather than twenty-one.
+  await expect(list.locator('[data-overlap]').first()).toHaveText('3 days')
+})
+
+test('a pair too thin to rank is kept, dimmed, below every ranked one', async ({
+  page,
+  account,
+}) => {
+  const { days } = await withRelatedAnswers(account)
+  const me = await (await account.api.get('/api/me')).json()
+  const added = await account.api.post(
+    `/api/catalogues/${me.default_catalogue_id}/questions`,
+    { data: { kind: 'discrete', prompt: 'Newly added', min_value: 0, max_value: 5 } }
+  )
+  expect(added.status(), await added.text()).toBe(201)
+  const question = await added.json()
+  // Three days only, which is under the floor of ten however good it looks.
+  for (const [at, day] of days.slice(-3).entries()) {
+    await seedAnswer(account.api, { day, question_id: question.id, value: at })
+  }
+
+  await page.goto('/stats')
+  const list = await correlations(page)
+  await expect.poll(() => list.locator('li').count()).toBeGreaterThan(5)
+
+  const rows = list.locator('li')
+  const last = rows.last()
+  await expect(last).toContainText('Newly added')
+  await expect(last.locator('[data-overlap]')).toHaveText('3 days')
+  // Kept rather than dropped, and said so, so the question does not simply
+  // vanish from the page with nothing explaining the absence.
+  await expect(page.getByText(/answered together on fewer than 10 days/)).toBeVisible()
+
+  // Every thin pair sits below every ranked one, rather than interleaved.
+  const overlaps = await list.locator('[data-overlap]').allTextContents()
+  const firstThin = overlaps.findIndex((text) => text === '3 days')
+  expect(overlaps.slice(firstThin).every((text) => text === '3 days')).toBe(true)
+})
+
+test('an enum question is not ranked, because its options carry no scale', async ({
+  page,
+  account,
+}) => {
+  // `axisValues` maps an enum answer to its option's *position in the list*,
+  // which is a display order somebody dragged into place — a coefficient
+  // against it changes when the options are reordered and means nothing either
+  // way. Enums earn their place as filters instead, which the test above pins.
+  const { days } = await withRelatedAnswers(account)
+  const me = await (await account.api.get('/api/me')).json()
+  const added = await account.api.post(
+    `/api/catalogues/${me.default_catalogue_id}/questions`,
+    {
+      data: {
+        kind: 'enum',
+        prompt: 'Where did you work',
+        options: [
+          { label: 'Home', position: 0 },
+          { label: 'Office', position: 1 },
+        ],
+      },
+    }
+  )
+  expect(added.status(), await added.text()).toBe(201)
+  const question = await added.json()
+  for (const [at, day] of days.entries()) {
+    await seedAnswer(account.api, {
+      day,
+      question_id: question.id,
+      option_id: question.options[at % 2].id,
+    })
+  }
+
+  await page.goto('/stats')
+  const list = await correlations(page)
+  await expect.poll(() => list.locator('li').count()).toBeGreaterThan(0)
+
+  // Answered on every one of the 21 days, so it is absent by rule rather than
+  // for want of data.
+  await expect(list).not.toContainText('Where did you work')
+  // And it is on the page — as something to filter by.
+  await page.getByRole('button', { name: /^Show/ }).click()
+  await expect(page.getByText('Where did you work')).toBeVisible()
 })

@@ -225,8 +225,21 @@
 
   const plotted = $derived(days.filter((day) => kept.has(day)))
 
+  /**
+   * The smoothing actually in force.
+   *
+   * The slider is drawn beside the line and only there, so on a short window
+   * there is nothing on screen saying a span applies — but `smoothing` is a
+   * saved preference and comes back at whatever the last long window was left
+   * at. Applied to "Hours per day" it stopped being hours per day: a project
+   * with one Friday in the week averaged that Friday across its neighbours,
+   * which put a business trip on four days it did not happen on and left the
+   * bars contradicting the donut and the total on the same screen.
+   */
+  const span = $derived(asLine ? smoothing : 1)
+
   /** Half a smoothing window: how far past each edge an average has to reach. */
-  const smoothingPad = $derived(smoothing > 1 ? Math.floor((smoothing - 1) / 2) : 0)
+  const smoothingPad = $derived(span > 1 ? Math.floor((span - 1) / 2) : 0)
 
   /**
    * The days an average is computed over: the window, plus half a window
@@ -263,11 +276,11 @@
 
   const seriesInput = $derived({
     days: plotted,
-    smoothed: smoothing > 1,
+    smoothed: span > 1,
     series: filed.map((group) => {
       const value = (day) =>
         group.byDay.has(day) ? hours(group.byDay.get(day)) : showGaps ? null : 0
-      if (smoothing <= 1) {
+      if (span <= 1) {
         return { name: group.name, colour: swatch(group.colour), data: plotted.map(value) }
       }
       // The nulls are passed through rather than flattened to zero, which is
@@ -279,7 +292,7 @@
       // where the whole window has nothing. The toggle's job ends at whether a
       // neighbour's average gets pulled down by it; it does not also get to
       // veto an answer smoothing already worked out.
-      const averaged = movingAverage(padded.days.map((day) => value(day)), smoothing)
+      const averaged = movingAverage(padded.days.map((day) => value(day)), span)
       return {
         name: group.name,
         colour: swatch(group.colour),
@@ -789,8 +802,11 @@
         <p class="meta mb-2">
           {asLine ? 'Average by weekday' : 'Hours per day'}
         </p>
+        <!-- Marked only in its bar form, so a test naming this selector cannot
+             silently read the weekday chart that shares the element. -->
         <div
           use:chart={asLine ? weekdayOptions(weekdayInput) : barOptions(seriesInput)}
+          data-day-chart={asLine ? undefined : ''}
           class="h-72 w-full"
         ></div>
       </div>

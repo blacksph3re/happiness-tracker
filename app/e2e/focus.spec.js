@@ -141,16 +141,30 @@ test('tainting shows on the pomodoro and changes no total', async ({ page, accou
   await start(page, 'Distracted')
   await page.clock.fastForward('31:00')
 
-  const before = await page.locator('[data-totals]').textContent()
+  // Wait for the pomodoro to be *finished* before reading the totals: they
+  // climb while one is running, so a reading taken a frame early is compared
+  // against a different day.
+  await expect(page.locator('[data-mark]')).toHaveAttribute('data-mark', 'tick')
+
+  /** The two durations, read on their own rather than as a slice of the row. */
+  const durations = async () =>
+    page.locator('[data-totals] p').evaluateAll((nodes) =>
+      nodes
+        .map((node) => node.textContent.replace(/\s+/g, ' ').trim())
+        .filter((text) => text.startsWith('Focus') || text.startsWith('Break'))
+    )
+
+  const before = await durations()
   await page.locator('[data-mark]').click()
 
   await expect(page.locator('[data-mark]')).toHaveAttribute('data-tainted', 'true')
   const [row] = await synced(page, account)
   expect(row.tainted).toBe(true)
-  // Time spent is time spent: the taint is a label, not a deduction.
-  expect(await page.locator('[data-totals]').textContent()).toContain(
-    before.split('Break')[0].trim()
-  )
+  // Time spent is time spent: the taint is a label, not a deduction. Compared
+  // as values, because the row gains a Tainted entry and a substring of its
+  // whole text is hostage to that.
+  expect(await durations()).toEqual(before)
+  expect(await page.locator('[data-totals]').textContent()).toContain('Tainted')
 })
 
 test('the day can be copied to a project, once', async ({ page, account }) => {

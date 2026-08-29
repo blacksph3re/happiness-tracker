@@ -1427,6 +1427,10 @@ export type Variable = {
      */
     question_ids?: Array<number>;
     /**
+     * Component Ids
+     */
+    component_ids?: Array<number>;
+    /**
      * Roles
      */
     roles?: Array<string>;

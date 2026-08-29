@@ -55,3 +55,31 @@ export function dayLabel(key, { withYear = false } = {}) {
     ...(withYear ? { year: 'numeric' } : {}),
   })
 }
+
+/**
+ * How many days in a row, up to and including `from`, appear in `days`.
+ *
+ * Counted back from today when today is there and from yesterday when it is
+ * not. A streak that required today would read zero every morning until the
+ * questions were answered, which is the one time of day it is most worth
+ * seeing — so an unanswered today leaves the run standing rather than ending
+ * it. Two missed days in a row is what ends it.
+ *
+ * A day counts once however many questions it holds: this is about turning up,
+ * not about finishing, and a day left half-answered still happened.
+ *
+ * @param {Iterable<string>} days The `YYYY-MM-DD` keys anything was recorded
+ *   on, in any order and with repeats.
+ * @param {string} [from] The day to count back from, by default today.
+ * @returns {number} The length of the run, zero when there is none.
+ */
+export function streak(days, from = today()) {
+  const held = days instanceof Set ? days : new Set(days)
+  let cursor = held.has(from) ? from : shiftDay(from, -1)
+  let run = 0
+  while (held.has(cursor)) {
+    run += 1
+    cursor = shiftDay(cursor, -1)
+  }
+  return run
+}

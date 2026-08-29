@@ -290,3 +290,33 @@ def test_a_score_may_only_be_defined_on_your_own_catalogue(
         },
     )
     assert refused.status_code == 404
+
+
+def test_a_score_variable_names_the_questions_it_is_made_of(
+    client, admin_headers, catalogue_id, starter_questions
+):
+    # The correlation ranking needs this to drop a score against its own
+    # component: that pair is guaranteed by the definition, so it is not a
+    # finding, and `question_ids` cannot show it - it says what the variable
+    # *is*, never what it is made of.
+    answer(client, admin_headers, starter_questions[0]["id"], 4)
+    score = seeded_score(client, admin_headers, catalogue_id)
+
+    variables = client.get("/api/stats/variables", headers=admin_headers).json()
+    computed = next(v for v in variables if v["origin"] == "computed")
+
+    assert computed["question_ids"] == [score["id"]]
+    assert set(computed["component_ids"]) == {
+        component["source_question_id"] for component in score["components"]
+    }
+
+
+def test_an_asked_variable_is_made_of_nothing(
+    client, admin_headers, starter_questions
+):
+    answer(client, admin_headers, starter_questions[0]["id"], 4)
+
+    variables = client.get("/api/stats/variables", headers=admin_headers).json()
+    asked = next(v for v in variables if v["origin"] == "asked")
+
+    assert asked["component_ids"] == []

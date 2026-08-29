@@ -1,4 +1,13 @@
-import { expect, makeProject, recordSession, test, TODAY } from './fixtures.js'
+import {
+  catalogueOf,
+  expect,
+  makeProject,
+  realQuestions,
+  recordSession,
+  seedAnswers,
+  test,
+  TODAY,
+} from './fixtures.js'
 
 /**
  * What the landing page shows before the server answers.
@@ -121,4 +130,62 @@ test('a first visit with no connection says so rather than spinning', async ({ p
   release()
 
   await expect(page.locator('[data-card="time"]')).toContainText('No projects yet')
+})
+
+/** The days ending on `end`, oldest first, as `YYYY-MM-DD`. */
+function runUpTo(count, end) {
+  const [year, month, day] = end.split('-').map(Number)
+  const days = []
+  for (let back = count - 1; back >= 0; back -= 1) {
+    days.push(new Date(Date.UTC(year, month - 1, day - back)).toISOString().slice(0, 10))
+  }
+  return days
+}
+
+test('the wellbeing card counts the days answered in a row', async ({ page, account }) => {
+  const questions = realQuestions(await catalogueOf(account.api))
+  await seedAnswers(account.api, questions, runUpTo(4, TODAY))
+
+  await page.goto('/')
+  // `toHaveText`, not `toContainText`: "Streak · 4 day" contains "Streak · 4
+  // day" too, so a substring match cannot see a plural go wrong in either
+  // direction. Whitespace is normalised for us.
+  await expect(page.locator('[data-streak]')).toHaveText('Streak · 4 days')
+})
+
+test('a streak survives a today that has not been answered yet', async ({
+  page,
+  account,
+}) => {
+  // The case the count exists for. Answered through yesterday and nothing yet
+  // today: the run is three days old and still standing, and a page that only
+  // counted back from today would say nothing here every morning.
+  const questions = realQuestions(await catalogueOf(account.api))
+  const days = runUpTo(4, TODAY).slice(0, 3)
+  await seedAnswers(account.api, questions, days)
+
+  await page.goto('/')
+  await expect(page.locator('[data-streak]')).toHaveText('Streak · 3 days')
+  // And the card still says the day is outstanding, which is the other half of
+  // the same state: the streak is alive *and* today is unanswered.
+  await expect(page.locator('[data-card="wellbeing"]')).toContainText('left')
+})
+
+test('a broken run is not shown at all', async ({ page, account }) => {
+  // Two days missed, so there is no run to report. Zero is not printed: on a
+  // card whose whole job is to invite an answer it reads as an accusation.
+  const questions = realQuestions(await catalogueOf(account.api))
+  await seedAnswers(account.api, questions, runUpTo(6, TODAY).slice(0, 3))
+
+  await page.goto('/')
+  await expect(page.locator('[data-card="wellbeing"]')).toContainText('Answer today')
+  await expect(page.locator('[data-streak]')).toHaveCount(0)
+})
+
+test('one day reads as a day, not as days', async ({ page, account }) => {
+  const questions = realQuestions(await catalogueOf(account.api))
+  await seedAnswers(account.api, questions, [TODAY])
+
+  await page.goto('/')
+  await expect(page.locator('[data-streak]')).toHaveText('Streak · 1 day')
 })

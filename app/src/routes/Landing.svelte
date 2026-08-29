@@ -19,7 +19,7 @@ import { elapsed } from '../lib/time/duration.js'
     ready,
     timeEntries,
   } from '../lib/store.js'
-  import { today } from '../lib/day.js'
+  import { streak, today } from '../lib/day.js'
 
   /**
    * The one place the three halves meet.
@@ -65,6 +65,11 @@ import { elapsed } from '../lib/time/duration.js'
   const outstanding = $derived(
     questions.filter((question) => !answeredToday.has(question.id)).length
   )
+
+  // Over every answer the device holds, which this page already loads in full
+  // for the count above — so the streak costs no second request and paints
+  // from the snapshot with everything else.
+  const streakDays = $derived(streak($answerStore.map((row) => row.day), day))
 
   const running = $derived(
     $timeEntries
@@ -141,7 +146,18 @@ import { elapsed } from '../lib/time/duration.js'
              bg-ink-soft p-6 transition hover:border-white/30 hover:bg-dusk/10"
     >
       <div>
-        <p class="meta">Wellbeing</p>
+        <!-- The streak rides on the section label rather than taking a line of
+             its own: it is context for the card, not the thing the card is
+             about, and a fourth line pushed the button off the fold on a
+             phone. Hidden at zero, where it is only ever an accusation. -->
+        <p class="meta flex items-baseline justify-between gap-3">
+          <span>Wellbeing</span>
+          {#if !loading && streakDays > 0}
+            <span data-streak={streakDays}>
+              Streak · {streakDays} {streakDays === 1 ? 'day' : 'days'}
+            </span>
+          {/if}
+        </p>
         <p class="mt-3 text-2xl font-semibold">
           {#if loading}
             …

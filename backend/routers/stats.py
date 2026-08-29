@@ -60,7 +60,10 @@ def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
     answered = (
         db.execute(
             select(Question)
-            .options(selectinload(Question.options))
+            # Components as well as options: every variable now reports what it
+            # is made of, and reading that off a lazy relationship would put one
+            # query per answered question behind this endpoint.
+            .options(selectinload(Question.options), selectinload(Question.components))
             .join(Answer, Answer.question_id == Question.id)
             .where(Answer.user_id == user.id, Question.active.is_(True))
             .distinct()
@@ -117,6 +120,12 @@ def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
             max_label=question.max_label,
             options=[OptionOut.model_validate(option) for option in question.options],
             question_ids=[question.id],
+            # Empty for everything else: only a computed question has
+            # components. Eagerly loaded on both queries above, so this is a
+            # read off memory rather than a query per variable.
+            component_ids=[
+                component.source_question_id for component in question.components
+            ],
             roles=(
                 COMPUTED_ROLES
                 if question.origin == ORIGIN_COMPUTED
