@@ -63,7 +63,16 @@ async function seedPomodoro(account, startedAt) {
 /** Visit the landing page once so the device has a snapshot of it. */
 async function warmUp(page) {
   await page.goto('/')
+  // Every card, not only the one the caller is about to assert on. The
+  // catalogue arrives on a *chained* request — `ensureMe()` and then
+  // `ensureCatalogue(...)` — so it lands after the four parallel loads, and a
+  // reload timed between the two restores a snapshot with no questions in it.
+  // That printed "No questions yet" where "5 of 5 left" belongs, about once in
+  // eight full runs. Waiting on the last card to fill is waiting for the device
+  // to have genuinely seen this account.
   await expect(page.locator('[data-card="time"]')).toContainText('The rewrite')
+  await expect(page.locator('[data-card="wellbeing"]')).toContainText('5 of 5 left')
+  await expect(page.locator('[data-card="focus"]')).not.toContainText('…')
 }
 
 test('a running timer is on the landing page before the server answers', async ({
@@ -142,15 +151,20 @@ function runUpTo(count, end) {
   return days
 }
 
-test('the wellbeing card counts the days answered in a row', async ({ page, account }) => {
+test('the habits strip counts the days answered in a row', async ({ page, account }) => {
   const questions = realQuestions(await catalogueOf(account.api))
   await seedAnswers(account.api, questions, runUpTo(4, TODAY))
 
   await page.goto('/')
-  // `toHaveText`, not `toContainText`: "Streak · 4 day" contains "Streak · 4
-  // day" too, so a substring match cannot see a plural go wrong in either
-  // direction. Whitespace is normalised for us.
-  await expect(page.locator('[data-streak]')).toHaveText('Streak · 4 days')
+  // Daily tracking is a habit like any other now, and lives in the strip rather
+  // than on the wellbeing card's label — the same number in two places is the
+  // failure the transfer button already taught this codebase.
+  //
+  // `toHaveText`, not `toContainText`: "🔥 4 days" contains "🔥 4 day" too, so a
+  // substring match cannot see a plural go wrong in either direction.
+  await expect(page.locator('[data-habit="tracking"] [data-streak]')).toHaveText(
+    '🔥 4 days'
+  )
 })
 
 test('a streak survives a today that has not been answered yet', async ({
@@ -165,21 +179,29 @@ test('a streak survives a today that has not been answered yet', async ({
   await seedAnswers(account.api, questions, days)
 
   await page.goto('/')
-  await expect(page.locator('[data-streak]')).toHaveText('Streak · 3 days')
+  await expect(page.locator('[data-habit="tracking"] [data-streak]')).toHaveText(
+    '🔥 3 days'
+  )
   // And the card still says the day is outstanding, which is the other half of
   // the same state: the streak is alive *and* today is unanswered.
   await expect(page.locator('[data-card="wellbeing"]')).toContainText('left')
 })
 
-test('a broken run is not shown at all', async ({ page, account }) => {
-  // Two days missed, so there is no run to report. Zero is not printed: on a
-  // card whose whole job is to invite an answer it reads as an accusation.
+test('a broken run says where it stands rather than vanishing', async ({
+  page,
+  account,
+}) => {
+  // Two days missed, so there is no run to report. This used to be hidden
+  // entirely, and on the wellbeing card that was right: zero on a card whose
+  // whole job is to invite an answer reads as an accusation. In a list somebody
+  // opened on purpose it owes them a reading instead.
   const questions = realQuestions(await catalogueOf(account.api))
   await seedAnswers(account.api, questions, runUpTo(6, TODAY).slice(0, 3))
 
   await page.goto('/')
-  await expect(page.locator('[data-card="wellbeing"]')).toContainText('Answer today')
-  await expect(page.locator('[data-streak]')).toHaveCount(0)
+  await expect(page.locator('[data-card="wellbeing"]')).toContainText('Answer')
+  await expect(page.locator('[data-habit="tracking"]')).toHaveAttribute('data-run', '0')
+  await expect(page.locator('[data-habit="tracking"] [data-streak]')).toContainText('🔥 —')
 })
 
 test('one day reads as a day, not as days', async ({ page, account }) => {
@@ -187,5 +209,7 @@ test('one day reads as a day, not as days', async ({ page, account }) => {
   await seedAnswers(account.api, questions, [TODAY])
 
   await page.goto('/')
-  await expect(page.locator('[data-streak]')).toHaveText('Streak · 1 day')
+  await expect(page.locator('[data-habit="tracking"] [data-streak]')).toHaveText(
+    '🔥 1 day'
+  )
 })

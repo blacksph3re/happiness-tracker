@@ -754,7 +754,14 @@ export async function ensureTagRules({ force = false } = {}) {
     // so a lunch break silently stops being deducted. Marking the load complete
     // on top of that cached the wrong answer for good, because nothing asks
     // again for something already fetched.
-    let complete = true
+    //
+    // Seeded from the tag list rather than from `true`, and that is the half
+    // this originally missed: an unconfirmed `GET /api/tags` hands back an
+    // **empty** list, and every rule over no tags answers trivially. So a
+    // failure one level down still ended in `fetched.add('rules')` — the same
+    // defect as before, arrived at through its dependency. A guard on a read has
+    // to cover the reads it is built on.
+    let complete = fetched.has('tags')
     const pairs = await Promise.all(
       known.map(async (tag) => {
         const rule = await quietly(() => getTagRule({ path: { tag_id: tag.id } }))

@@ -19,6 +19,8 @@
   import { plotWindow } from '../../lib/timeline.js'
   import {
     answers as answerStore,
+    catalogueDetails,
+    ensureAllCatalogues,
     ensureAnswers,
     ensurePreferences,
     preferenceSection,
@@ -26,7 +28,10 @@
     persistPreferences,
     variables as variableStore,
   } from '../../lib/store.js'
-  import { dayLabel } from '../../lib/day.js'
+  import { dayLabel, today } from '../../lib/day.js'
+  import { query } from '../../lib/router.js'
+  import { habitsIn } from '../../lib/habits.js'
+  import StreakGrid from '../../lib/wellbeing/StreakGrid.svelte'
   import { earliestHours, systemFacet } from '../../lib/facets.js'
 
   // Read from the stores rather than snapshotted out of the loader, so that a
@@ -91,7 +96,58 @@
     ['scatter', 'Correlation'],
     ['box', 'Spread'],
     ['totals', 'Totals'],
+    ['streaks', 'Streaks'],
   ]
+
+  /**
+   * How many periods the streak grid draws, offered rather than free-form.
+   *
+   * A year was here and is not: 52 daily cells fit a phone and 52 weekly ones
+   * do not, so every lane grew its own sideways scroll — a control that made the
+   * page worse at the width most of it is read at. Stepping the window back is
+   * what reaches further now, and it costs no width at all.
+   */
+  const SPANS = [12, 26]
+
+  // In periods rather than days, and its own control rather than the window
+  // above: a weekly habit inside a 30-day window is four cells, which is a
+  // picture of nothing. The same reason the focus strip takes a relative axis.
+  let streakSpan = $state(26)
+
+  /**
+   * How many windows back the grid is showing, zero being the one ending today.
+   *
+   * Stepped by whole windows rather than single periods, so Previous is the
+   * same gesture as turning a page. Not persisted: a preference remembers the
+   * shape of a view, never the position in it — the same reason an open scatter
+   * pair is not remembered.
+   */
+  let streakBack = $state(0)
+
+  // Every habit in every catalogue the account has, plus the synthetic one.
+  // Read from the store rather than snapshotted out of the loader, so a target
+  // changed on another device redraws these rows without a reload.
+  const habits = $derived(
+    Object.values($catalogueDetails).flatMap((detail) =>
+      habitsIn(detail).filter((habit) => !habit.synthetic)
+    )
+  )
+  // Daily tracking last and once, however many catalogues there are.
+  const streakHabits = $derived([...habits, ...habitsIn(null)])
+
+  // What a complete day answers, for how full a daily-tracking cell is drawn.
+  const expectedPerDay = $derived(
+    Object.values($catalogueDetails).reduce(
+      (most, detail) =>
+        Math.max(
+          most,
+          (detail.questions ?? []).filter(
+            (question) => question.active && question.origin === 'asked'
+          ).length
+        ),
+      0
+    )
+  )
 
   const numeric = $derived(variables.filter((v) => v.roles.includes('axis')))
   // Enum answers carry no scale, so they never become an axis. They filter the
@@ -111,7 +167,9 @@
   // Every view but Totals plots a scale, so a catalogue of nothing but enum
   // questions can only offer that one. Counting answers needs no scale.
   const views = $derived(
-    numeric.length > 0 ? VIEWS : VIEWS.filter(([key]) => key === 'totals')
+    numeric.length > 0
+      ? VIEWS
+      : VIEWS.filter(([key]) => key === 'totals' || key === 'streaks')
   )
 
   /**
@@ -137,14 +195,37 @@
     // make a later update invisible.
     const loadedVariables = (await ensureVariables()) ?? []
     await ensureAnswers()
+    // Habit definitions live on the question, in exactly one payload: two
+    // copies of a definition is how the transfer button ended up
+    // disagreeing with the totals above it. Not awaited into local state —
+    // `habits` reads the store, so a later change redraws the rows.
+    ensureAllCatalogues()
     const axes = loadedVariables.filter((v) => v.roles.includes('axis'))
     chosen = new Set(axes.filter((v) => v.origin === 'asked').map((v) => v.key))
 
     const stored = preferenceSection(await ensurePreferences(), 'stats')
     if (stored.view) view = stored.view
+    // A view named in the URL wins over the stored one, and is applied after it
+    // so arriving from a habit chip lands on the streaks whatever was last left
+    // open. Read once here rather than as a `$derived`: it is a starting point,
+    // not a binding, so tapping another tab afterwards has to stick.
+    const asked = $query.get('view')
+    if (asked && VIEWS.some(([key]) => key === asked)) view = asked
     if (Array.isArray(stored.chosen)) chosen = new Set(stored.chosen)
     if (Number.isFinite(stored.windowDays)) windowDays = stored.windowDays
     if (Number.isFinite(stored.smoothing)) smoothing = stored.smoothing
+    // A stored 52 is what an account that used the old control has; it is
+    // clamped rather than ignored, so the page opens on the nearest thing
+    // to what was left rather than silently on the default.
+    if (Number.isFinite(stored.streakSpan)) {
+      streakSpan = SPANS.includes(stored.streakSpan)
+        ? stored.streakSpan
+        : SPANS.reduce((best, span) =>
+            Math.abs(span - stored.streakSpan) < Math.abs(best - stored.streakSpan)
+              ? span
+              : best
+          )
+    }
     if (stored.filters && typeof stored.filters === 'object') {
       filters = Object.fromEntries(
         Object.entries(stored.filters)
@@ -163,6 +244,7 @@
       chosen: [...chosen].sort(),
       windowDays,
       smoothing,
+      streakSpan,
       filters: Object.fromEntries(
         Object.entries(filters)
           .map(([key, values]) => [key, [...values].sort()])
@@ -480,7 +562,11 @@
 
   {#if loading}
     <p class="meta">Loading…</p>
-  {:else if numeric.length === 0 && totalsVariables.length === 0}
+  <!-- Streaks needs no plottable variable and no answer at all: a habit defined
+       this morning has a run of zero and a grid of empty cells, which is a
+       reading rather than nothing. Only a catalogue with no habits *and*
+       nothing to plot is genuinely empty. -->
+  {:else if numeric.length === 0 && totalsVariables.length === 0 && habits.length === 0}
     <div class="rounded-xl border border-white/10 bg-ink-soft p-8">
       <h2 class="text-xl font-bold">Nothing to plot yet</h2>
       <p class="mt-2 text-haze">Answer a few days and your patterns will appear here.</p>
@@ -500,6 +586,84 @@
       {/each}
     </div>
 
+    <!-- Neither control belongs to the streak view. Its span is in periods
+         rather than days, and it deliberately ignores the day filters: a streak
+         over "only Saturdays" is not a streak, because the target says *per
+         week* and narrowing the days silently changes what that means. -->
+    {#if activeView === 'streaks'}
+      <!-- Two groups, each of which holds together and wraps as a unit. Laid
+           out by hand rather than left to one `flex-wrap`: a single wrapping
+           row broke wherever it ran out of room, which on a phone put one span
+           button on its own line, split "Up to today" across two, and dropped
+           the arrow of "Next →" under its own word. A caption that can move to
+           its own line while the buttons it labels stay side by side is the
+           whole of the fix. -->
+      <div class="mb-4 flex flex-col gap-3 rounded-xl border border-white/10
+                  bg-ink-soft px-4 py-3 sm:flex-row sm:flex-wrap
+                  sm:items-center sm:justify-between">
+        <span class="flex flex-wrap items-center gap-2 sm:gap-3">
+          <span class="meta shrink-0">Span</span>
+          <!-- `flex-1` up to the breakpoint, so the pair fills the row it is on
+               and comes out one width rather than two. Equal padding does not
+               make equal buttons: "12 periods" and "26 periods" happen to be
+               the same length, and the next span added would not be. -->
+          <span class="flex flex-1 items-stretch gap-2 sm:flex-none sm:gap-3">
+            {#each SPANS as span (span)}
+              <button
+                class="meta flex-1 rounded-md border px-3 py-2 whitespace-nowrap transition
+                       sm:flex-none
+                       {streakSpan === span
+                  ? 'border-ember bg-ember/10 text-paper'
+                  : 'border-white/15 hover:border-white/40'}"
+                aria-pressed={streakSpan === span}
+                data-span={span}
+                onclick={() => {
+                  streakSpan = span
+                  // Back to the present on a change of span: a window measured
+                  // in periods means a different stretch of calendar at each
+                  // size, so "three windows back" would silently move as well
+                  // as resize.
+                  streakBack = 0
+                }}
+              >
+                {span} periods
+              </button>
+            {/each}
+          </span>
+        </span>
+
+        <!-- Stepped in whole windows, the way the time patterns page steps its
+             own. Next stops at the present rather than wrapping, because there
+             is nothing after today to look at. -->
+        <span class="flex flex-wrap items-center gap-2 sm:gap-3">
+          <span class="meta shrink-0 whitespace-nowrap" data-streak-back={streakBack}>
+            {streakBack === 0
+              ? 'Up to today'
+              : `${streakBack} ${streakBack === 1 ? 'window' : 'windows'} back`}
+          </span>
+          <span class="flex flex-1 items-stretch gap-2 sm:flex-none sm:gap-3">
+            <button
+              class="meta flex-1 rounded-md border border-white/15 px-3 py-2
+                     whitespace-nowrap hover:border-white/40 sm:flex-none"
+              data-streak-step="back"
+              onclick={() => (streakBack += 1)}
+            >
+              ← Previous
+            </button>
+            <button
+              class="meta flex-1 rounded-md border border-white/15 px-3 py-2
+                     whitespace-nowrap hover:border-white/40 disabled:opacity-30
+                     disabled:hover:border-white/15 sm:flex-none"
+              data-streak-step="forward"
+              disabled={streakBack === 0}
+              onclick={() => (streakBack = Math.max(0, streakBack - 1))}
+            >
+              Next →
+            </button>
+          </span>
+        </span>
+      </div>
+    {:else}
     <div class="mb-4 rounded-xl border border-white/10 bg-ink-soft">
       <button
         class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
@@ -522,7 +686,7 @@
 
       {#if showOpen}
         <div class="border-t border-white/10 p-4">
-          {#if activeView !== 'totals'}
+          {#if activeView !== 'totals' && activeView !== 'streaks'}
             <div class="mb-3 flex items-center justify-between gap-3">
               <p class="meta">Variables</p>
               <span class="flex gap-3">
@@ -557,7 +721,7 @@
             </div>
           {/if}
 
-          {#if filterable.length > 0}
+          {#if filterable.length > 0 && activeView !== 'streaks'}
             <hr class="my-4 border-white/10" />
             <div class="mb-3 flex items-center justify-between gap-3">
               <p class="meta">Only days where</p>
@@ -660,8 +824,18 @@
         {/if}
       </div>
     </div>
+    {/if}
 
-    {#if activeView === 'scatter'}
+    {#if activeView === 'streaks'}
+      <StreakGrid
+        habits={streakHabits}
+        answers={rows}
+        expected={expectedPerDay}
+        span={streakSpan}
+        offset={streakBack * streakSpan}
+        from={today()}
+      />
+    {:else if activeView === 'scatter'}
       {#if ranked.length === 0}
         <div class="flex h-[26rem] items-center justify-center rounded-xl border
                     border-white/10 bg-ink-soft px-6 text-center">

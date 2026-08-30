@@ -280,3 +280,81 @@ def test_another_accounts_catalogue_does_not_show_in_the_digest(client, admin_he
 
     after = client.get("/api/changes", headers=admin_headers).json()["catalogues"]
     assert after == before
+
+
+def test_a_question_added_or_edited_moves_the_catalogue_watermark(
+    client, admin_headers, catalogue_id, backdate
+):
+    """Questions have no fingerprint of their own; they ride on their catalogue.
+
+    Measured before this was fixed: adding a question and editing one both left
+    the ``catalogues`` fingerprint at exactly the count and timestamp it started
+    with, so a second device went on showing the old wording — and, once habits
+    existed, the old target and therefore a different streak — until somebody
+    reloaded the page.
+    """
+    backdate("catalogues", 10)
+    before = digest(client, admin_headers)["catalogues"]
+
+    added = client.post(
+        f"/api/catalogues/{catalogue_id}/questions",
+        headers=admin_headers,
+        json={
+            "kind": "enum",
+            "prompt": "Went to gym?",
+            "options": [{"label": "Yes"}, {"label": "No"}],
+        },
+    )
+    assert added.status_code == 201, added.text
+    after_add = digest(client, admin_headers)["catalogues"]
+    assert after_add != before
+
+    # Re-read after backdating, not before: the add above and the edit below
+    # would otherwise land in the same second, and `CURRENT_TIMESTAMP` cannot
+    # tell them apart.
+    backdate("catalogues", 10)
+    pushed_back = digest(client, admin_headers)["catalogues"]
+
+    question = added.json()
+    edited = client.put(
+        f"/api/questions/{question['id']}",
+        headers=admin_headers,
+        json={"prompt": "Gym?"},
+    )
+    assert edited.status_code == 200, edited.text
+    assert digest(client, admin_headers)["catalogues"] != pushed_back
+
+
+def test_marking_an_option_as_counted_moves_the_catalogue_watermark(
+    client, admin_headers, catalogue_id, backdate
+):
+    """A habit definition is the change most likely to be noticed as wrong.
+
+    The wording of a question at least looks stale; a target changed on another
+    device shows a *number* that quietly disagrees with the one beside it.
+    """
+    created = client.post(
+        f"/api/catalogues/{catalogue_id}/questions",
+        headers=admin_headers,
+        json={
+            "kind": "enum",
+            "prompt": "Went to gym?",
+            "habit_period": "week",
+            "habit_target": 1,
+            "habit_direction": "at_least",
+            "options": [{"label": "Yes"}, {"label": "No"}],
+        },
+    )
+    assert created.status_code == 201, created.text
+    question = created.json()
+
+    backdate("catalogues", 10)
+    before = digest(client, admin_headers)["catalogues"]
+
+    marked = client.put(
+        f"/api/questions/{question['id']}/options/{question['options'][0]['id']}",
+        headers=admin_headers,
+        json={"counts": True},
+    )
+    assert marked.status_code == 200, marked.text
+    assert digest(client, admin_headers)["catalogues"] != before

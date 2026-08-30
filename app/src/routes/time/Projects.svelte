@@ -45,6 +45,17 @@
   let editingBands = $state(null)
   let bands = $state([])
 
+  /** Which open of the rule editor is current, so a late answer can be dropped. */
+  let bandsToken = 0
+
+  /** Whether the rule on screen has been edited since it was opened. */
+  let touched = $state(false)
+
+  /** Mark the rule as edited, so a read still in flight cannot overwrite it. */
+  function touch() {
+    touched = true
+  }
+
   /** Minutes the open tag's rule adds to every day it tracked anything. */
   let addMinutes = $state(0)
 
@@ -178,10 +189,28 @@
    *
    * Loaded on demand: most tags have no rule, and the summary already carries
    * the numbers it produces, so the rule itself is only wanted here.
+   *
+   * The panel opens straight away and the answer is laid in when it arrives,
+   * which leaves a window this page used to lose work in: a band added and a
+   * threshold typed before the (empty) rule came back were both wiped by
+   * `bands = rule.bands ?? []`. It is a slow, hand-edited form, so beating a
+   * round trip is ordinary rather than exotic — it broke a test under load, and
+   * on a bad connection it would have been somebody's afternoon.
+   *
+   * Two guards, and they cover different mistakes. `token` drops an answer for a
+   * tag that is no longer the one open, which is what closing one rule and
+   * opening another produces. `touched` drops an answer the person has already
+   * overtaken, the same rule `ensurePreferences` follows: an edit made while the
+   * read is outstanding is a real edit.
    */
   async function openBands(tag) {
+    const token = (bandsToken += 1)
     editingBands = tag.id
+    bands = []
+    addMinutes = 0
+    touched = false
     const rule = (await attempt(() => getTagRule({ path: { tag_id: tag.id } }))) ?? {}
+    if (token !== bandsToken || touched) return
     bands = rule.bands ?? []
     addMinutes = rule.add_minutes ?? 0
   }
@@ -520,6 +549,7 @@
                     min="0"
                     max="1440"
                     bind:value={addMinutes}
+                    oninput={touch}
                     aria-label="Add to every tracked day"
                     class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
                            py-2 text-sm"
@@ -538,6 +568,7 @@
                           type="number"
                           min="0"
                           bind:value={band.from_minutes}
+                          oninput={touch}
                           aria-label="Band {index + 1} threshold"
                           class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
                                  py-2 text-sm"
@@ -550,8 +581,10 @@
                           min="0"
                           disabled={band.deduct_minutes === null}
                           value={band.deduct_minutes ?? ''}
-                          oninput={(event) =>
-                            (band.deduct_minutes = Number(event.currentTarget.value))}
+                          oninput={(event) => {
+                            band.deduct_minutes = Number(event.currentTarget.value)
+                            touch()
+                          }}
                           placeholder="the rest"
                           aria-label="Band {index + 1} deduction"
                           class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
@@ -562,8 +595,10 @@
                         <input
                           type="checkbox"
                           checked={band.deduct_minutes === null}
-                          onchange={(event) =>
-                            (band.deduct_minutes = event.currentTarget.checked ? null : 30)}
+                          onchange={(event) => {
+                            band.deduct_minutes = event.currentTarget.checked ? null : 30
+                            touch()
+                          }}
                           aria-label="Band {index + 1} caps the day"
                           class="h-4 w-4 rounded border-white/25 bg-ink accent-ember"
                         />
@@ -573,7 +608,10 @@
                         class="meta rounded-md border border-white/15 px-3 py-2
                                hover:border-ember"
                         aria-label="Remove band {index + 1}"
-                        onclick={() => (bands = bands.filter((_, at) => at !== index))}
+                        onclick={() => {
+                          bands = bands.filter((_, at) => at !== index)
+                          touch()
+                        }}
                       >
                         ×
                       </button>
@@ -640,7 +678,10 @@
                     class="meta flex items-center gap-2 rounded-md border border-white/15
                            px-3 py-2 hover:border-white/40"
                     onclick={() =>
-                      (bands = [...bands, { from_minutes: 0, deduct_minutes: 30 }])}
+                      {
+                        bands = [...bands, { from_minutes: 0, deduct_minutes: 30 }]
+                        touch()
+                      }}
                   >
                     <IconPlus class="size-3.5" />
                     Add a band

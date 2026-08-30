@@ -24,8 +24,7 @@ from sqlalchemy import select  # noqa: E402
 
 import main  # noqa: E402
 from database import SessionLocal  # noqa: E402
-from models import Answer, Question, User  # noqa: E402
-from services.wellbeing import _system_values  # noqa: E402
+from models import ORIGIN_ASKED, Answer, Question, User  # noqa: E402
 
 
 def seed(years: int) -> tuple[int, int]:
@@ -52,8 +51,11 @@ def seed(years: int) -> tuple[int, int]:
             .scalars()
             .all()
         )
-        real = [q for q in questions if q.system_key is None]
-        system = [q for q in questions if q.system_key is not None]
+        # Every question row is one somebody answers. The auto-tracked values
+        # used to be rows here too — 36% of this table — and are computed on
+        # read now, so there is no second kind to seed and the payload this
+        # measures is the one the app actually asks for.
+        real = [q for q in questions if q.origin == ORIGIN_ASKED]
 
         days = years * 365
         start = date.today() - timedelta(days=days - 1)
@@ -70,34 +72,9 @@ def seed(years: int) -> tuple[int, int]:
                         question_id=question.id,
                         day=day,
                         value=float(value),
+                        local_hour=9,
                     )
                 )
-            values = _system_values(day, 9)
-            for question in system:
-                if question.kind == "enum":
-                    position = int(values[question.system_key])
-                    option = next(
-                        (o for o in question.options if o.position == position), None
-                    )
-                    if option is None:
-                        continue
-                    rows.append(
-                        Answer(
-                            user_id=user.id,
-                            question_id=question.id,
-                            day=day,
-                            option_id=option.id,
-                        )
-                    )
-                else:
-                    rows.append(
-                        Answer(
-                            user_id=user.id,
-                            question_id=question.id,
-                            day=day,
-                            value=values[question.system_key],
-                        )
-                    )
 
         db.bulk_save_objects(rows)
         db.commit()

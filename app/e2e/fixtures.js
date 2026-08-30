@@ -343,6 +343,42 @@ export async function makeEnumCatalogue(admin, account, questions) {
   return (await account.api.get(`/api/catalogues/${catalogue.id}`)).json()
 }
 
+/**
+ * Add a habit question to an account's default catalogue.
+ *
+ * Through the account's own context, like every other seed here: a question in
+ * somebody else's catalogue answers 404 to the account under test.
+ *
+ * @param {object} account The account fixture.
+ * @param {{prompt: string, icon?: string, period?: string, target?: number,
+ *   direction?: string, options: Array<[string, boolean]>}} habit Label and
+ *   whether it counts, per option.
+ * @returns {Promise<object>} The created question, options included.
+ */
+export async function makeHabit(account, habit) {
+  const me = await (await account.api.get('/api/me')).json()
+  const response = await account.api.post(
+    `/api/catalogues/${me.default_catalogue_id}/questions`,
+    {
+      data: {
+        kind: 'enum',
+        prompt: habit.prompt,
+        icon: habit.icon ?? null,
+        habit_period: habit.period ?? 'week',
+        habit_target: habit.target ?? 1,
+        habit_direction: habit.direction ?? 'at_least',
+        options: habit.options.map(([label, counts], position) => ({
+          label,
+          position,
+          counts: Boolean(counts),
+        })),
+      },
+    }
+  )
+  expect(response.status(), await response.text()).toBe(201)
+  return response.json()
+}
+
 let seeded = 0
 
 /**

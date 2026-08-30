@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.attributes import flag_modified
 
 from deps import CurrentUser, DbSession
 from models import (
@@ -16,6 +17,7 @@ from schemas import (
     CatalogueDetail,
     CatalogueOut,
     OptionCreate,
+    OptionUpdate,
     QuestionCreate,
     QuestionOut,
     QuestionUpdate,
@@ -24,9 +26,11 @@ from schemas import (
     TemplateOut,
 )
 from services import (
+    HabitRuleError,
     QuestionRuleError,
     ScoreRuleError,
     build_from_template,
+    check_habit_shape,
     check_question_bounds,
     check_question_shape,
     check_score_shape,
@@ -44,6 +48,40 @@ FROZEN_MESSAGE = (
 )
 """Explanation returned when an edit would change an answered question's shape."""
 
+HABIT_FIELDS = frozenset({"habit_period", "habit_target", "habit_direction"})
+"""The three fields that describe one habit, and therefore move together."""
+
+
+def _touch_catalogue(db: DbSession, catalogue_id: int) -> None:
+    """Mark a catalogue as written, because something inside it was.
+
+    `/api/changes` fingerprints questions, options and scores through the
+    catalogue that owns them — there is no fingerprint of their own — and
+    SQLAlchemy's ``onupdate`` fires on the row being written, which is never the
+    catalogue. Without this, editing a question moves nothing the digest can see,
+    so a second device goes on showing the old wording, the old options and the
+    old habit target until somebody reloads the page.
+
+    Measured before it was written: adding a question and editing one both left
+    the ``catalogues`` fingerprint at exactly the count and timestamp it started
+    with.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    catalogue_id : int
+        The catalogue whose watermark should move.
+    """
+    catalogue = db.get(Catalogue, catalogue_id)
+    if catalogue is not None:
+        # `flag_modified` rather than re-assigning a field: SQLAlchemy skips a
+        # set whose value has not changed, so `catalogue.name = catalogue.name`
+        # emits no UPDATE at all and `onupdate` never fires. This marks the row
+        # dirty without inventing a change to it, and leaves `updated_at` to the
+        # one declaration that already owns it.
+        flag_modified(catalogue, "name")
+
 
 def _enforce(rule) -> None:
     """Run a domain rule, turning its complaint into a 422.
@@ -54,7 +92,8 @@ def _enforce(rule) -> None:
     Parameters
     ----------
     rule : collections.abc.Callable
-        A no-argument callable that raises `QuestionRuleError` when unhappy.
+        A no-argument callable that raises `QuestionRuleError` or
+        `HabitRuleError` when unhappy.
 
     Raises
     ------
@@ -63,7 +102,7 @@ def _enforce(rule) -> None:
     """
     try:
         rule()
-    except QuestionRuleError as exc:
+    except (QuestionRuleError, HabitRuleError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from None
@@ -446,6 +485,14 @@ def add_question(
             payload.kind, payload.min_value, payload.max_value, len(payload.options)
         )
     )
+    _enforce(
+        lambda: check_habit_shape(
+            payload.kind,
+            payload.habit_period,
+            payload.habit_target,
+            payload.habit_direction,
+        )
+    )
 
     question = Question(
         catalogue_id=catalogue.id,
@@ -457,6 +504,10 @@ def add_question(
         max_value=payload.max_value,
         min_label=payload.min_label,
         max_label=payload.max_label,
+        icon=payload.icon,
+        habit_period=payload.habit_period,
+        habit_target=payload.habit_target,
+        habit_direction=payload.habit_direction,
     )
     db.add(question)
     db.flush()
@@ -466,8 +517,10 @@ def add_question(
                 question_id=question.id,
                 label=option.label,
                 position=option.position or index,
+                counts=option.counts,
             )
         )
+    _touch_catalogue(db, question.catalogue_id)
     db.commit()
     db.refresh(question)
     return question
@@ -544,17 +597,49 @@ def update_question(
     if touches_frozen and question_is_answered(db, question.id):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=FROZEN_MESSAGE)
 
+    # The three habit fields describe one setting, so they move as one. Read
+    # from `model_fields_set` rather than from the values, because null is a
+    # real instruction here — "stop being a habit" — and every other field on
+    # this payload uses null to mean "leave alone". Sending some but not all
+    # three is refused rather than guessed at.
+    habit_sent = HABIT_FIELDS & payload.model_fields_set
+    if habit_sent and habit_sent != HABIT_FIELDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Send habit_period, habit_target and habit_direction together, "
+                "or none of them"
+            ),
+        )
+    if habit_sent:
+        _enforce(
+            lambda: check_habit_shape(
+                question.kind,
+                payload.habit_period,
+                payload.habit_target,
+                payload.habit_direction,
+            )
+        )
+
     if payload.prompt is not None:
         question.prompt = payload.prompt
     if payload.position is not None:
         question.position = payload.position
     if payload.active is not None:
         question.active = payload.active
+    # Read from `model_fields_set`, not from the value: an explicit null is how
+    # an icon is *taken off*, and every other field on this payload uses null to
+    # mean "leave alone". Without this a chosen icon could never be cleared.
+    if "icon" in payload.model_fields_set:
+        question.icon = payload.icon
+    for name in habit_sent:
+        setattr(question, name, getattr(payload, name))
     for name, value in {**frozen_fields, **wording_fields}.items():
         if value is not None:
             setattr(question, name, value)
     # No post-assignment bounds check: the same rule already vetted the shape
     # this edit produces, before anything was written.
+    _touch_catalogue(db, question.catalogue_id)
     db.commit()
     db.refresh(question)
     return question
@@ -610,6 +695,75 @@ def add_option(
             position=payload.position or len(question.options),
         )
     )
+    _touch_catalogue(db, question.catalogue_id)
+    db.commit()
+    db.refresh(question)
+    return question
+
+
+@router.put(
+    "/questions/{question_id}/options/{option_id}",
+    response_model=QuestionOut,
+    operation_id="updateQuestionOption",
+    summary="Edit an enum option",
+    description=(
+        "Rename a choice, or say whether it counts towards the question's habit "
+        "target. Neither is frozen by an answer."
+    ),
+)
+def update_option(
+    question_id: int,
+    option_id: int,
+    payload: OptionUpdate,
+    user: CurrentUser,
+    db: DbSession,
+) -> Question:
+    """Rename a choice, or change whether it counts towards a habit target.
+
+    Deliberately **not** subject to the freeze that stops an answered question
+    gaining or losing options. Adding a choice retroactively changes what the
+    recorded answers meant; renaming one describes the same answers, and marking
+    one as counted says what those answers mean for a streak. Both are
+    definitions, and a definition change is retroactive here by design — the same
+    reason editing a score's components fixes last month.
+
+    Parameters
+    ----------
+    question_id : int
+        Identifier of the question.
+    option_id : int
+        Identifier of the option to edit.
+    payload : OptionUpdate
+        Fields to apply. Omitted fields are left alone.
+    user : User
+        The authenticated user, who must own what is being changed.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Returns
+    -------
+    Question
+        The question with its updated option list.
+
+    Raises
+    ------
+    fastapi.HTTPException
+        With status 404 when the option does not belong to the caller's question.
+    """
+    # Scoped through the question, which is itself scoped to the owner, so an
+    # option belonging to somebody else is not found rather than forbidden —
+    # whether it exists is not this caller's business either.
+    question = _get_question(db, question_id, user.id)
+    option = db.get(QuestionOption, option_id)
+    if option is None or option.question_id != question.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Option not found"
+        )
+    if payload.label is not None:
+        option.label = payload.label
+    if payload.counts is not None:
+        option.counts = payload.counts
+    _touch_catalogue(db, question.catalogue_id)
     db.commit()
     db.refresh(question)
     return question
@@ -658,6 +812,7 @@ def delete_option(
             status_code=status.HTTP_404_NOT_FOUND, detail="Option not found"
         )
     db.delete(option)
+    _touch_catalogue(db, question.catalogue_id)
     db.commit()
     db.refresh(question)
     return question
@@ -822,6 +977,7 @@ def add_score(
                 weight=component.weight,
             )
         )
+    _touch_catalogue(db, score.catalogue_id)
     db.commit()
     db.refresh(score)
     return score
@@ -894,6 +1050,7 @@ def update_score(
                     weight=component.weight,
                 )
             )
+    _touch_catalogue(db, score.catalogue_id)
     db.commit()
     db.refresh(score)
     return score
@@ -921,5 +1078,8 @@ def delete_score(score_id: int, user: CurrentUser, db: DbSession) -> None:
     db : sqlalchemy.orm.Session
         Active database session.
     """
-    db.delete(_get_score(db, score_id, user.id))
+    score = _get_score(db, score_id, user.id)
+    catalogue_id = score.catalogue_id
+    db.delete(score)
+    _touch_catalogue(db, catalogue_id)
     db.commit()

@@ -5,7 +5,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.fields import FieldInfo
 
 from config import get_settings
-from models import PROMPT_MAX_LENGTH, TRACK_NAME_MAX_LENGTH
+from models import (
+    ICON_MAX_LENGTH,
+    PROMPT_MAX_LENGTH,
+    TRACK_NAME_MAX_LENGTH,
+    HabitDirection,
+    HabitPeriod,
+)
 from templates import DEFAULT_TEMPLATE
 
 
@@ -390,6 +396,9 @@ class OptionOut(BaseModel):
     position: int
     """Sort order within the question."""
 
+    counts: bool
+    """Whether this choice counts towards the owning habit's target."""
+
 
 class OptionCreate(BaseModel):
     """Payload for adding a choice to an enum question."""
@@ -400,12 +409,28 @@ class OptionCreate(BaseModel):
     position: int = 0
     """Sort order within the question."""
 
+    counts: bool = False
+    """Whether this choice counts towards the owning habit's target."""
+
 
 class OptionUpdate(BaseModel):
-    """Payload for renaming an existing enum choice."""
+    """Payload for editing an existing enum choice.
 
-    label: str = Field(min_length=1, max_length=255)
-    """Replacement text for the choice."""
+    Both fields are optional and either may be sent alone, because the two are
+    edited from different places: the label from the question form, and `counts`
+    from the habit checkbox beside it.
+
+    Neither is frozen by an answer. Renaming a choice describes the same recorded
+    answers, and marking one as counted says what those answers *mean* for a
+    streak — a definition, and definitions are retroactive here. Adding and
+    removing choices stays frozen, which is the part that would reinterpret them.
+    """
+
+    label: str | None = Field(default=None, min_length=1, max_length=255)
+    """Replacement text for the choice, or None to leave it alone."""
+
+    counts: bool | None = None
+    """Whether this choice counts towards the target, or None to leave it alone."""
 
 
 class ScoreComponentOut(BaseModel):
@@ -518,6 +543,18 @@ class QuestionOut(BaseModel):
     max_label: str | None
     """Description of the upper bound."""
 
+    icon: str | None
+    """A short emoji shown where the question has to be compact."""
+
+    habit_period: HabitPeriod | None
+    """The period this habit's target is measured over, or None for a plain question."""
+
+    habit_target: int | None
+    """How many days in a period must carry a counted answer."""
+
+    habit_direction: HabitDirection | None
+    """Whether the target is a floor to reach or a ceiling to stay under."""
+
     options: list[OptionOut] = []
     """Choices, for enum questions."""
 
@@ -545,6 +582,21 @@ class QuestionCreate(BaseModel):
 
     max_label: str | None = Field(default=None, max_length=255)
     """Description of the upper bound."""
+
+    icon: str | None = Field(default=None, max_length=ICON_MAX_LENGTH)
+    """A short emoji shown where the question has to be compact."""
+
+    habit_period: HabitPeriod | None = None
+    """The period a habit target is measured over.
+
+    Set with the other two, or not at all.
+    """
+
+    habit_target: int | None = None
+    """How many days in a period must count. Zero is allowed only as a ceiling."""
+
+    habit_direction: HabitDirection | None = None
+    """Whether the target is a floor or a ceiling."""
 
     options: list[OptionCreate] = []
     """Choices, for enum questions. At least two are required."""
@@ -578,6 +630,22 @@ class QuestionUpdate(BaseModel):
 
     max_label: str | None = Field(default=None, max_length=255)
     """New upper bound description. Wording, so editable at any time."""
+
+    icon: str | None = Field(default=None, max_length=ICON_MAX_LENGTH)
+    """New icon, or an explicit null to take the current one off.
+
+    Read from what was *sent* rather than from the value, so that null means
+    "no icon" here while it means "leave alone" on the fields above.
+    """
+
+    habit_period: HabitPeriod | None = None
+    """New period, or an explicit null to stop this question being a habit."""
+
+    habit_target: int | None = None
+    """New target, or an explicit null to stop this question being a habit."""
+
+    habit_direction: HabitDirection | None = None
+    """New direction, or an explicit null to stop this question being a habit."""
 
 
 class CatalogueOut(BaseModel):

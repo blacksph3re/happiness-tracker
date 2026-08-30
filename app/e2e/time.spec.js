@@ -497,6 +497,90 @@ test('a rule that fails to load is retried, never cached as no rule at all', asy
   await expect(day.locator('[data-row]')).toContainText('+0h 15m')
 })
 
+test('a band typed before the rule loads is not wiped when it arrives', async ({
+  page,
+  account,
+}) => {
+  // Opening a rule shows the panel at once and lays the answer in when it
+  // arrives, which used to overwrite whatever had been typed in between —
+  // `bands = rule.bands ?? []` on a tag with no rule threw away a band that had
+  // just been added. This is a slow, hand-edited form, so beating a round trip
+  // is ordinary rather than exotic: under a full parallel run it timed out
+  // waiting for a field that had ceased to exist between two `fill` calls.
+  const errands = await makeTag(account, 'Errands')
+
+  let release
+  const held = new Promise((resolve) => (release = resolve))
+  let holding = true
+  await page.route('**/api/tags/*/rule', async (route) => {
+    if (!holding || route.request().method() !== 'GET') return route.continue()
+    holding = false
+    await held
+    await route.continue()
+  })
+
+  await page.goto('/time/projects')
+  await page.locator(`[data-tag-row="${errands.id}"]`).getByRole('button', { name: 'Rule' }).click()
+
+  // Typed while the read is still outstanding, which is the whole point.
+  await page.getByRole('button', { name: 'Add a band' }).click()
+  await page.getByLabel('Band 1 threshold').fill('360')
+  await page.getByLabel('Band 1 deduction').fill('45')
+
+  release()
+  // The late answer must not reach past the edit. Both fields still hold what
+  // was typed, and the field that used to vanish is still there.
+  await expect(page.getByLabel('Band 1 threshold')).toHaveValue('360')
+  await expect(page.getByLabel('Band 1 deduction')).toHaveValue('45')
+
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await savedRule(page)
+  const stored = await (await account.api.get(`/api/tags/${errands.id}/rule`)).json()
+  expect(stored.bands).toEqual([{ from_minutes: 360, deduct_minutes: 45 }])
+})
+
+test('a tag list that fails to load does not cache "no tag has a rule"', async ({
+  page,
+  account,
+}) => {
+  // The sibling of the test above, and the one that was still flaking the whole
+  // suite about once in five runs. `ensureTagRules` walks the tags it is given
+  // and marks the load complete when every rule answered — but an unconfirmed
+  // `GET /api/tags` hands back an **empty** list, over which every rule answers
+  // trivially. So one failed tag list cached "no tag has a rule" for the life of
+  // the tab, and the record reported tracked time where reported time belongs:
+  // exactly the `" Errands  0h 30m  "` the suite kept showing.
+  const errands = await makeTag(account, 'Errands')
+  const project = await makeProject(account, 'Groceries', { tag_ids: [errands.id] })
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T09:30:00`)
+  await account.api.put(`/api/tags/${errands.id}/rule`, {
+    data: { add_minutes: 15, bands: [] },
+  })
+
+  let refused = 0
+  await page.route('**/api/tags', (route) => {
+    if (refused === 0 && route.request().method() === 'GET') {
+      refused += 1
+      return route.abort('failed')
+    }
+    return route.continue()
+  })
+
+  await page.goto('/time/record')
+  await page.locator('[data-group-by="tag"]').click()
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  await expect(day.locator('[data-row]')).toBeVisible()
+  expect(refused, 'the tag list was refused once').toBe(1)
+
+  // Leaving and coming back asks again, because a load over an unconfirmed list
+  // is not an answer about anything.
+  await page.getByRole('link', { name: 'Patterns' }).click()
+  await expect(page.getByRole('heading', { name: 'Patterns' })).toBeVisible()
+  await page.getByRole('link', { name: 'Record', exact: true }).click()
+  await page.locator('[data-group-by="tag"]').click()
+  await expect(day.locator('[data-row]')).toContainText('0h 45m')
+})
+
 test('a tag addition is named in the record too, not only a deduction', async ({
   page,
   account,
@@ -1594,8 +1678,34 @@ test('the landing page reports both halves and routes into them', async ({
   await expect(page.locator('[data-card=time]')).toContainText('The rewrite')
   await expect(page.locator('[data-card=wellbeing]')).toContainText('left')
 
-  await page.locator('[data-card=wellbeing]').click()
+  // The card is a section rather than a link now: it carries two of them, and
+  // an anchor inside an anchor is not something HTML has an answer for. Each
+  // action is its own target.
+  await page.locator('[data-card=wellbeing] [data-go=record]').click()
   await expect(page).toHaveURL(/\/answer/)
+})
+
+test('every landing card routes to its own half, both ways in', async ({ page }) => {
+  // Six links and three sections, so the pairs are exactly the sort of thing a
+  // copy-paste gets subtly wrong — a Patterns button pointing at the wrong half
+  // would look right and be wrong, and neither is the landing page linking the
+  // halves to each other: this is the one page allowed to know all three.
+  const routes = [
+    ['wellbeing', 'record', '/answer'],
+    ['wellbeing', 'patterns', '/stats'],
+    ['time', 'record', '/time'],
+    ['time', 'patterns', '/time/patterns'],
+    ['focus', 'record', '/focus'],
+    ['focus', 'patterns', '/focus/patterns'],
+  ]
+
+  await page.goto('/')
+  for (const [card, action, href] of routes) {
+    await expect(
+      page.locator(`[data-card=${card}] [data-go=${action}]`),
+      `${card} → ${action}`
+    ).toHaveAttribute('href', href)
+  }
 })
 
 test('a filter that leaves no days does not break the page', async ({ page, account }) => {

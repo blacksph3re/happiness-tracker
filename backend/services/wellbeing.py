@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 
 from models import (
     AGGREGATES,
+    HABIT_DIRECTIONS,
+    HABIT_PERIODS,
     ORIGIN_ASKED,
     ORIGIN_COMPUTED,
     Answer,
@@ -281,6 +283,76 @@ def check_question_shape(
     """
     check_question_options(kind, option_count)
     check_question_bounds(kind, min_value, max_value)
+
+
+class HabitRuleError(ValueError):
+    """Raised when a habit's definition does not describe a habit that can be kept.
+
+    Separate from `QuestionRuleError` because the two answer different questions.
+    A question's shape is about what it *is* — an enum with choices, a scale with
+    bounds. A habit's shape is about what it *asks of you*, and a question can be
+    perfectly well formed while the habit hung on it is not.
+    """
+
+
+def check_habit_shape(
+    kind: str,
+    habit_period: str | None,
+    habit_target: int | None,
+    habit_direction: str | None,
+) -> None:
+    """Check that three habit fields describe one coherent target.
+
+    The same rules stand as check constraints on `questions`. Both, and
+    deliberately: a constraint violation surfaces as a 500 with nothing in it a
+    caller can act on, while this raises early enough for the router to answer
+    422 naming the field. The constraints are the floor under a hand-written
+    UPDATE, not the thing an API caller meets.
+
+    Parameters
+    ----------
+    kind : str
+        One of ``enum``, ``discrete`` or ``continuous``.
+    habit_period : str or None
+        Proposed period, or None for a question that is not a habit.
+    habit_target : int or None
+        Proposed target.
+    habit_direction : str or None
+        Proposed direction.
+
+    Raises
+    ------
+    HabitRuleError
+        If the three fields are not all set or all absent, if the question is
+        not an enum, if the period or direction is not one this app knows, or if
+        the target is negative — or zero under ``at_least``, which asks for
+        nothing and would be met by every period including the empty ones.
+    """
+    present = [
+        field is not None for field in (habit_period, habit_target, habit_direction)
+    ]
+    if not any(present):
+        return
+    if not all(present):
+        raise HabitRuleError(
+            "A habit needs a period, a target and a direction, or none of the three"
+        )
+
+    if kind != "enum":
+        raise HabitRuleError("Only a question with options can be a habit")
+    if habit_period not in HABIT_PERIODS:
+        raise HabitRuleError(f"A habit period is one of {', '.join(HABIT_PERIODS)}")
+    if habit_direction not in HABIT_DIRECTIONS:
+        raise HabitRuleError(
+            f"A habit direction is one of {', '.join(HABIT_DIRECTIONS)}"
+        )
+    if habit_target is None or habit_target < 0:
+        raise HabitRuleError("A habit target cannot be negative")
+    # Zero is what makes a stopping habit expressible — "no more than nothing" —
+    # and is meaningless the other way round: at least zero is true of every
+    # period, including every period nobody recorded.
+    if habit_target == 0 and habit_direction == "at_least":
+        raise HabitRuleError("A target of at least zero is met by doing nothing")
 
 
 class ScoreRuleError(ValueError):

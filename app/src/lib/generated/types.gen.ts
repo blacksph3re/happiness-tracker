@@ -46,6 +46,10 @@ export type AnswerOut = {
      * Option Id
      */
     option_id: number | null;
+    /**
+     * Local Hour
+     */
+    local_hour: number | null;
 };
 
 /**
@@ -332,6 +336,10 @@ export type OptionCreate = {
      * Position
      */
     position?: number;
+    /**
+     * Counts
+     */
+    counts?: boolean;
 };
 
 /**
@@ -352,6 +360,35 @@ export type OptionOut = {
      * Position
      */
     position: number;
+    /**
+     * Counts
+     */
+    counts: boolean;
+};
+
+/**
+ * OptionUpdate
+ *
+ * Payload for editing an existing enum choice.
+ *
+ * Both fields are optional and either may be sent alone, because the two are
+ * edited from different places: the label from the question form, and `counts`
+ * from the habit checkbox beside it.
+ *
+ * Neither is frozen by an answer. Renaming a choice describes the same recorded
+ * answers, and marking one as counted says what those answers *mean* for a
+ * streak — a definition, and definitions are retroactive here. Adding and
+ * removing choices stays frozen, which is the part that would reinterpret them.
+ */
+export type OptionUpdate = {
+    /**
+     * Label
+     */
+    label?: string | null;
+    /**
+     * Counts
+     */
+    counts?: boolean | null;
 };
 
 /**
@@ -657,6 +694,22 @@ export type QuestionCreate = {
      */
     max_label?: string | null;
     /**
+     * Icon
+     */
+    icon?: string | null;
+    /**
+     * Habit Period
+     */
+    habit_period?: 'day' | 'week' | 'month' | null;
+    /**
+     * Habit Target
+     */
+    habit_target?: number | null;
+    /**
+     * Habit Direction
+     */
+    habit_direction?: 'at_least' | 'at_most' | null;
+    /**
      * Options
      */
     options?: Array<OptionCreate>;
@@ -697,10 +750,6 @@ export type QuestionOut = {
      */
     origin: string;
     /**
-     * System Key
-     */
-    system_key: string | null;
-    /**
      * Aggregate
      */
     aggregate: string | null;
@@ -728,6 +777,22 @@ export type QuestionOut = {
      * Max Label
      */
     max_label: string | null;
+    /**
+     * Icon
+     */
+    icon: string | null;
+    /**
+     * Habit Period
+     */
+    habit_period: 'day' | 'week' | 'month' | null;
+    /**
+     * Habit Target
+     */
+    habit_target: number | null;
+    /**
+     * Habit Direction
+     */
+    habit_direction: 'at_least' | 'at_most' | null;
     /**
      * Options
      */
@@ -772,6 +837,22 @@ export type QuestionUpdate = {
      * Max Label
      */
     max_label?: string | null;
+    /**
+     * Icon
+     */
+    icon?: string | null;
+    /**
+     * Habit Period
+     */
+    habit_period?: 'day' | 'week' | 'month' | null;
+    /**
+     * Habit Target
+     */
+    habit_target?: number | null;
+    /**
+     * Habit Direction
+     */
+    habit_direction?: 'at_least' | 'at_most' | null;
 };
 
 /**
@@ -1378,8 +1459,9 @@ export type ValidationError = {
  *
  * A plottable variable on the stats page.
  *
- * Auto-tracked variables are merged across catalogues by their system key, so
- * a user who switches catalogue still sees one continuous series.
+ * Auto-tracked variables have no question behind them at all: weekday, month,
+ * year and day-of-year are functions of the calendar day, and the hour is a
+ * column on the answer. They are described here and computed by the reader.
  */
 export type Variable = {
     /**
@@ -2149,6 +2231,40 @@ export type DeleteQuestionOptionResponses = {
 };
 
 export type DeleteQuestionOptionResponse = DeleteQuestionOptionResponses[keyof DeleteQuestionOptionResponses];
+
+export type UpdateQuestionOptionData = {
+    body: OptionUpdate;
+    path: {
+        /**
+         * Question Id
+         */
+        question_id: number;
+        /**
+         * Option Id
+         */
+        option_id: number;
+    };
+    query?: never;
+    url: '/api/questions/{question_id}/options/{option_id}';
+};
+
+export type UpdateQuestionOptionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateQuestionOptionError = UpdateQuestionOptionErrors[keyof UpdateQuestionOptionErrors];
+
+export type UpdateQuestionOptionResponses = {
+    /**
+     * Successful Response
+     */
+    200: QuestionOut;
+};
+
+export type UpdateQuestionOptionResponse = UpdateQuestionOptionResponses[keyof UpdateQuestionOptionResponses];
 
 export type CreateScoreData = {
     body: ScoreCreate;

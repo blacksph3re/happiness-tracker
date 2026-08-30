@@ -60,7 +60,9 @@ def _system_variables() -> list[Variable]:
                 min_label=low_label,
                 max_label=high_label,
                 options=[
-                    OptionOut(id=position, label=label, position=position)
+                    # `counts` is about habits, and an auto-tracked variable is
+                    # never one: a weekday is not something anybody keeps up.
+                    OptionOut(id=position, label=label, position=position, counts=False)
                     for position, label in enumerate(spec.get("options", ()))
                 ],
                 question_ids=[],

@@ -133,6 +133,18 @@ select[title]:disabled {
   pointer-events: auto;
 }
 
+/* A select's chevron needs room reserved for it, and a padding utility takes
+   that room back. Flowbite draws the arrow as a background image at
+   `right 0.75rem` and pairs it with `padding-right: 2.5rem`; every select here
+   also carries `px-3` or `px-4`, which sets padding-right and wins — so the
+   arrow sat on top of the last word instead of beside it, in all fourteen of
+   them. Unlayered, so it outranks the utility: `px-*` decides a select's
+   leading edge and the chevron owns the trailing one. Logical, because
+   Flowbite's own right-to-left rule moves the arrow to the other side. */
+select:not([size]) {
+  padding-inline-end: 2.5rem;
+}
+
 /* Metadata, labels and anything tabular reads as instrument output. */
 .meta {
   font-family: var(--font-meta);

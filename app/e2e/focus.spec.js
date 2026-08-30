@@ -23,20 +23,37 @@ import {
  * instant a button is pressed, so a straight read races the queue draining
  * behind it. In isolation it wins that race; under a full parallel run it does
  * not, which is exactly the kind of flake worth spending a poll on.
+ *
+ * Two things here are load-bearing, and this helper got both wrong first:
+ *
+ * `data-pending`, not `data-sync`. The badge's *state* is debounced by a second
+ * so an ordinary tap does not flicker it, which means it still reads `synced`
+ * for the whole of the second after a write is queued. Waiting on it therefore
+ * let a read of an already-synced collection through before the new write had
+ * been sent at all. `data-pending` is the raw count, set the moment the intent
+ * is on disk.
+ *
+ * And `where`, so the poll asserts what the caller actually came to see. A
+ * count of rows cannot tell an edited row from the row before the edit, so
+ * tainting a pomodoro — which changes a field and not the count — was satisfied
+ * by the untainted version and failed one full run in eight.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {object} account
+ * @param {number} expected How many rows the server should hold.
+ * @param {(rows: Array<object>) => boolean} where What must be true of them.
  */
-async function synced(page, account, expected = 1) {
-  // The badge first, which is the app saying the queue is empty, and only then
-  // the read. Polling the API alone raced the drain under a full parallel run —
-  // it passed alone and failed in the suite, which is the worst way to find out.
-  await expect(page.locator('[data-sync]')).toHaveAttribute('data-sync', 'synced', {
-    timeout: 15_000,
-  })
+async function synced(page, account, expected = 1, where = () => true) {
   let rows = []
   await expect(async () => {
+    await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0', {
+      timeout: 1_000,
+    })
     rows = await (await account.api.get('/api/pomodoros')).json()
     expect(rows).toHaveLength(expected)
     expect(rows.every((row) => row.id)).toBe(true)
-  }).toPass({ timeout: 10_000 })
+    expect(where(rows), 'the rows the caller was waiting for').toBe(true)
+  }).toPass({ timeout: 15_000 })
   return rows
 }
 
@@ -158,7 +175,9 @@ test('tainting shows on the pomodoro and changes no total', async ({ page, accou
   await page.locator('[data-mark]').click()
 
   await expect(page.locator('[data-mark]')).toHaveAttribute('data-tainted', 'true')
-  const [row] = await synced(page, account)
+  // The taint changes a field, not the count, so it is the poll's own
+  // condition — a count alone is satisfied by the row before the edit.
+  const [row] = await synced(page, account, 1, ([one]) => one.tainted === true)
   expect(row.tainted).toBe(true)
   // Time spent is time spent: the taint is a label, not a deduction. Compared
   // as values, because the row gains a Tainted entry and a substring of its
@@ -343,19 +362,31 @@ test('the lengths are minutes, and the timer uses them', async ({ page }) => {
 
 test('an edit survives the settings load that was still in flight when it was made', async ({
   page,
+  account,
 }) => {
   // The page's own mount-time fetch of preferences is a GET issued before any
   // edit — and under load it can *answer* after an edit has already saved.
-  // Delaying only the delivery of that answer (the server itself replies
-  // immediately, from whatever it holds at that instant) reproduces the race
-  // without depending on how fast this machine happens to be today.
+  // Delaying only the delivery of that answer reproduces the race without
+  // depending on how fast this machine happens to be today.
+  //
+  // The stale body is read here, up front, through the account's own API rather
+  // than proxied with `route.fetch()`. A fetched `APIResponse` belongs to the
+  // page and is disposed when it navigates, so holding one across the delay
+  // failed with "Response has been disposed" about once in five runs — a
+  // harness bug that read as an app flake for a long time. This is also a
+  // truer statement of the intent: what the server held *before* the edit.
+  const stale = await (await account.api.get('/api/me/preferences')).json()
+
   let release
   const held = new Promise((resolve) => (release = resolve))
+  // Only the first GET is held. The later ones are the page asking again after
+  // navigation, and holding those would be a different test.
+  let holding = true
   await page.route('**/api/me/preferences', async (route) => {
-    if (route.request().method() !== 'GET') return route.continue()
-    const response = await route.fetch()
+    if (!holding || route.request().method() !== 'GET') return route.continue()
+    holding = false
     await held
-    await route.fulfill({ response })
+    await route.fulfill({ json: stale })
   })
 
   await page.goto('/settings')

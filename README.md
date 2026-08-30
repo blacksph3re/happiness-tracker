@@ -2,11 +2,14 @@
 
 Two things worth recording every day, in one place.
 
-**Wellbeing** — track your satisfaction with work/life/whatever in regular questionaries, then get automated statistics. **Time** — track where your hours go: check in to a project, check out when you stop, and read the week back.
-
-Two halves, one login. A landing page puts each of them one tap away; inside either, the navigation is only about that half.
+**Wellbeing** — track your satisfaction with work/life/whatever in regular questionaries, then get automated statistics. **Time** — track where your hours go: check in to a project, check out when you stop, and read the week back. **Focus** — a pomodoro timer whose finished blocks can be copied into Time as one session.
 
 ## Screenshots
+
+The landing page: the state of each half before you touch it, a way in and a way
+to the patterns behind it, and a habit's streak underneath.
+
+![The landing page, with three section cards and a row of habit cards below them](docs/screenshots/landing.png)
 
 Answering: one tap per question, and the next one opens without waiting for the server.
 
@@ -16,9 +19,14 @@ The record: every answer you have given, days running left to right, with a butt
 
 ![The answer table, with one row per question and one column per day](docs/screenshots/record.png)
 
-Patterns: line, radar, scatter and box views over a window you choose, with a smoothing control that trades daily detail for trend.
+Patterns: line, radar, correlation, spread and totals views over a window you choose, with a smoothing control that trades daily detail for trend.
 
 ![The stats page, plotting several questions over time](docs/screenshots/patterns.png)
+
+Streaks: one row per habit, one cell per period. Green kept it, red did not, and an
+outline is a period nobody recorded — which is not the same thing.
+
+![A grid of coloured cells, one row per habit, with the current and best run beside each](docs/screenshots/streaks.png)
 
 Time: projects as check-in cards, several timers at once, and the running one in the browser tab.
 
@@ -28,121 +36,10 @@ The `Day` window on Patterns: one day along the clock, a lane per project, so a 
 
 ![A day laid out as a horizontal timeline with one lane per project](docs/screenshots/time-day.png)
 
-Where the hours went, by project or grouped by tag.
+Focus: a pomodoro timer with a countdown, an ambient sound, and the day's blocks under it.
 
-![Hours per project per day, with a share donut and a weekday breakdown](docs/screenshots/time-patterns.png)
+![The focus timer mid-block, with the day's finished pomodoros listed below](docs/screenshots/focus.png)
 
-## Scores
-
-A catalogue can define a score: a total or an average over the questions you pick,
-each with a weight. It behaves like any other question — it appears in the record,
-the export and the plots — except that nobody answers it. It is worked out from the
-answers every time they are read, so editing a definition applies to everything
-already recorded and no stored answer is ever rewritten. By default a day is scored
-only when every question feeding it was answered.
-
-The starter catalogue ships with the WHO-5 raw score, defined as ordinary catalogue
-data. Scores are edited under **Questions**, below the question list.
-
-## Tracked time
-
-A **project** is anything you want the hours for; a **session** is one check-in and
-the check-out that ends it. Both belong to you alone — there is no editor flag and no
-shared list.
-
-- **Several timers may run at once.** A "meeting" inside a "work" session is the case
-  this is built for, so checking in never closes anything. It also means a day can
-  total more than 24 hours: that is what a sum over projects is, and the app says so
-  rather than hiding it.
-- **A session crossing midnight counts on both days**, split at local midnight. The
-  split is worked out when the time is read, so one session stays one row and
-  correcting a check-out time is still a single edit.
-- **Instants are stored in UTC** with the offset captured at check-in. Durations are
-  therefore exact across a daylight-saving change, where local arithmetic would report
-  an eight-hour day as seven.
-- **A day keeps one clock**, taken from the session that opened it, so every session on
-  a day is read and split by the same midnight. Travelling used to leave a day meaning
-  two things at once — two sessions both reading 09:00, an hour apart. A session that
-  would spill into a day on a *different* clock is kept whole on the day it started and
-  marked as such: the two midnights are not the same instant, so dividing there would
-  either count an hour twice or lose one.
-- **Nothing is auto-closed.** A session running for three days shows up as exactly that
-  in the record, where it can be corrected; the app does not invent an end it cannot
-  know.
-- **A stop can be taken back.** While a project is idle and its last session ended
-  today, **Track** offers `Resume`: the old session reopens with its original start, so
-  the time it spent stopped counts as worked rather than leaving a hole beside a new
-  one. It is deliberately not offered for older sessions — absorbing a day and a half
-  is not a mistake anyone means to make.
-- **Archiving retires a project from the reports.** Its sessions stay in the record
-  and in the export — they happened — but a project nobody tracks any more is not a
-  pattern. Deactivating a question does the same on the wellbeing side.
-- **One project cannot run twice over the same minutes.** Two projects at once is the
-  point of the tracker; the same project twice would report one hour twice under one
-  name. An edit that would overlap is refused, and the record offers to merge the two
-  into one session — earliest start, latest end — or to discard the change.
-- **Tags group projects** on the patterns page. A project can carry several, so tag
-  totals overlap rather than partition — they are a way of reading the time, not a
-  filing of it. Projects with no tag are reported as *Untagged*, so nothing is hidden.
-
-A tag can carry a **deduction rule**: bands of *from this many tracked minutes, remove
-this many*. The highest threshold a day reaches applies, a day with nothing tracked is
-never deducted from, and no day goes below zero. It is worked out on read, so changing
-the rule fixes last month too. Rules belong to a tag rather than to the account, because
-"work days lose a lunch break" is a statement about work — a day of reading owes nobody
-one. Edit them under **Projects → Rule**.
-
-A tag with a rule shows **what it reports** — in the charts, the captions, the record
-and the export. The one exception is the group table under Patterns, which keeps
-`Tracked` and `Reported` side by side, because reading them together is what says how
-much the rule took; everywhere else a second number for the same hours only raises the
-question of which one counts.
-
-**Patterns** steps through named periods — a week, a month, a quarter — rather than a
-rolling count of days back from today, so each has a name on the page and a previous to
-go to. A month or a quarter is drawn as a line with a smoothing control, because a
-quarter of grouped bars is a picket fence.
-
-It also filters: *only days where* narrows the hours by weekday, or by anything the
-questionnaire recorded — so "what did the hours look like on days I slept badly" is a
-question the two halves answer together. A day with nothing tracked breaks the line
-rather than reading as zero hours, which is a toggle.
-
-The shortest windows — `Day` and `Week` — are drawn along a clock rather than as
-totals: a lane per project on a day, a lane per day across a week, showing *when* rather
-than how much. It is the only view where overlap reads as overlap instead of as two
-numbers that happen to add past 24 hours. The axis fits the hours actually used, with a
-`Full day` toggle for the whole 24. There is no strip under `By tag`: a lane says when
-something ran, and a tag does not run — its projects do, several at once, and the lane
-was the same blocks with the labels taken away.
-
-Pointing at a block names it, instantly and in the same shape the charts use. A tap does
-the same and holds it open until something else is tapped, because a finger has no
-hover.
-
-A group with nothing in the window — a tag every day of which the filters left out —
-is dropped from the legend, the charts and the table rather than drawn as a slice of
-nothing.
-
-Sessions are edited, added by hand and deleted in **Record**, which is one list of every
-tracked day: newest at the top, week dividers carrying the week's total, and more weeks
-loading as it is scrolled until it reaches the first day tracked. Days with nothing on
-them are left out; an untracked week keeps its divider, so the timeline stays continuous
-across a fortnight away. A session has `Delete` on its own row, because the one most
-often removed is an accidental tap on Track, which has no times worth correcting. Adding
-one is a form at the top with the day as a field, since with every day on one scroll
-there is no "current" day for it to belong to.
-
-Record reads `By project` or `By tag`. By project, a row is a session, and a
-`Merge sessions` toggle collapses them to one row per project per day — from the first
-start to the last end, showing the time *tracked* rather than the distance between them,
-so a lunch break shortens the duration without moving the clock. By tag, a row is a
-whole day of that tag, after its rule: a deduction belongs to a day rather than to any
-one session, and sessions belong to projects. There is no merge toggle there, because
-that is what those rows already are. Projects, colours and tags live
-in **Projects**. `Download CSVs` gives a zip of three: every session in
-`sessions.csv`, and the daily totals per project and per tag in the other two. A
-CSV holds one table, and one click should still be one download.
 
 ## Installation
 

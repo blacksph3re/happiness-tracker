@@ -26,7 +26,6 @@ from sqlalchemy.orm import selectinload  # noqa: E402
 
 from database import SessionLocal  # noqa: E402
 from models import ORIGIN_ASKED, Answer, Question, User  # noqa: E402
-from services import sync_system_answers  # noqa: E402
 
 WEEKDAY_LIFT = (-0.2, -0.1, 0.0, 0.1, 0.4, 0.7, 0.5)
 """How much each weekday nudges an answer, Monday first.
@@ -36,7 +35,12 @@ plot have a difference to show instead of five identical distributions.
 """
 
 ANSWER_HOUR = 21
-"""Hour the seeded answers are recorded at, as if filled in that evening."""
+"""Hour the seeded answers are recorded at, as if filled in that evening.
+
+Written onto every answer as `local_hour`. The variable the stats page offers is
+`min(local_hour)` over the day, so one hour for all of a day's answers is the
+same reading a real evening session would leave.
+"""
 
 
 def walk(rng: random.Random, low: float, high: float, days: int) -> list[float]:
@@ -155,7 +159,16 @@ def seed(days: int, username: str | None, seed_value: int) -> tuple[int, int]:
                 if (question.id, day) in existing:
                     skipped += 1
                     continue
-                answer = Answer(user_id=user.id, question_id=question.id, day=day)
+                answer = Answer(
+                    user_id=user.id,
+                    question_id=question.id,
+                    day=day,
+                    # The hour is real recorded data and lives on the answer now.
+                    # The other four auto-tracked values are functions of the
+                    # calendar day and are computed on read, so there is nothing
+                    # else to write beside this.
+                    local_hour=ANSWER_HOUR,
+                )
                 if question.kind == "enum":
                     answer.option_id = series[question.id][offset].id
                 else:
@@ -170,9 +183,6 @@ def seed(days: int, username: str | None, seed_value: int) -> tuple[int, int]:
                     )
                 db.add(answer)
                 written += 1
-            sync_system_answers(
-                db, user.id, user.default_catalogue_id, day, ANSWER_HOUR
-            )
 
         db.commit()
         print(f"{user.username}: {start} → {date.today()}")

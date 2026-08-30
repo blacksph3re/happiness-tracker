@@ -19,7 +19,15 @@ import { elapsed } from '../lib/time/duration.js'
     ready,
     timeEntries,
   } from '../lib/store.js'
-  import { streak, today } from '../lib/day.js'
+  import { today } from '../lib/day.js'
+  import {
+    bestRun,
+    habitStreak,
+    habitsIn,
+    periodKey,
+    runLabel,
+    tally,
+  } from '../lib/habits.js'
 
   /**
    * The one place the three halves meet.
@@ -41,6 +49,17 @@ import { elapsed } from '../lib/time/duration.js'
   let settled = $state(false)
 
   const day = today()
+
+  /**
+   * The look of every card action, named once because there are six of them.
+   *
+   * Centred rather than `self-start`: the pair is a two-column grid, so each
+   * button already fills its half and a left-aligned label would leave the
+   * two looking different widths when the words differ in length.
+   */
+  const ACTION =
+    'meta flex items-center justify-center rounded-md border border-white/20 ' +
+    'px-3 py-2.5 text-center transition hover:border-white/40'
 
   // True only while there is genuinely nothing to show. A restored snapshot
   // brings the account back with everything else it holds, so `me` standing in
@@ -66,10 +85,27 @@ import { elapsed } from '../lib/time/duration.js'
     questions.filter((question) => !answeredToday.has(question.id)).length
   )
 
-  // Over every answer the device holds, which this page already loads in full
-  // for the count above — so the streak costs no second request and paints
-  // from the snapshot with everything else.
-  const streakDays = $derived(streak($answerStore.map((row) => row.day), day))
+  // Over every answer the device holds and the catalogue it already loads for
+  // the count above, so every streak costs no second request and paints from
+  // the snapshot with everything else — including with no connection at all.
+  const habits = $derived(
+    habitsIn($catalogueDetails[$account?.default_catalogue_id]).map((habit) => {
+      const tallies = tally(habit, $answerStore, questions.length)
+      return {
+        habit,
+        run: habitStreak(habit, tallies, day),
+        best: bestRun(habit, tallies, day),
+        // What the period on the clock stands at, for a habit with no run to
+        // show. Zero is only an accusation on a card nobody opened on purpose;
+        // in a list somebody came to see, it owes an explanation.
+        standing: tallies[periodKeyFor(habit)]?.count ?? 0,
+      }
+    })
+  )
+
+  function periodKeyFor(habit) {
+    return periodKey(habit.period, day)
+  }
 
   const running = $derived(
     $timeEntries
@@ -136,28 +172,26 @@ import { elapsed } from '../lib/time/duration.js'
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">What are you recording?</h1>
 
   <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <!-- Each card is a section rather than a link now: it carries two of them,
+         and an anchor inside an anchor is not something HTML has an answer for.
+         The pair is a two-column grid with stretched items, which is what makes
+         the buttons one size — equal padding does not, because an arrow glyph
+         and a word do not share a line box. `e2e/mobile.spec.js` measures it. -->
+
     <!-- Wellbeing keeps the app's own accents; the time card previews the other
          half's, so the difference is visible before you go there. -->
-    <a
-      href="/answer"
-      use:link
+    <section
       data-card="wellbeing"
       class="flex min-h-52 flex-col justify-between rounded-xl border border-white/10
-             bg-ink-soft p-6 transition hover:border-white/30 hover:bg-dusk/10"
+             bg-ink-soft p-6"
     >
       <div>
-        <!-- The streak rides on the section label rather than taking a line of
-             its own: it is context for the card, not the thing the card is
-             about, and a fourth line pushed the button off the fold on a
-             phone. Hidden at zero, where it is only ever an accusation. -->
-        <p class="meta flex items-baseline justify-between gap-3">
-          <span>Wellbeing</span>
-          {#if !loading && streakDays > 0}
-            <span data-streak={streakDays}>
-              Streak · {streakDays} {streakDays === 1 ? 'day' : 'days'}
-            </span>
-          {/if}
-        </p>
+        <!-- The streak used to ride on this label. It is in the habits strip
+             below now, as one habit among the others: the same number in two
+             places is the failure the transfer button already taught this
+             codebase, and a fourth line here pushed the button off the fold on
+             a phone. -->
+        <p class="meta">Wellbeing</p>
         <p class="mt-3 text-2xl font-semibold">
           {#if loading}
             …
@@ -175,18 +209,18 @@ import { elapsed } from '../lib/time/duration.js'
             : 'One tap per question.'}
         </p>
       </div>
-      <span class="meta self-start rounded-md border border-white/20 px-4 py-2.5">
-        {outstanding === 0 && questions.length > 0 ? 'Review today' : 'Answer today'} →
-      </span>
-    </a>
+      <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
+        <a href="/answer" use:link data-go="record" class={ACTION}>
+          {outstanding === 0 && questions.length > 0 ? 'Review' : 'Answer'}
+        </a>
+        <a href="/stats" use:link data-go="patterns" class={ACTION}>Patterns</a>
+      </div>
+    </section>
 
-    <a
-      href="/time"
-      use:link
+    <section
       data-card="time"
       class="section-time flex min-h-52 flex-col justify-between rounded-xl border
-             border-white/10 bg-ink-soft p-6 transition hover:border-white/30
-             hover:bg-dusk/10"
+             border-white/10 bg-ink-soft p-6"
     >
       <div>
         <p class="meta">Time</p>
@@ -220,18 +254,18 @@ import { elapsed } from '../lib/time/duration.js'
           </p>
         {/if}
       </div>
-      <span class="meta self-start rounded-md border border-white/20 px-4 py-2.5">
-        {running.length ? 'Check out' : 'Check in'} →
-      </span>
-    </a>
+      <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
+        <a href="/time" use:link data-go="record" class={ACTION}>
+          {running.length ? 'Check out' : 'Check in'}
+        </a>
+        <a href="/time/patterns" use:link data-go="patterns" class={ACTION}>Patterns</a>
+      </div>
+    </section>
 
-    <a
-      href="/focus"
-      use:link
+    <section
       data-card="focus"
       class="section-focus flex min-h-52 flex-col justify-between rounded-xl border
-             border-white/10 bg-ink-soft p-6 transition hover:border-white/30
-             hover:bg-dusk/10"
+             border-white/10 bg-ink-soft p-6"
     >
       <div>
         <p class="meta">Focus</p>
@@ -255,9 +289,63 @@ import { elapsed } from '../lib/time/duration.js'
           <p class="mt-1 text-sm text-haze">One press and the clock runs.</p>
         {/if}
       </div>
-      <span class="meta self-start rounded-md border border-white/20 px-4 py-2.5">
-        {focusing ? 'Back to it' : 'Start a pomodoro'} →
-      </span>
-    </a>
+      <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
+        <a href="/focus" use:link data-go="record" class={ACTION}>
+          {focusing ? 'Back to it' : 'Start'}
+        </a>
+        <a href="/focus/patterns" use:link data-go="patterns" class={ACTION}>Patterns</a>
+      </div>
+    </section>
   </div>
+
+  <!-- Below the three cards rather than inside one. Every chip is a link to the
+       questionnaire, because a habit is an ordinary question and that is where
+       it is answered — there is deliberately no tick here, which would be a
+       second place to answer and could not offer a three-way choice anyway. -->
+  {#if !loading && habits.length > 0}
+    <section class="mt-10" data-habits>
+      <p class="meta mb-3">Habits</p>
+      <!-- The same grid as the cards above, so a habit lines up under a section
+           rather than sitting in a row of its own width. -->
+      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {#each habits as { habit, run, best, standing } (habit.key)}
+          <!-- Straight to the streak view, not to the questionnaire. A habit
+               chip is a reading, and the thing a reading invites is a longer
+               look at it — answering is what the Wellbeing card is for. -->
+          <a
+            href="/stats?view=streaks"
+            use:link
+            data-habit={habit.key}
+            data-run={run}
+            class="flex flex-col gap-1.5 rounded-xl border border-white/10 bg-ink-soft
+                   p-6 transition hover:border-white/30 hover:bg-dusk/10"
+          >
+            <span class="flex items-center gap-2">
+              {#if habit.icon}
+                <span class="text-xl leading-none" aria-hidden="true">{habit.icon}</span>
+              {/if}
+              <span class="truncate font-semibold">{habit.label}</span>
+            </span>
+            <span class="meta flex items-baseline gap-3 normal-case">
+              {#if run > 0}
+                <span data-streak={run}>🔥 {runLabel(habit, run)}</span>
+              {:else}
+                <!-- Not hidden at zero: this is a list somebody opened on
+                     purpose, so a habit with no run owes them where it stands
+                     rather than vanishing. -->
+                <span data-streak={run}>
+                  🔥 — · {standing} of {habit.target} this {habit.period}
+                </span>
+              {/if}
+            </span>
+            {#if best > 0}
+              <span class="meta normal-case text-haze" data-best={best}>
+                ⚡ best {runLabel(habit, best)}
+              </span>
+            {/if}
+          </a>
+        {/each}
+      </div>
+    </section>
+  {/if}
 </section>

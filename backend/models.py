@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -51,6 +52,31 @@ AGGREGATES = ("sum", "mean")
 
 SYSTEM_KEYS = ("weekday", "day_of_year", "month", "year", "first_answer_hour")
 """Stable identifiers of the five auto-tracked questions, in display order."""
+
+HabitPeriod = Literal["day", "week", "month"]
+"""The period a habit's target is measured over.
+
+No quarter and no year: a habit nobody keeps more often than four times a year
+is not one an app helps with, and every extra period is another column in the
+streak grid that would draw two cells.
+"""
+
+HABIT_PERIODS: tuple[str, ...] = ("day", "week", "month")
+"""`HabitPeriod` as data, for the check constraint and the service rules."""
+
+HabitDirection = Literal["at_least", "at_most"]
+"""Whether a habit's target is a floor to reach or a ceiling to stay under."""
+
+HABIT_DIRECTIONS: tuple[str, ...] = ("at_least", "at_most")
+"""`HabitDirection` as data, for the check constraint and the service rules."""
+
+ICON_MAX_LENGTH = 16
+"""Longest an icon may be, in characters.
+
+About four simple emoji or one many-codepoint one — a family or a profession is
+a run of code points joined by zero-width joiners, and clipping one mid-sequence
+would render as several unrelated people.
+"""
 
 
 class User(Base):
@@ -238,6 +264,34 @@ class Question(Base):
             "     and min_value < max_value)",
             name="ck_question_bounds",
         ),
+        # The three habit columns describe one setting, so a row carrying some of
+        # them describes half a habit — which reads as "not a habit" to
+        # `is_habit` and as "a habit" to anything checking the target. The
+        # service layer refuses the same shapes with a 422 naming the field; this
+        # is the floor under a hand-written UPDATE.
+        CheckConstraint(
+            "(habit_period is null) = (habit_target is null)"
+            " and (habit_period is null) = (habit_direction is null)",
+            name="ck_question_habit_triple",
+        ),
+        CheckConstraint(
+            "habit_period is null or kind = 'enum'",
+            name="ck_question_habit_enum",
+        ),
+        CheckConstraint(
+            "habit_period is null or habit_period in ('day', 'week', 'month')",
+            name="ck_question_habit_period",
+        ),
+        CheckConstraint(
+            "habit_direction is null or habit_direction in ('at_least', 'at_most')",
+            name="ck_question_habit_direction",
+        ),
+        # Zero is meaningful and only under `at_most`: "no more than nothing" is
+        # how a habit you are trying to stop is written.
+        CheckConstraint(
+            "habit_target is null or habit_target >= 0",
+            name="ck_question_habit_target",
+        ),
         Index("ix_questions_catalogue_active", "catalogue_id", "active"),
     )
 
@@ -289,6 +343,39 @@ class Question(Base):
 
     max_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     """Description of the upper bound, such as ``"High"``."""
+
+    icon: Mapped[str | None] = mapped_column(String(ICON_MAX_LENGTH), nullable=True)
+    """A short emoji shown where the question has to be compact.
+
+    On every question rather than only on habits, and deliberately outside the
+    habit constraints above: an icon is decoration, and tying it to habits would
+    be a constraint to relax the first time an ordinary question wants one.
+
+    Emoji rather than an icon set — no asset pipeline, no build step, it renders
+    on every device, and any of them may be picked. Not validated as *being* an
+    emoji: that is a grapheme-cluster problem with no good answer, and the field
+    belongs to the person who typed it.
+    """
+
+    habit_period: Mapped[HabitPeriod | None] = mapped_column(String(8), nullable=True)
+    """The period this habit's target is measured over, or NULL for a plain question.
+
+    One nullable column doubling as the flag, the same shape as
+    ``pomodoros.notified_at``: there is no ``is_habit`` that could disagree
+    with it.
+    """
+
+    habit_target: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """How many days in a period must carry a counted answer.
+
+    Zero is meaningful, and only under ``at_most``: "no more than nothing" is
+    how a habit you are trying to stop is written.
+    """
+
+    habit_direction: Mapped[HabitDirection | None] = mapped_column(
+        String(8), nullable=True
+    )
+    """Whether `habit_target` is a floor to reach or a ceiling to stay under."""
 
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime,
@@ -363,6 +450,18 @@ class Question(Base):
         """
         return self.origin == ORIGIN_ASKED
 
+    @property
+    def is_habit(self) -> bool:
+        """Report whether this question carries a habit target.
+
+        Returns
+        -------
+        bool
+            True when `habit_period` is set, which the check constraint keeps in
+            step with `habit_target` and `habit_direction`.
+        """
+        return self.habit_period is not None
+
 
 class QuestionOption(Base):
     """One selectable choice of an enum question."""
@@ -382,6 +481,22 @@ class QuestionOption(Base):
 
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     """Sort order within the question."""
+
+    counts: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    """Whether choosing this option counts towards the owning habit's target.
+
+    Not ``succeeds``, which is what this was nearly called. A habit runs in
+    either direction, and the counted option is not always the happy one: a
+    smoking habit counts *Yes*, and marking "Yes, I smoked" as succeeding reads
+    backwards. ``counts`` is neutral about which side of the target the person
+    is aiming for, which is the only word that stays true for both.
+
+    Meaningless on a question that is not a habit, and left alone rather than
+    cleared when one stops being one — unticking every box to turn a habit off
+    and back on again would lose the answer to a question nobody asked.
+    """
 
     question: Mapped[Question] = relationship(back_populates="options")
     """The question this option belongs to."""

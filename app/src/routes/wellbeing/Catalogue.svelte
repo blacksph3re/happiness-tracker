@@ -16,6 +16,7 @@
     listCatalogueTemplates,
     renameCatalogue as renameCatalogueCall,
     updateQuestion,
+    updateQuestionOption,
     updateScore,
   } from '../../lib/generated/sdk.gen'
   import {
@@ -76,6 +77,15 @@
       min_label: 'Low',
       max_label: 'High',
       options: ['', ''],
+      // The habit half. `habit` is the form's own flag; the server takes the
+      // three fields together or not at all, so the defaults are what a habit
+      // becomes the moment the box is ticked rather than empty inputs.
+      habit: false,
+      habit_period: 'week',
+      habit_target: 1,
+      habit_direction: 'at_least',
+      icon: '',
+      counts: [],
     }
   }
 
@@ -90,11 +100,19 @@
       min_label: question.min_label ?? '',
       max_label: question.max_label ?? '',
       options: question.options.map((option) => option.label),
-      // Existing options cannot be renamed or removed through the API, so the
-      // form locks them and only accepts additions.
+      // Existing options cannot be added to or removed once answered, so the
+      // form locks them; `counts` is exempt and stays editable throughout.
       lockedOptions: question.options.length,
       optionIds: question.options.map((option) => option.id),
       answered: question.answered ?? false,
+      habit: Boolean(question.habit_period),
+      habit_period: question.habit_period ?? 'week',
+      habit_target: question.habit_target ?? 1,
+      habit_direction: question.habit_direction ?? 'at_least',
+      icon: question.icon ?? '',
+      counts: question.options.map((option) => option.counts),
+      // What was stored, so a save sends only the boxes that actually moved.
+      savedCounts: question.options.map((option) => option.counts),
     }
   }
 
@@ -112,26 +130,46 @@
       await unwrap(() =>
         updateQuestion({
           path: { question_id: edited.id },
-          body: edited.answered
-            ? { prompt: edited.prompt }
-            : {
-                prompt: edited.prompt,
-                ...(edited.kind === 'enum'
-                  ? {}
-                  : {
-                      min_value: Number(edited.min_value),
-                      max_value: Number(edited.max_value),
-                      min_label: edited.min_label,
-                      max_label: edited.max_label,
-                    }),
-              },
+          body: {
+            prompt: edited.prompt,
+            // Outside the freeze on purpose: an icon is decoration, and a habit
+            // target is a definition over answers that are already correct.
+            icon: edited.icon?.trim() || null,
+            ...habitBody(edited),
+            ...(edited.answered || edited.kind === 'enum'
+              ? {}
+              : {
+                  min_value: Number(edited.min_value),
+                  max_value: Number(edited.max_value),
+                  min_label: edited.min_label,
+                  max_label: edited.max_label,
+                }),
+          },
         })
       )
       if (edited.kind === 'enum') {
-        const added = edited.options.slice(edited.lockedOptions)
-        for (const label of added.map((l) => l.trim()).filter(Boolean)) {
+        // Only the boxes that actually moved, so editing a prompt does not put
+        // one request per option on a slow connection.
+        for (const [position, id] of (edited.optionIds ?? []).entries()) {
+          const wanted = Boolean(edited.counts?.[position])
+          if (wanted === Boolean(edited.savedCounts?.[position])) continue
           await unwrap(() =>
-            addQuestionOption({ path: { question_id: edited.id }, body: { label } })
+            updateQuestionOption({
+              path: { question_id: edited.id, option_id: id },
+              body: { counts: wanted },
+            })
+          )
+        }
+        const added = edited.options
+          .map((label, index) => ({ label: label.trim(), index }))
+          .slice(edited.lockedOptions)
+          .filter(({ label }) => label)
+        for (const { label, index } of added) {
+          await unwrap(() =>
+            addQuestionOption({
+              path: { question_id: edited.id },
+              body: { label, counts: Boolean(edited.counts?.[index]) },
+            })
           )
         }
       }
@@ -205,17 +243,41 @@
     pushToast(`Created ${created.name}`, 'ok')
   }
 
+  /**
+   * The three habit fields, which the server takes together or not at all.
+   *
+   * An explicit triple of nulls is what turns a habit off — every other field
+   * on the update payload uses null to mean "leave alone", so the server reads
+   * these from what was *sent* rather than from what they equal.
+   */
+  function habitBody(submitted) {
+    if (submitted.kind !== 'enum' || !submitted.habit) {
+      return { habit_period: null, habit_target: null, habit_direction: null }
+    }
+    return {
+      habit_period: submitted.habit_period,
+      habit_target: Number(submitted.habit_target),
+      habit_direction: submitted.habit_direction,
+    }
+  }
+
   async function addQuestion(submitted) {
     const body = {
       kind: submitted.kind,
       prompt: submitted.prompt,
       position: questions.length,
+      icon: submitted.icon?.trim() || null,
+      ...habitBody(submitted),
     }
     if (submitted.kind === 'enum') {
       body.options = submitted.options
-        .map((label) => label.trim())
-        .filter(Boolean)
-        .map((label, position) => ({ label, position }))
+        .map((label, index) => ({ label: label.trim(), index }))
+        .filter(({ label }) => label)
+        .map(({ label, index }, position) => ({
+          label,
+          position,
+          counts: Boolean(submitted.counts?.[index]),
+        }))
     } else {
       Object.assign(body, {
         min_value: Number(submitted.min_value),

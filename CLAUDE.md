@@ -102,7 +102,7 @@ The app is three trackers sharing a login, and the code says so. Four zones, and
 | Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `pomodoro.py` | `auth.py`, `users.py`, `admin.py`, `changes.py`, `sync.py` |
 | Services | `services/wellbeing.py` | `services/timetrack.py` | `services/pomodoro.py` | `services/clock.py`; `services/__init__.py` re-exports all |
 | Routes | `routes/wellbeing/` | `routes/time/` | `routes/pomodoro/` | `routes/` — Landing, Login, Settings, Users |
-| Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `day.js`, `period.js`, `Swimlanes.svelte`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js` |
+| Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `day.js`, `period.js`, `habits.js`, `Swimlanes.svelte`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js` |
 
 Focus is the newest and shows the rule working: it needs `saveEntry` and
 `projects`, both already exported from the shared `store.js`, so importing
@@ -127,6 +127,21 @@ the same reason: named windows are calendar work, not session work. And
 a fact about a date, both halves filter on one, and `facets.js` — which is
 shared — was about to import from a zone, which points *outward* and is worse
 than pointing across.
+
+**`lib/pointer-label.svelte.js`** and **`PointerLabel.svelte`** are the newest,
+and they came out of `Swimlanes.svelte` the moment the streak grid wanted the
+same behaviour over a completely different picture. That component's docstring
+had already said the shared part was "not the drawing — that is easy — but the
+pointer/pin/dismiss machine with three global listeners and a phone caveat behind
+every one of them"; the extraction is that sentence taken at its word. Two copies
+would be two places for a tap to stop working on a phone and nowhere else.
+
+**`lib/habits.js`** is the fourth, and it went straight there rather than
+arriving late. A habit is a wellbeing idea, but its two readers are the wellbeing
+patterns page and the *landing page*, which is shared — and shared importing from
+a zone points **outward**, which is worse than pointing across. It is built on
+`period.js` and `day.js`, both already shared, and knows nothing about editing a
+question.
 
 Because the component takes an axis rather than owning one, a caller can hand
 it a *relative* window. The focus strip does: two hours per lane, each labelled
@@ -172,7 +187,7 @@ confirm it appears in the built stylesheet under `backend/static/assets/`.
 Flowbite's interactive behaviour comes from importing `flowbite` in `src/main.js`. It
 initialises on load; components rendered later need an explicit `initFlowbite()`.
 
-Three more v4 behaviours worth knowing, each of which cost a debugging session:
+Four more v4 behaviours worth knowing, each of which cost a debugging session:
 
 - **A class assembled at runtime generates no CSS.** `gap-{SEGMENT_GAP}` compiles to
   nothing, because the scanner only sees literal text. The same applies one layer
@@ -186,6 +201,14 @@ Three more v4 behaviours worth knowing, each of which cost a debugging session:
   section rebinds, or two projects collapse to the same colour in there.
 - **v4 leaves buttons on the browser's default cursor.** `app.css` restores
   `cursor: pointer` for enabled buttons app-wide.
+- **A padding utility on a `select` takes back the room its chevron needs.**
+  Flowbite paints the arrow as a background image at `right 0.75rem` and pairs
+  it with `padding-right: 2.5rem`; `px-4` sets padding-right and wins, so the
+  text ran under the arrow in all fourteen selects here. `app.css` sets
+  `padding-inline-end` on `select:not([size])` — unlayered, so it outranks the
+  utility. `px-*` decides a select's leading edge and the chevron owns the
+  trailing one. The test reads the arrow's own computed geometry rather than the
+  number the fix chose, or it would only be restating the stylesheet.
 
 **Equal padding does not make equal buttons.** Four controls in a question card
 all carried `py-2` and came out three different heights, because their contents
@@ -193,11 +216,108 @@ did not: an arrow glyph, a 20px icon and `.meta` text have different line boxes.
 The row is `items-stretch`, which is what makes the padding decide. `e2e/mobile.spec.js`
 asserts the heights are one value, at phone width, by measurement.
 
+**And one `flex-wrap` does not make a row of groups.** The streak band held a
+span label, two span buttons, a caption and two step buttons under a single
+wrapping row, so it broke wherever it ran out of room: one span button alone on
+a line, "Up to today" split in half, and the arrow of "Next →" under its own
+word. Each group is its own flex container now — a caption may move to its own
+line while the buttons it labels stay side by side — and the buttons carry
+`whitespace-nowrap` and `flex-1` so a cramped row comes out one width rather
+than two.
+
+**320, not 390, is where a row actually runs out of room.** The band above
+already looked tidy at the suite's phone width; measured at 320 the two step
+buttons were 51px against the others' 35, which is a label on two lines. A
+layout test at one width would have passed against the thing it was written for.
+
 Hover has one answer per kind of control, listed at the top of `app.css`: outlined
 → `border-white/40`, destructive → `border-ember`, filled → `bg-dusk-lift`, card →
 `border-white/30` with `bg-dusk/10`, tinted band → `brightness-125`. Do not reach for
 a `brightness` filter on anything else: it is active under the cursor at the moment of
 a click, so it fights the state change it is supposed to accompany.
+
+## A `title` is not a tooltip
+
+Three failures, and the third is the one that gets reported: a browser waits
+about a second, puts it where it likes, and on a touch device never shows it at
+all. Both the swimlanes and the streak grid answer a **pointer** instead —
+`pointerdown`, `enter`, `move`, `leave` — through `lib/pointer-label.svelte.js`.
+
+`position: fixed` is what stops a *row* clipping the label — both the swimlanes
+and a streak row hide their own overflow, and the edges are where a label is
+most often wanted. Nothing in it stops the label leaving the **screen**, which
+is a different edge: the rightmost cell of a streak row drew it 47px off a 390px
+one.
+
+How far right it may start depends on how wide the text made it, so the clamp is
+a `translateX` the **browser** evaluates — a percentage inside a transform
+resolves against the element's own box, so `clamp(…, calc(room - 100%), 0px)` is
+negative by exactly the overflow and zero when there is none. Measuring the width
+into state works too and was written first; it puts the label at an unclamped
+position for the one frame before the measurement lands, which is a transient a
+test can read and be right about the wrong thing. Vertically there is nothing to
+guard at all — it sits above the pointer by its own height, and every page here
+has a header deeper than that.
+
+"It never leaves the screen" is a **negative** claim, so the test samples the box
+repeatedly and asserts on the worst value, rather than polling until one sample
+is happy.
+
+A finger has no hover: it arrives, and then it is gone. So a non-mouse pointer
+**pins** the label, and it stays until something else is tapped, the page is
+scrolled, or the label itself is tapped. Without the pin it flashes for exactly
+as long as the finger is down, which is what "hovering does not work on mobile"
+looks like from the outside.
+
+The dismiss listener is **captured**, so it runs before a target's own handler
+can re-pin: a tap landing on another cell should move the label rather than close
+it. Scrolling counts as moving on, because a pinned label is positioned against
+the viewport and would otherwise ride down the page over things it no longer
+describes.
+
+Testing it needs a *pointer* event with `pointerType: 'touch'`, dispatched
+directly. A `click` passes against the broken version, which is the whole point.
+
+## A card with two actions is not a link
+
+Every landing card carries a way in and a way to the patterns behind it, which
+makes the card itself a `<section>`: an anchor inside an anchor is not something
+HTML has an answer for, and the whole-card tap target went with it. The two
+actions are a `grid-cols-2` with `items-stretch`, because equal padding does not
+make equal buttons — "Check out" and "Patterns" are different lengths, and
+`self-start` left them different widths. `e2e/mobile.spec.js` measures width,
+height and top edge at phone width.
+
+Six links across three sections is exactly the shape a copy-paste gets subtly
+wrong, so `every landing card routes to its own half, both ways in` asserts all
+six `href`s. A Patterns button pointing at the wrong half would look right.
+
+The landing page is still the only bridge. It knows all three halves because it
+is the chooser; nothing else may.
+
+## An icon is chosen, never typed
+
+The habit icon field was a text input that doubled as its own preview, so
+whatever was typed *was* the icon — a habit could be labelled `AAAA` and the chip
+rendered letters where an icon belongs. There is one such row in the development
+database, which is how it was reported.
+
+`lib/wellbeing/icons.js` holds a curated set with search terms, and the form has
+a *search* box beside a *preview*: the box takes words, the row takes the choice.
+That is the validation. There is no free-text path to the stored value, so
+nothing has to be rejected afterwards and no server rule has to be kept in step
+with a client list — `max_length` remains the only bound the API enforces, since
+an icon from a later set must not start answering 422.
+
+Terms rather than names, and matched on the **start of a word**: the word somebody
+reaches for is rarely the emoji's own name — a run is found by "run", "jog" and
+"exercise" — while a substring match anywhere offers everything containing "at".
+
+**Taking one off needs `model_fields_set`.** `icon: null` on `QuestionUpdate`
+means "no icon", where null on every field beside it means "leave alone". Read
+from the value rather than from what was *sent*, a chosen icon could never be
+cleared — which is the same distinction the three habit fields need, one field
+along.
 
 ## Loading data in a component
 
@@ -583,6 +703,102 @@ retrospective editing need no special handling, since correcting a time re-reads
 the state. Only the phase *lengths* are stored, and deliberately: changing the
 mode from 25/5 to 50/10 is not a claim about yesterday.
 
+## A habit is an enum question, and that is the whole design
+
+"Went to gym? Long / Short / No" with three extra facts on it: which options
+`count`, how many days in a period must count, and whether the target is a floor
+(`at_least`) or a ceiling (`at_most`). Not a new kind of question and not a new
+table, which is why filtering, answering, the record, the export, Totals and the
+correlation ranking all took **zero lines** — a habit already *was* an enum
+question to every one of them.
+
+Five columns: `questions.habit_period`, `habit_target`, `habit_direction`,
+`icon`, and `question_options.counts`. `habit_period` doubles as the flag, so
+there is no `is_habit` that could disagree with it.
+
+- **`counts`, never `succeeds`.** With two directions the counted option is not
+  the happy one: a smoking habit counts *Yes*, and marking "Yes, I smoked" as
+  succeeding reads backwards. `counts` is the only word neutral about which side
+  of the target you are aiming for.
+- **Four states, and `unrecorded` is checked first.** met / missed / unrecorded /
+  open. Under `at_most` a period with no answers has a count of zero and would
+  otherwise read as *met* — the app awarding itself a clean week for a week
+  nobody described, which is the never-invent-data rule in its sharpest form.
+- **`open` is the grace rule made visible**, and it is where the two directions
+  genuinely differ. Under `at_least` a met period is final — you went, and
+  nothing later can un-go — so it counts at once. Under `at_most` a period still
+  inside its budget is never final, because tomorrow can spend it; one already
+  over budget is final immediately and is drawn red. The run is the trailing
+  sequence of green cells, so the number and the picture cannot disagree.
+- **A period counts days, not answer rows.** They are the same number only
+  because `uq_answer_per_day` allows one answer per question per day, and a
+  projection over the outbox can briefly hold two rows for one day.
+- **Daily tracking is described, not stored** — `DAILY_TRACKING` in
+  `lib/habits.js`, the same shape as `SYSTEM_SPECS`. A day counts on **any**
+  answer, deliberately not on a finished questionnaire: "every question
+  answered" is evaluated against the catalogue as it stands, so adding a question
+  would collapse the whole historical streak, and nothing records which
+  questions were active on a past day. Completeness is drawn as how full the cell
+  is instead. The streak on the landing page is therefore the same integer it was
+  before habits existed, which is the acceptance test.
+- **The streak walk is bounded by the earliest recorded period**, and that is not
+  tidiness. `verdict` returning `unrecorded` for an empty period is what would
+  otherwise terminate it, so the moment that guard is wrong an `at_most` habit
+  walks back through all of time. A mutation probe on the guard **hung vitest for
+  two minutes rather than failing** — which is a frozen tab, not a wrong number.
+  Bounded, the same mistake is something a test can see.
+
+Habit definitions live in exactly one payload, the catalogue. `/api/stats/variables`
+was the obvious second home and is wrong for it twice over: two copies of a
+definition is how the transfer button came to disagree with the totals above it,
+and that endpoint only returns questions the account has *answered*, so a habit
+defined yesterday would have no streak at all rather than a streak of zero.
+
+### The freeze does not cover a definition
+
+`add_option` and `delete_option` answer `409` once a question has been answered,
+because adding a choice retroactively changes what the recorded ones meant.
+**Marking an existing option as counted is the opposite kind of change** — a
+definition over answers that are already correct — so `PUT
+/questions/{id}/options/{oid}` deliberately does not consult
+`question_is_answered`, and neither do the target, the direction or the icon.
+Editing a score's components fixes last month; so does this.
+
+The narrowness is the part worth testing. There is a test for the exemption and a
+test that adding and removing options is *still* frozen, and breaking either one
+alone leaves the other passing.
+
+### A question edit never reached another device
+
+Measured before it was fixed, not reasoned about:
+
+```
+BEFORE               : {'n': 2, 'at': '2026-08-30T13:38:37'}
+AFTER ADD QUESTION   : {'n': 2, 'at': '2026-08-30T13:38:37'}
+AFTER EDIT QUESTION  : {'n': 2, 'at': '2026-08-30T13:38:37'}
+```
+
+`/api/changes` fingerprints questions, options and scores through their
+catalogue, and SQLAlchemy's `onupdate` fires on the row being written — which is
+never the catalogue. So adding *or* editing a question moved nothing the digest
+could see, and a second device kept the old wording, the old options and the old
+habit target until somebody reloaded the page. Habits made it visible rather than
+causing it: a stale target shows a *number* that quietly disagrees.
+
+`_touch_catalogue` in `routers/catalogues.py` is called by every write under a
+catalogue. It uses **`flag_modified`**, not a re-assignment: SQLAlchemy skips a
+set whose value has not changed, so `catalogue.name = catalogue.name` emits no
+UPDATE at all and `onupdate` never fires. The first attempt did exactly that and
+the test caught it.
+
+### Saving an edited question is a sequence, not a request
+
+The question, then one `PUT` per option box that moved. Navigating away
+mid-sequence takes the tail down with the page, so the counted flag silently does
+not save. The editor is online-only and shows a *Question saved* toast when the
+whole run has landed, which is what a test must wait for — waiting for the click
+fails deterministically, and looked like flakiness for exactly one run.
+
 ## Days, instants and offsets
 
 The two halves record time differently, on purpose:
@@ -731,6 +947,18 @@ beside the server's own, when a cached worker is a release behind.
 
 ## Verifying a change
 
+**The suite passes every run.** Not most runs — every run. There is no accepted
+background rate of failure here, no `retries`, and no such thing as a test that
+"sometimes goes red". A test that fails once in ten full runs is a defect that
+has been found ten times more cheaply than it would have been in use, and the
+only correct response is to reproduce it deterministically and fix the cause.
+Every one investigated so far has been a real defect in either the app or the
+test — none has been a timing artefact.
+
+`--repeat-each` does not reproduce these; the whole suite does, because load is
+usually the ingredient. Run it several times, read the *assertion* rather than
+the test name, and do not move on until you can make it fail on demand.
+
 - **A test that has never failed has not been shown to test anything.** Two tests
   here passed against broken code: one used a full page reload, which hid the
   store bug it was written for; another swiped in the direction where nothing
@@ -804,12 +1032,74 @@ beside the server's own, when a cached worker is a release behind.
   test there fails with `login as … failed`. That is the harness, not the app —
   reproduce load with the configured `WORKERS` (or `PW_WORKERS`), and read a
   sudden crop of login failures as having over-parallelised.
-- **A flake that only appears in the full suite is still a bug.** Six different
-  tests failed once each across eight runs here and every one passed alone.
-  Three were one defect — a write stranded in the outbox — and one was this
-  `savesView` race. `--repeat-each` did not reproduce either; the whole suite
-  did, so run it several times and read the *assertion* rather than reaching for
-  `retries`.
+- **A screenshot inherits every saved preference.** Each capture must *set* the
+  state it depends on, not assume it: a Patterns shot came out on the Day window
+  with nothing tracked on it, because a shot earlier in the same script had left
+  Day stored and the next run picked it up. It looked like the wrong page and was
+  really the right page on the wrong window — the same trap as a smoothing slider
+  that applies where its control is not drawn.
+- **Screenshots need a producer, or they go stale.** `docs/screenshots` was
+  hand-made, so nothing recorded how to remake one and a changed page meant a
+  changed picture nobody knew to retake. `app/e2e/shots.mjs` takes them all
+  against a running dev server. Not a Playwright *test*: it asserts nothing, and
+  a run that cannot reach the server should say so rather than fail a suite.
+  Screenshot from a **copy** when the development data has something in it you
+  would not publish — and delete the copy, it holds a password hash.
+- **Rebuild before running the e2e suite.** Playwright serves the *built* app
+  out of `backend/static`, so a fix in `app/src` that has not been through
+  `pnpm build` is not under test — the old bundle is. An afternoon went into
+  "the fix does not work" that was really "the fix is not there", and the tell
+  was a request the new code would have made appearing nowhere in the log.
+  It cuts the other way too: `git stash` does not rebuild, so a baseline
+  measured without one is the new bundle running the old tests.
+- **A guard on a read has to cover the reads it is built on.** `ensureTagRules`
+  marked itself complete when every tag's rule answered — over the tag list
+  `ensureTags` handed back, which on an unconfirmed read is **empty**. Every rule
+  over no tags answers trivially, so one failed `GET /api/tags` cached "no tag
+  has a rule" for the life of the tab and the record reported *tracked* time
+  where reported time belongs. The same defect as the one the guard was written
+  for, arrived at one level down: `let complete = fetched.has('tags')`, not
+  `true`. Reproduced by aborting the tag list once, which fails deterministically
+  and prints the exact `" Errands  0h 30m  "` the suite had been flaking on.
+- **Never hold a `route.fetch()` response across a wait.** An `APIResponse`
+  belongs to the page and is disposed when it navigates, so a handler that
+  fetches, awaits a release, and then fulfils dies with *Fetch response has been
+  disposed* — under load only, which is what made a harness bug read as an app
+  flake. Read what is needed into plain values first, or better, do not proxy at
+  all: fetch the body through the account's own API context up front and fulfil
+  from that. It is also a truer statement of the intent — what the server held
+  *before* the edit.
+- **A panel that opens before its data arrives must not be overwritten by it.**
+  `openBands` showed the rule editor at once and then assigned the fetched rule
+  over whatever was on screen, so a band added and a threshold typed inside that
+  window were both wiped — on a tag with no rule, by an empty array. It is a
+  slow, hand-edited form, so beating a round trip is ordinary. Two guards, and
+  they cover different mistakes: a **token** drops an answer for a panel that is
+  no longer the one open, and a **touched** flag drops one the person has already
+  overtaken. Same rule `ensurePreferences` follows — an edit made while the read
+  is outstanding is a real edit.
+- **`data-sync` is debounced; `data-pending` is not.** The badge's state waits a
+  second before saying "unsynced", so an ordinary tap does not flicker it — which
+  means it still reads `synced` for the whole second after a write is queued. A
+  test helper that waited on it therefore read the server *before the write was
+  sent*. `data-pending` carries the raw count, set the moment the intent is on
+  disk, and is what "the queue is empty" should be read from.
+- **A count cannot see an edit.** The same helper polled until the server held
+  one pomodoro with an id — which was already true before the edit under test,
+  so tainting one was satisfied by the untainted row. A poll has to assert the
+  thing the caller came to see, not a proxy for it.
+- **Warm a snapshot on the last thing to arrive, not the first.** The landing
+  page's catalogue comes from a *chained* pair — `ensureMe()` then
+  `ensureCatalogue(...)` — so it lands after the four parallel loads. A test that
+  warmed up by waiting for the time card and then reloaded restored a snapshot
+  with no questions in it, and read "No questions yet" where "5 of 5 left"
+  belongs.
+- **A mutation probe that *hangs* is a finding, not a slow test.** Breaking the
+  `unrecorded` guard in `verdictFor` did not fail the habit suite — it ran vitest
+  out to a two-minute timeout, because that guard is also what terminates the
+  streak walk. Twice I assumed a harness problem and raised the budget. The right
+  reading is that the mutation turned a wrong answer into a frozen tab, which is
+  a bug worth fixing in the code rather than routing around in the probe.
 - **Check the harness before believing "vacuous".** A batch probe of three
   fixes reported all three untested; the probe was grepping `tail -3`, which by
   then held Playwright's trace hint rather than the summary line. Two of the
@@ -870,6 +1160,10 @@ Do not re-open these without being asked to; each was decided deliberately.
 | Copying twice | Allowed to be attempted. The offer is the **whole day**, always, so it matches the total on the same screen; the second copy is then refused by the ordinary overlap rule on the project, and deleting the first session in the Time view is the way through. Filtering the offer by what had already been copied is what made two numbers on one screen disagree |
 | A running pomodoro | Is in the day's list and climbs the totals from the moment it starts. It carries no edit or delete control — an end time still moving is not something to correct — and it is **excluded from the transfer**, which needs a duration that is final. The card says so rather than quietly offering less |
 | Focus sounds | Synthesised, not shipped. **"None" stays a valid choice**, which is why audio cannot be relied on to keep a backgrounded tab alive — and so why a pomodoro finishing while the app is closed is reported late. See `PUSH_NOTIFICATIONS_PROPOSAL.md` |
+| Habits | An enum question with a target, in both directions. **No tap-to-answer on the landing chip** — a habit is answered in the questionnaire like the ordinary question it is, and a tick could not offer a three-way choice anyway |
+| Habit periods | `day`, `week`, `month`. No quarter or year: nothing anybody keeps four times a year needs an app, and each one is another grid that would draw two cells |
+| Habit icons | An emoji on `questions.icon`, on **every** question rather than only habits, and outside the habit constraints. Only habits render it today; tying it to them would be a constraint to relax the first time an ordinary question wants one |
+| The streak view | Ignores the day filters, and carries its own span in periods — **12 or 26, never 52**: a year of weekly cells gave every lane its own sideways scroll, which is a control that makes the page worse at the width most of it is read at. Reaching further back is Previous and Next, stepped a whole window at a time, which costs no width. A streak over "only Saturdays" is not a streak — the target says *per week*, and narrowing the days silently changes what that means |
 | Navigation | The landing page is the only bridge between the halves; neither links to the other |
 | Beartype | Test-time only. The image is built `--no-dev` and a running server never imports it |
 | Ruff | Backend only, via pre-commit. Lint rules, plus the numpy docstrings below |

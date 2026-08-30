@@ -36,7 +36,7 @@ from services.timetrack import (  # noqa: E402
     reported,
     summarise,
 )
-from services.wellbeing import _system_values, score_for_day  # noqa: E402
+from services.wellbeing import score_for_day, system_values  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[2] / "app" / "src" / "lib" / "derivations.json"
 """Where the corpus lands, beside the code it holds to account."""
@@ -357,7 +357,7 @@ def main_() -> None:
                 "name": f"{day} at {hour}",
                 "day": day,
                 "local_hour": hour,
-                "values": _system_values(date.fromisoformat(day), hour),
+                "values": system_values(date.fromisoformat(day), hour),
             }
         )
 

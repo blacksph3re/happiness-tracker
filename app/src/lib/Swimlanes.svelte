@@ -1,5 +1,7 @@
 <script>
+  import PointerLabel from './PointerLabel.svelte'
   import { clockOfSeconds, formatDuration } from './clock.js'
+  import { pointerLabel } from './pointer-label.svelte.js'
 
   /**
    * Spans of a day drawn as lanes, with an hour axis and a pointer label.
@@ -57,72 +59,12 @@
   }
 
   /**
-   * What the pointer is over, and where to put the label for it.
+   * The label, and the pin/dismiss machine behind it.
    *
-   * A `title` attribute was doing this job, and doing it badly: the browser
-   * waits about a second before showing one, shows it wherever it likes, and on
-   * a phone never shows it at all. The charts on the same page answer instantly
-   * through their own tooltip, so this is the same answer in the same shape.
+   * Shared with the streak grid, which wants exactly this behaviour over a very
+   * different picture — the drawing was never the hard part.
    */
-  let hovered = $state(null)
-
-  /**
-   * Whether the label is held open by a tap rather than by the pointer.
-   *
-   * A finger has no hover: it arrives, and then it is gone. ECharts answers a
-   * tap by leaving the tooltip up until something else is tapped, so a lane
-   * does the same — otherwise the label flashes for exactly as long as the
-   * finger is down, which is how "hovering does not work on mobile" looks.
-   */
-  let pinned = $state(false)
-
-  function follow(shown, event) {
-    // A mouse leaving un-pins; a pointer that never hovers cannot, so a tap
-    // elsewhere is what closes a pinned label. See the window handler below.
-    if (event.pointerType !== 'mouse') pinned = true
-    hovered = { name: shown.name, detail: shown.detail, x: event.clientX, y: event.clientY }
-  }
-
-  /** Track the pointer without re-pinning, so a mouse move stays a hover. */
-  function drift(shown, event) {
-    if (event.pointerType === 'mouse') follow(shown, event)
-  }
-
-  function release(event) {
-    if (event.pointerType === 'mouse' && !pinned) hovered = null
-  }
-
-  // `globalThis`, not `window`: this component takes a prop named `window` —
-  // the stretch of the day the axis covers — and reaching for `addEventListener`
-  // on that one throws where the whole timeline renders.
-  //
-  // Captured, so it runs before the span's own handler can re-pin: a tap that
-  // lands on another block should move the label rather than close it.
-  $effect(() => {
-    const put = () => {
-      pinned = false
-      hovered = null
-    }
-    const dismiss = (event) => {
-      if (!pinned) return
-      // The label itself counts as elsewhere: tapping it is how it is put away.
-      if (event.target?.closest?.('[data-span]')) return
-      put()
-    }
-    // A pinned label is positioned against the viewport, so scrolling would
-    // otherwise carry it down the page over blocks it no longer describes —
-    // stuck to the screen with no way left to be rid of it. Scrolling is a
-    // clear enough "moved on", so it goes.
-    const leave = () => {
-      if (pinned) put()
-    }
-    globalThis.addEventListener('pointerdown', dismiss, true)
-    globalThis.addEventListener('scroll', leave, { capture: true, passive: true })
-    return () => {
-      globalThis.removeEventListener('pointerdown', dismiss, true)
-      globalThis.removeEventListener('scroll', leave, { capture: true })
-    }
-  })
+  const tip = pointerLabel({ within: '[data-span]' })
 </script>
 
 <!-- The axis and every lane share one grid, so a bar and its hour line up
@@ -186,10 +128,10 @@
           style:min-width="3px"
           style:background="var(--color-{shown.colour}, var(--color-dusk-lift))"
           style:opacity={shown.faded ? 0.55 : 0.85}
-          onpointerdown={(event) => follow(shown, event)}
-          onpointerenter={(event) => drift(shown, event)}
-          onpointermove={(event) => drift(shown, event)}
-          onpointerleave={release}
+          onpointerdown={(event) => tip.follow(shown, event)}
+          onpointerenter={(event) => tip.drift(shown, event)}
+          onpointermove={(event) => tip.drift(shown, event)}
+          onpointerleave={(event) => tip.release(event)}
         ></span>
       {/each}
 
@@ -203,25 +145,4 @@
   {/each}
 </div>
 
-<!-- Fixed to the viewport, not to the lane: a lane clips its own overflow, so
-     anything positioned inside it would be cut off at the edges — which is
-     where a label is most often needed. Translated up and right of the pointer,
-     and inert, so it can never sit between the pointer and the bar it
-     describes. -->
-{#if hovered}
-  <!-- Inert while it follows a pointer, so it can never sit between the cursor
-       and the block it describes; tappable once pinned, or a tap meant to
-       dismiss it would fall through onto the block underneath and pin it all
-       over again. -->
-  <div
-    data-span-tip
-    class="fixed z-50 max-w-64 rounded-md bg-paper px-3 py-2 text-xs leading-snug
-           text-ink shadow-lg {pinned ? 'pointer-events-auto' : 'pointer-events-none'}"
-    style:left="{hovered.x + 12}px"
-    style:top="{hovered.y - 12}px"
-    style:transform="translateY(-100%)"
-  >
-    <span class="block font-semibold">{hovered.name}</span>
-    <span class="block text-ink/70">{hovered.detail}</span>
-  </div>
-{/if}
+<PointerLabel {tip} />

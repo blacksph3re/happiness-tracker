@@ -1,6 +1,7 @@
 import {
   expect,
   makeEnumCatalogue,
+  makeHabit,
   makeProject,
   privateCatalogue,
   realQuestions,
@@ -12,13 +13,24 @@ import {
 /**
  * What a phone gets.
  *
- * Two kinds of claim, both measured rather than eyeballed: nothing is wider
- * than the screen, and controls that sit in a row are the same height. Both
- * were broken when this was written — the catalogue toolbar pushed its add
- * button 15px off the right edge, and a question's four controls came out at
- * three different heights because their *contents* had different line boxes
- * even though every one of them carried `py-2`.
+ * Three kinds of claim, all measured rather than eyeballed: nothing is wider
+ * than the screen, controls that sit in a row are the same height, and nothing
+ * a control draws lands on top of something else it draws. All three were
+ * broken when they were written — the catalogue toolbar pushed its add button
+ * 15px off the right edge; a question's four controls came out at three
+ * different heights because their *contents* had different line boxes even
+ * though every one of them carried `py-2`; and every select in the app had its
+ * chevron sitting on the last word of its own text.
  */
+
+/**
+ * The narrowest screen worth holding to this, and the one the suite runs at.
+ *
+ * 320 is where a row of controls actually runs out of room — at 390 the streak
+ * band that was reported as broken already looked tidy, which is why a test at
+ * one width only would have passed against it.
+ */
+const NARROW = 320
 
 const PHONE = { width: 390, height: 844 }
 
@@ -107,6 +119,37 @@ test.describe('at phone width', () => {
     expect(new Set(tall).size, `heights were ${tall.join(', ')}`).toBe(1)
   })
 
+  test('every landing card offers two actions of one size', async ({ page }) => {
+    // Each card carries a way in and a way to the patterns behind it, side by
+    // side at phone width. Equal padding does not make equal buttons — a card
+    // whose labels differ in length ("Check out" against "Patterns") is exactly
+    // where that shows — so the pair is a two-column grid with stretched items,
+    // and this measures the result rather than trusting the classes.
+    await page.goto('/')
+    const cards = page.locator('[data-card]')
+    await expect(cards).toHaveCount(3)
+
+    for (const name of ['wellbeing', 'time', 'focus']) {
+      const card = page.locator(`[data-card="${name}"]`)
+      const actions = card.locator('a[data-go]')
+      await expect(actions).toHaveCount(2)
+
+      const boxes = await actions.evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const box = node.getBoundingClientRect()
+          return { width: Math.round(box.width), height: Math.round(box.height) }
+        })
+      )
+      expect(new Set(boxes.map((b) => b.height)).size, `${name} heights`).toBe(1)
+      expect(new Set(boxes.map((b) => b.width)).size, `${name} widths`).toBe(1)
+      // Side by side, not stacked: same row, so the same top edge.
+      const tops = await actions.evaluateAll((nodes) =>
+        nodes.map((node) => Math.round(node.getBoundingClientRect().top))
+      )
+      expect(new Set(tops).size, `${name} rows`).toBe(1)
+    }
+  })
+
   test('a pomodoro row keeps its shape', async ({ page }) => {
     await page.goto('/focus')
     await page.getByLabel(/focusing on/).fill('A task long enough to need truncating here')
@@ -125,6 +168,148 @@ test.describe('at phone width', () => {
         box.x + box.width + 1
       )
     }
+  })
+
+  test('the streak window controls never break themselves up', async ({ page, account }) => {
+    // Reported from a phone: the span buttons split across two lines, "Up to
+    // today" wrapped in the middle, and the arrow of "Next →" ended up under
+    // its own word. One `flex-wrap` was deciding all of it, so the row broke
+    // wherever it happened to run out of room rather than between the groups.
+    await makeHabit(account, {
+      prompt: 'Went to gym?',
+      options: [
+        ['Yes', true],
+        ['No', false],
+      ],
+    })
+    await page.goto('/stats')
+    await page.getByRole('button', { name: 'Streaks' }).click()
+    await expect(page.locator('[data-streaks]')).toBeVisible()
+
+    const band = page.locator('[data-streak-back]').locator('xpath=../..')
+    for (const width of [NARROW, PHONE.width]) {
+      await page.setViewportSize({ width, height: PHONE.height })
+      const shape = await band.evaluate((node) => {
+        const controls = [...node.querySelectorAll('button')]
+        const box = (el) => el.getBoundingClientRect()
+        return {
+          heights: controls.map((c) => Math.round(box(c).height)),
+          // Each pair shares a row, so a pair is a row's worth of tops.
+          rows: [...new Set(controls.map((c) => Math.round(box(c).top)))].sort((a, b) => a - b),
+          widths: controls.map((c) => Math.round(box(c).width)),
+          // A wrapped run of text draws one client rect per line.
+          captionLines: node.querySelector('[data-streak-back]').getClientRects().length,
+          spills: node.scrollWidth - node.clientWidth,
+        }
+      })
+
+      expect(shape.spills, `at ${width} the band overflows itself`).toBeLessThanOrEqual(1)
+      expect(shape.captionLines, `at ${width} the caption wraps`).toBe(1)
+      // A button whose label wrapped is taller than one whose label did not,
+      // which is what makes one height the assertion for both of them.
+      expect(
+        new Set(shape.heights).size,
+        `at ${width} the heights were ${shape.heights.join(', ')}`
+      ).toBe(1)
+      // Two rows of two: the span pair, then the step pair. Never a stray one.
+      expect(shape.rows.length, `at ${width} the controls sat on ${shape.rows.length} rows`).toBe(2)
+      const [span, step] = [shape.widths.slice(0, 2), shape.widths.slice(2)]
+      expect(new Set(span).size, `at ${width} the span buttons were ${span.join(', ')}`).toBe(1)
+      expect(new Set(step).size, `at ${width} the step buttons were ${step.join(', ')}`).toBe(1)
+    }
+  })
+
+  test('a streak label tapped at the right edge stays on the screen', async ({ page, account }) => {
+    // `position: fixed` is what stops a row clipping the label. Nothing in it
+    // stops the label leaving the screen, and the rightmost cell of a streak
+    // row is exactly where a phone runs out of width — it was drawn 47px past
+    // the edge, which is the same "not reachable on mobile" the pin was added
+    // for, one step along.
+    const habit = await makeHabit(account, {
+      prompt: 'Went to gym?',
+      options: [
+        ['Yes', true],
+        ['No', false],
+      ],
+    })
+    await page.goto('/stats')
+    await page.getByRole('button', { name: 'Streaks' }).click()
+
+    const cells = page.locator(`[data-habit-row="q${habit.id}"] [data-period]`)
+    await expect(cells.first()).toBeVisible()
+    const last = cells.last()
+    const cell = await last.boundingBox()
+    // A pointer event with a touch type, not a click: a click pins nothing, so
+    // it passes against a label that only ever answered a mouse.
+    await last.dispatchEvent('pointerdown', {
+      pointerType: 'touch',
+      clientX: Math.round(cell.x + cell.width - 1),
+      clientY: Math.round(cell.y + 2),
+    })
+
+    // Sampled and maxed, not polled: "it never leaves the screen" is a negative
+    // claim, and the first sample satisfies one of those before anything has
+    // settled. The clamp is CSS, so there is no frame it has not applied to —
+    // which is what this is here to keep true.
+    const label = page.locator('[data-span-tip]')
+    await expect(label).toBeVisible()
+    let worst = 0
+    let leftmost = PHONE.width
+    for (let sample = 0; sample < 8; sample += 1) {
+      const box = await label.boundingBox()
+      worst = Math.max(worst, Math.round(box.x + box.width))
+      leftmost = Math.min(leftmost, Math.round(box.x))
+      await page.waitForTimeout(60)
+    }
+    expect(leftmost, 'the label started off the left edge').toBeGreaterThanOrEqual(0)
+    expect(
+      worst,
+      `the label ran to ${worst} on a ${PHONE.width}px screen`
+    ).toBeLessThanOrEqual(PHONE.width)
+  })
+
+  test('no select draws its chevron on its own text', async ({ page, account, admin }) => {
+    // The theme paints the arrow as a background image inset from the trailing
+    // edge and reserves room for it with `padding-right`. Every select here
+    // also carries `px-3` or `px-4`, which sets padding-right and wins — so the
+    // text ran under the arrow in all fourteen of them.
+    //
+    // Read from the arrow's own geometry rather than from the number the fix
+    // chose, or this would only be restating the stylesheet back to itself.
+    await privateCatalogue(admin, account, [
+      { kind: 'discrete', prompt: 'How rested', min_value: 1, max_value: 5 },
+    ])
+    await makeProject(account, 'The rewrite')
+
+    let seen = 0
+    for (const path of ['/questions', '/settings', '/time/record']) {
+      await page.goto(path)
+      await expect(page.locator('main')).toBeVisible()
+      const selects = await page.locator('select').evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const style = getComputedStyle(node)
+          // `right 0.75rem` computes to `right 12px`. With no image at all the
+          // position computes to a percentage and the arrow measures zero,
+          // which is the right answer: no chevron, nothing to run under.
+          const inset = parseFloat(style.backgroundPositionX.split(' ').pop())
+          const arrow =
+            style.backgroundImage === 'none' ? 0 : inset + parseFloat(style.backgroundSize)
+          return {
+            value: node.value,
+            reserved: Math.round(parseFloat(style.paddingRight)),
+            arrow: Math.round(arrow),
+          }
+        })
+      )
+      seen += selects.length
+      expect(
+        selects.filter((select) => select.reserved < select.arrow),
+        `on ${path}`
+      ).toEqual([])
+    }
+    // A page that happens to render no select proves nothing, and three of them
+    // would make this pass by drawing nothing at all.
+    expect(seen, 'no select was examined').toBeGreaterThan(4)
   })
 
   test('the questions Totals view does not scroll sideways', async ({ page, account, admin }) => {
