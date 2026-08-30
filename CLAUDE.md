@@ -1100,6 +1100,17 @@ the test name, and do not move on until you can make it fail on demand.
   streak walk. Twice I assumed a harness problem and raised the budget. The right
   reading is that the mutation turned a wrong answer into a frozen tab, which is
   a bug worth fixing in the code rather than routing around in the probe.
+- **A dead-code scan is wrong three ways before it is right.** Sweeping for
+  unused names here took three attempts, and each wrong one was confidently
+  wrong: `git grep -h ''` does not dump file contents, so everything looked
+  unreferenced including all 48 route handlers; counting raw text kept
+  `TimeEntryCreate` alive on the strength of being **named in another schema's
+  docstring**, which is a mention and not a use; and counting every `ast.Name`
+  hid `ORIGINS`, because an assignment *target* is a `Name` too. The version
+  that works parses each file and counts only `Name` nodes in **Load** context,
+  and exempts anything with a decorator — a route handler has no call site and
+  is still live. A scan reporting sixty dead names in a working application is
+  the scan being wrong.
 - **Check the harness before believing "vacuous".** A batch probe of three
   fixes reported all three untested; the probe was grepping `tail -3`, which by
   then held Playwright's trace hint rather than the summary line. Two of the
@@ -1167,6 +1178,62 @@ Do not re-open these without being asked to; each was decided deliberately.
 | Navigation | The landing page is the only bridge between the halves; neither links to the other |
 | Beartype | Test-time only. The image is built `--no-dev` and a running server never imports it |
 | Ruff | Backend only, via pre-commit. Lint rules, plus the numpy docstrings below |
+
+## Type the shape, not the container
+
+`str` is not a type for a value with three legal spellings; it is the absence of
+one. Write the shape out — `Literal["day", "week", "month"]` — and the reader,
+the checker and the generated client all learn the same thing at once.
+
+The habit columns are where this was settled. `habit_period` was going to be
+`Mapped[str]` with the three values named in a docstring, which is how `kind`,
+`origin` and `aggregate` were already written. `Literal` was asked for instead,
+and it turned out to be the more telling type in four separate places:
+
+- **The API surface says it.** `@hey-api/openapi-ts` reads the OpenAPI schema
+  into `app/src/lib/generated/types.gen.ts`, and the two styles land in *the same
+  file* looking like this:
+
+  ```ts
+  habit_period?: 'day' | 'week' | 'month' | null;   // from Literal
+  kind: string;                                     // from str
+  origin: string;                                   // from str
+  aggregate: string | null;                          // from str
+  ```
+
+  A `Literal` crosses the wire and keeps its meaning. A `str` arrives as
+  `string`, and every caller is back to reading a docstring — or guessing.
+- **`Literal` is a closed set, so a checker can see an unhandled case.** A match
+  over `HabitDirection` is exhaustive or it is an error; a match over `str` is
+  never either.
+- **It reads as the definition.** `HabitPeriod = Literal[...]` with a docstring
+  saying *why* there is no quarter is the one place that question is answered.
+- **The constraint follows from it**, rather than being a second, parallel list
+  that can drift. `HABIT_PERIODS` exists only because a `CheckConstraint` needs
+  the values as data.
+
+**SQLAlchemy needs the column type spelled out anyway.** It infers `String` from
+`Mapped[str]` but infers nothing from `Mapped[Literal[...]]`, so the annotation
+and `mapped_column(String(8))` are both required — measured as `VARCHAR(8) NULL`
+in the built schema rather than assumed. That is not a cost: the length was
+always a decision worth making explicitly.
+
+Where the value is genuinely open, say so and keep the pattern. A project's
+`colour` stays `str` with `COLOUR_PATTERN`, for the reason the icon field is
+bounded only by `max_length`: the palette gains tokens, and a value from a later
+one must not start answering 422.
+
+**`{object}` is the JavaScript spelling of the same mistake.** `@param {object}
+pomodoro` type-checks as "a value with no properties", so every field read off it
+is an error the moment anything looks. The precise type is *already generated* —
+`PomodoroOut`, `TimeEntryOut`, `AnswerOut` and the rest are in `types.gen.ts`, and
+`@param {import('../generated/types.gen').PomodoroOut}` costs one line and ties
+the function to the contract the server actually publishes. Regenerate with
+`pnpm api:generate`.
+
+This is the payoff worth keeping in view: precision on the server propagates
+outward for free, and imprecision is lost at the boundary and cannot be recovered
+on the other side.
 
 ## Docstrings
 

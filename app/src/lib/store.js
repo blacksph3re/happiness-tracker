@@ -123,7 +123,7 @@ const summaries = new Map()
 /**
  * Load a summary, from memory when it has been asked for before.
  *
- * @param {{start: string, end: string, by: string, as_of: string}} query
+ * @param {{start: string, end: string, by: 'project'|'tag', as_of: string}} query
  * @returns {Promise<Array<object>>} The summary rows.
  */
 export async function ensureSummary({ start, end, by, as_of }) {

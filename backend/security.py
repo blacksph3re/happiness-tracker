@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 import jwt
 import pyotp
@@ -14,13 +14,22 @@ from passlib.context import CryptContext
 from config import get_settings
 from models import User
 
-ACCESS_TOKEN_TYPE = "access"
+TokenType = Literal["access", "refresh", "totp"]
+"""What a token may be spent on, carried as its ``typ`` claim.
+
+Three separate types rather than one, and the separation is what makes the
+two-step login safe: `decode_token` refuses a token whose type is not the one
+asked for, so a half-finished login cannot be spent as a bearer credential and a
+bearer credential cannot be spent to skip the second step.
+"""
+
+ACCESS_TOKEN_TYPE: TokenType = "access"
 """Value of the ``typ`` claim on tokens accepted as bearer credentials."""
 
-REFRESH_TOKEN_TYPE = "refresh"
+REFRESH_TOKEN_TYPE: TokenType = "refresh"
 """Value of the ``typ`` claim on tokens accepted only by the refresh endpoint."""
 
-TOTP_TOKEN_TYPE = "totp"
+TOTP_TOKEN_TYPE: TokenType = "totp"
 """Value of the ``typ`` claim on tokens that authorise one thing: presenting a
 second factor.
 
@@ -104,7 +113,7 @@ def verify_password(password: str, password_hash: str | None) -> bool:
 
 
 def create_token(
-    subject: int, token_type: str, ttl: timedelta, token_version: int = 0
+    subject: int, token_type: TokenType, ttl: timedelta, token_version: int = 0
 ) -> str:
     """Mint a signed JSON Web Token for a user.
 
@@ -112,7 +121,7 @@ def create_token(
     ----------
     subject : int
         Identifier of the user the token authenticates.
-    token_type : str
+    token_type : TokenType
         Either `ACCESS_TOKEN_TYPE` or `REFRESH_TOKEN_TYPE`, written to the
         ``typ`` claim so the two can never substitute for one another.
     ttl : datetime.timedelta
@@ -138,14 +147,14 @@ def create_token(
     return jwt.encode(payload, settings.signing_key, algorithm=settings.jwt_algorithm)
 
 
-def decode_token(token: str, expected_type: str) -> dict[str, Any]:
+def decode_token(token: str, expected_type: TokenType) -> dict[str, Any]:
     """Verify a token's signature, expiry and type.
 
     Parameters
     ----------
     token : str
         The encoded token.
-    expected_type : str
+    expected_type : TokenType
         The ``typ`` claim the token must carry.
 
     Returns

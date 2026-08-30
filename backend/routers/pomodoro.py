@@ -17,7 +17,7 @@ from sqlalchemy import select
 from deps import CurrentUser, DbSession
 from models import Pomodoro, TimeEntry
 from routers.projects import own_project
-from schemas import PomodoroOut, TransferRequest
+from schemas import PomodoroOut, TransferRequest, TransferResult
 from services import (
     TimeRuleError,
     check_no_overlap,
@@ -199,7 +199,7 @@ def transfer_pomodoros(
     user: CurrentUser,
     db: DbSession,
     as_of: datetime | None = Query(default=None),
-) -> dict:
+) -> TransferResult:
     """Copy one local day of pomodoro time onto one of the user's projects.
 
     Parameters
@@ -215,7 +215,7 @@ def transfer_pomodoros(
 
     Returns
     -------
-    dict
+    TransferResult
         The identifier and bounds of the session written.
 
     Raises
@@ -279,10 +279,10 @@ def transfer_pomodoros(
     db.commit()
     db.refresh(entry)
 
-    return {
-        "entry_id": entry.id,
-        "started_at": entry.started_at,
-        "ended_at": entry.ended_at,
-        "seconds": total.seconds,
-        "pomodoros": stamped,
-    }
+    return TransferResult(
+        entry_id=entry.id,
+        started_at=entry.started_at,
+        ended_at=entry.ended_at,
+        seconds=total.seconds,
+        pomodoros=stamped,
+    )

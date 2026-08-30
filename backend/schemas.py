@@ -9,8 +9,14 @@ from models import (
     ICON_MAX_LENGTH,
     PROMPT_MAX_LENGTH,
     TRACK_NAME_MAX_LENGTH,
+    EntrySource,
     HabitDirection,
     HabitPeriod,
+    PomodoroState,
+    QuestionKind,
+    QuestionOrigin,
+    ScoreAggregate,
+    SystemKey,
 )
 from templates import DEFAULT_TEMPLATE
 
@@ -461,7 +467,7 @@ class ScoreCreate(BaseModel):
     prompt: str = Field(min_length=1, max_length=PROMPT_MAX_LENGTH)
     """What the score is called."""
 
-    aggregate: str = Field(pattern="^(sum|mean)$")
+    aggregate: ScoreAggregate
     """How the components combine."""
 
     components: list[ScoreComponentIn] = Field(min_length=1)
@@ -480,7 +486,7 @@ class ScoreUpdate(BaseModel):
     prompt: str | None = Field(default=None, min_length=1, max_length=PROMPT_MAX_LENGTH)
     """New name for the score."""
 
-    aggregate: str | None = Field(default=None, pattern="^(sum|mean)$")
+    aggregate: ScoreAggregate | None = None
     """New way of combining the components."""
 
     components: list[ScoreComponentIn] | None = Field(default=None, min_length=1)
@@ -507,8 +513,8 @@ class QuestionOut(BaseModel):
     catalogue_id: int
     """Owning catalogue."""
 
-    kind: str
-    """One of ``enum``, ``discrete`` or ``continuous``."""
+    kind: QuestionKind
+    """What the answers to this question are shaped like."""
 
     prompt: str
     """Question text shown to the user."""
@@ -519,11 +525,11 @@ class QuestionOut(BaseModel):
     active: bool
     """Whether the question still appears in the questionnaire."""
 
-    origin: str
-    """``asked``, ``auto`` or ``computed``: where this question's answers come from."""
+    origin: QuestionOrigin
+    """Where this question's answers come from."""
 
-    aggregate: str | None
-    """``sum`` or ``mean``, for scores."""
+    aggregate: ScoreAggregate | None
+    """How the components combine, for scores."""
 
     require_all: bool
     """Whether a score needs every component answered."""
@@ -562,8 +568,8 @@ class QuestionOut(BaseModel):
 class QuestionCreate(BaseModel):
     """Payload for adding a question to a catalogue."""
 
-    kind: str = Field(pattern="^(enum|discrete|continuous)$")
-    """One of ``enum``, ``discrete`` or ``continuous``."""
+    kind: QuestionKind
+    """What the answers to this question are shaped like."""
 
     prompt: str = Field(min_length=1, max_length=PROMPT_MAX_LENGTH)
     """Question text shown to the user."""
@@ -756,14 +762,14 @@ class Variable(BaseModel):
     label: str
     """Human-readable name."""
 
-    kind: str
-    """One of ``enum``, ``discrete`` or ``continuous``."""
+    kind: QuestionKind
+    """What this variable's values are shaped like."""
 
-    system_key: str | None
+    system_key: SystemKey | None
     """Set when the variable is auto-tracked."""
 
-    origin: str
-    """``asked``, ``auto`` or ``computed``: where its values come from."""
+    origin: QuestionOrigin
+    """Where its values come from."""
 
     min_value: float | None
     """Lower bound, for numeric variables."""
@@ -949,76 +955,11 @@ class TimeEntryOut(BaseModel):
     note: str | None
     """Optional free text."""
 
-    source: str | None
+    source: EntrySource | None
     """Where the session came from, when it was not tracked directly.
 
     `pomodoro` for one written by the focus half's transfer, null otherwise.
     """
-
-
-class CheckIn(BaseModel):
-    """Payload for starting a timer."""
-
-    at: datetime
-    """The instant of the check-in, in UTC, as the client reports it."""
-
-    utc_offset: int = Field(ge=-720, le=840)
-    """Minutes east of UTC where the client is."""
-
-    note: str | None = Field(default=None, max_length=500)
-    """Optional free text."""
-
-
-class CheckOut(BaseModel):
-    """Payload for stopping a timer."""
-
-    at: datetime
-    """The instant of the check-out, in UTC, as the client reports it."""
-
-
-class TimeEntryCreate(BaseModel):
-    """Payload for recording a session that was never tracked live."""
-
-    merge_overlapping: bool = False
-    """Absorb any session on the same project this one collides with.
-
-    Off by default: an overlap is refused, and the caller decides whether it
-    meant to extend what is already there. Merging keeps the earliest start and
-    the latest end, and removes the sessions it swallowed."""
-
-    project_id: int
-    """The project it counts towards."""
-
-    started_at: datetime
-    """When it began, in UTC."""
-
-    ended_at: datetime
-    """When it ended, in UTC. A session added by hand is always finished."""
-
-    utc_offset: int = Field(ge=-720, le=840)
-    """Minutes east of UTC the session happened in."""
-
-    note: str | None = Field(default=None, max_length=500)
-    """Optional free text."""
-
-
-class TimeEntryUpdate(BaseModel):
-    """Payload for correcting a session. Omitted fields are left alone."""
-
-    merge_overlapping: bool = False
-    """Absorb any session on the same project this edit collides with."""
-
-    project_id: int | None = None
-    """Move the session to another project."""
-
-    started_at: datetime | None = None
-    """Corrected start, in UTC."""
-
-    ended_at: datetime | None = None
-    """Corrected end, in UTC."""
-
-    note: str | None = Field(default=None, max_length=500)
-    """Replacement free text."""
 
 
 class SummaryRow(BaseModel):
@@ -1256,8 +1197,8 @@ class PomodoroOut(BaseModel):
     client_id: str | None
     """The identity the recording device gave it. See `TimeEntryOut`."""
 
-    state: str
-    """`running`, `abandoned` or `complete`, computed on read.
+    state: PomodoroState
+    """Which of the three outcomes it is in, computed on read.
 
     Sent rather than left to the client because the server is the authority on
     it, and because the client would otherwise need the same three-way
@@ -1272,74 +1213,6 @@ class PomodoroOut(BaseModel):
 
     break_elapsed_seconds: int
     """How much of that was break. Zero for an abandoned pomodoro."""
-
-
-class PomodoroStart(BaseModel):
-    """Payload for starting a pomodoro."""
-
-    at: datetime
-    """The instant the focus began, in UTC, as the client reports it."""
-
-    utc_offset: int = Field(ge=-720, le=840)
-    """Minutes east of UTC where the client is."""
-
-    focus_seconds: int = Field(gt=0, le=86_400)
-    """Length of the focus phase, from the account's current mode."""
-
-    break_seconds: int = Field(ge=0, le=86_400)
-    """Length of the break phase, from the account's current mode."""
-
-    task: str | None = Field(default=None, max_length=500)
-    """Optional description. An empty one is valid."""
-
-    client_id: str | None = Field(default=None, max_length=36)
-    """The identity the device has already given it, if it minted one."""
-
-
-class PomodoroStop(BaseModel):
-    """Payload for ending a pomodoro before its planned end."""
-
-    at: datetime
-    """The instant it was stopped, in UTC, as the client reports it."""
-
-
-class PomodoroUpdate(BaseModel):
-    """Payload for correcting a pomodoro. Omitted fields are left alone."""
-
-    task: str | None = Field(default=None, max_length=500)
-    """Replacement description.
-
-    The commonest correction there is: starting on one thing and discovering a
-    minute in that it is really another.
-    """
-
-    started_at: datetime | None = None
-    """Corrected start, in UTC."""
-
-    ended_at: datetime | None = None
-    """Corrected end, in UTC."""
-
-    tainted: bool | None = None
-    """Whether to mark the focus unsuccessful."""
-
-
-class PomodoroDay(BaseModel):
-    """A day of pomodoros with the totals the Focus page shows."""
-
-    day: date
-    """The local day, read with each pomodoro's own offset."""
-
-    pomodoros: list[PomodoroOut]
-    """Every pomodoro that began on that day, earliest first."""
-
-    focus_seconds: int
-    """Total focus time on the day."""
-
-    break_seconds: int
-    """Total break time on the day."""
-
-    tainted_seconds: int
-    """How much of the total came from pomodoros marked tainted."""
 
 
 class TransferRequest(BaseModel):
@@ -1358,6 +1231,31 @@ class TransferRequest(BaseModel):
     hand this morning *and* worked on in pomodoros leaves no room for a block
     starting at the first one. Null takes the earliest untransferred pomodoro.
     """
+
+
+class TransferResult(BaseModel):
+    """What one transfer wrote, as the button reads it back.
+
+    The endpoint used to answer a bare ``dict``, which reaches the client as
+    ``{ [key: string]: unknown }`` — the wire version of a `{object}` docstring,
+    and the same loss of meaning. The keys are unchanged; only what the schema
+    says about them is new.
+    """
+
+    entry_id: int
+    """The session that was written."""
+
+    started_at: datetime
+    """Where it begins, in UTC."""
+
+    ended_at: datetime
+    """Where it ends, in UTC. Never null: a copy needs a finished duration."""
+
+    seconds: int
+    """How long it is, focus and break together."""
+
+    pomodoros: int
+    """How many pomodoros were stamped as copied."""
 
 
 class SyncPomodoroPayload(BaseModel):

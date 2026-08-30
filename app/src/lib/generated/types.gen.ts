@@ -468,7 +468,7 @@ export type PomodoroOut = {
     /**
      * State
      */
-    state: string;
+    state: 'running' | 'abandoned' | 'complete';
     /**
      * Elapsed Seconds
      */
@@ -668,7 +668,7 @@ export type QuestionCreate = {
     /**
      * Kind
      */
-    kind: string;
+    kind: 'enum' | 'discrete' | 'continuous';
     /**
      * Prompt
      */
@@ -732,7 +732,7 @@ export type QuestionOut = {
     /**
      * Kind
      */
-    kind: string;
+    kind: 'enum' | 'discrete' | 'continuous';
     /**
      * Prompt
      */
@@ -748,11 +748,11 @@ export type QuestionOut = {
     /**
      * Origin
      */
-    origin: string;
+    origin: 'asked' | 'auto' | 'computed';
     /**
      * Aggregate
      */
-    aggregate: string | null;
+    aggregate: 'sum' | 'mean' | null;
     /**
      * Require All
      */
@@ -912,7 +912,7 @@ export type ScoreCreate = {
     /**
      * Aggregate
      */
-    aggregate: string;
+    aggregate: 'sum' | 'mean';
     /**
      * Components
      */
@@ -940,7 +940,7 @@ export type ScoreUpdate = {
     /**
      * Aggregate
      */
-    aggregate?: string | null;
+    aggregate?: 'sum' | 'mean' | null;
     /**
      * Components
      */
@@ -1255,7 +1255,7 @@ export type TimeEntryOut = {
     /**
      * Source
      */
-    source: string | null;
+    source: 'pomodoro' | null;
 };
 
 /**
@@ -1360,6 +1360,39 @@ export type TransferRequest = {
      * Started At
      */
     started_at?: string | null;
+};
+
+/**
+ * TransferResult
+ *
+ * What one transfer wrote, as the button reads it back.
+ *
+ * The endpoint used to answer a bare ``dict``, which reaches the client as
+ * ``{ [key: string]: unknown }`` — the wire version of a `{object}` docstring,
+ * and the same loss of meaning. The keys are unchanged; only what the schema
+ * says about them is new.
+ */
+export type TransferResult = {
+    /**
+     * Entry Id
+     */
+    entry_id: number;
+    /**
+     * Started At
+     */
+    started_at: string;
+    /**
+     * Ended At
+     */
+    ended_at: string;
+    /**
+     * Seconds
+     */
+    seconds: number;
+    /**
+     * Pomodoros
+     */
+    pomodoros: number;
 };
 
 /**
@@ -1475,15 +1508,15 @@ export type Variable = {
     /**
      * Kind
      */
-    kind: string;
+    kind: 'enum' | 'discrete' | 'continuous';
     /**
      * System Key
      */
-    system_key: string | null;
+    system_key: 'weekday' | 'day_of_year' | 'month' | 'year' | 'first_answer_hour' | null;
     /**
      * Origin
      */
-    origin: string;
+    origin: 'asked' | 'auto' | 'computed';
     /**
      * Min Value
      */
@@ -2747,7 +2780,7 @@ export type TimeSummaryData = {
         /**
          * By
          */
-        by?: string;
+        by?: 'project' | 'tag';
     };
     url: '/api/time/summary';
 };
@@ -2835,13 +2868,9 @@ export type TransferPomodorosError = TransferPomodorosErrors[keyof TransferPomod
 
 export type TransferPomodorosResponses = {
     /**
-     * Response Transferpomodoros
-     *
      * Successful Response
      */
-    201: {
-        [key: string]: unknown;
-    };
+    201: TransferResult;
 };
 
 export type TransferPomodorosResponse = TransferPomodorosResponses[keyof TransferPomodorosResponses];

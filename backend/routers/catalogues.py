@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +23,7 @@ from schemas import (
     QuestionCreate,
     QuestionOut,
     QuestionUpdate,
+    ScoreComponentIn,
     ScoreCreate,
     ScoreUpdate,
     TemplateOut,
@@ -83,7 +86,7 @@ def _touch_catalogue(db: DbSession, catalogue_id: int) -> None:
         flag_modified(catalogue, "name")
 
 
-def _enforce(rule) -> None:
+def _enforce(rule: Callable[[], None]) -> None:
     """Run a domain rule, turning its complaint into a 422.
 
     Keeps the rules themselves free of HTTP concepts: `services` states what a
@@ -818,7 +821,7 @@ def delete_option(
     return question
 
 
-def _enforce_score(rule) -> None:
+def _enforce_score(rule: Callable[[], None]) -> None:
     """Run a score rule, turning its complaint into a 422.
 
     The score equivalent of `_enforce`: `services` says what a score may be, and
@@ -843,7 +846,7 @@ def _enforce_score(rule) -> None:
 
 
 def _load_components(
-    db: DbSession, catalogue_id: int, components: list
+    db: DbSession, catalogue_id: int, components: list[ScoreComponentIn]
 ) -> list[Question]:
     """Load the questions a score names, refusing any from another catalogue.
 

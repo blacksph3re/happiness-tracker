@@ -14,7 +14,7 @@
  * `day.js`, both already shared, and none of it knows how to edit a question.
  */
 
-import { dayLabel, shiftDay, today } from './day.js'
+import { dayLabel, today } from './day.js'
 import { period, stepPeriod } from './period.js'
 
 export const DAILY_TRACKING = {
@@ -38,9 +38,6 @@ export const DAILY_TRACKING = {
  * whole historical streak, since nothing records which questions were active on
  * a past day. Completeness is shown instead as how full the cell is drawn.
  */
-
-/** Order the four states are worth reporting in, most complete first. */
-export const STATES = ['met', 'open', 'missed', 'unrecorded']
 
 /**
  * The canonical key of the period a day falls in: the period's own first day.
@@ -367,11 +364,4 @@ export function targetLabel(habit) {
 export function runLabel(habit, run) {
   const unit = { day: 'day', week: 'week', month: 'month' }[habit.period]
   return `${run} ${unit}${run === 1 ? '' : 's'}`
-}
-
-/** Every day in the span a streak row draws, for the days a habit's tally needs. */
-export function spanStart(habit, span, from = today()) {
-  let cursor = periodKey(habit.period, from)
-  for (let i = 1; i < span; i += 1) cursor = previousKey(habit.period, cursor)
-  return shiftDay(cursor, 0)
 }

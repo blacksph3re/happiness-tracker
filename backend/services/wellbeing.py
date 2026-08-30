@@ -13,6 +13,7 @@ from models import (
     Answer,
     Catalogue,
     Question,
+    QuestionOption,
     ScoreComponent,
 )
 from templates import SCORE_POSITION, Template
@@ -507,7 +508,12 @@ def system_values(day: date, local_hour: int) -> dict[str, float]:
     }
 
 
-def check_answer(question, option, day_value, day_option_id) -> None:
+def check_answer(
+    question: Question,
+    option: QuestionOption | None,
+    day_value: float | None,
+    day_option_id: int | None,
+) -> None:
     """Check that a response fits the question it answers.
 
     Moved here from the router that used to own it, when the only way to write

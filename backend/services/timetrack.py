@@ -6,6 +6,7 @@ or knows about HTTP.
 """
 
 from datetime import date, datetime, time, timedelta
+from typing import Protocol, runtime_checkable
 
 from services.clock import MAX_UTC_OFFSET, MIN_UTC_OFFSET, local_day
 
@@ -18,6 +19,31 @@ class TimeRuleError(ValueError):
     they hold whether the caller arrived over HTTP or from a script. The router
     translates it into a 422.
     """
+
+
+@runtime_checkable
+class Session(Protocol):
+    """The four fields the session rules read, whatever is carrying them.
+
+    A `Protocol` rather than `models.TimeEntry`, and not for looseness:
+    `scripts/dump_derivations.py` feeds these same functions its own dataclass
+    to build the conformance corpus the JavaScript ports are held against, so an
+    ORM annotation here would be a lie the corpus already contradicts. Written
+    out, the duck type becomes something a checker can hold to — beartype
+    rejects a shape missing any of these during the suite.
+    """
+
+    project_id: int
+    """Which project the session is against."""
+
+    started_at: datetime
+    """When it opened, in UTC."""
+
+    ended_at: datetime | None
+    """When it closed, in UTC, or None while it is still running."""
+
+    utc_offset: int
+    """Minutes east of UTC in force at check-in. See `services/clock.py`."""
 
 
 def check_entry_shape(
@@ -47,7 +73,7 @@ def check_entry_shape(
         raise TimeRuleError("A session has to end after it starts")
 
 
-def _ends_at(entry, as_of: datetime) -> datetime:
+def _ends_at(entry: Session, as_of: datetime) -> datetime:
     """Return the instant a session is measured to.
 
     Parameters
@@ -69,7 +95,7 @@ def _ends_at(entry, as_of: datetime) -> datetime:
     return max(entry.started_at, as_of)
 
 
-def duration_seconds(entry, as_of: datetime) -> int:
+def duration_seconds(entry: Session, as_of: datetime) -> int:
     """Return how long a session lasted, or has lasted so far.
 
     Computed from the UTC instants, so it is exact across a daylight-saving
@@ -90,7 +116,7 @@ def duration_seconds(entry, as_of: datetime) -> int:
     return int((_ends_at(entry, as_of) - entry.started_at).total_seconds())
 
 
-def starting_day(entry) -> date:
+def starting_day(entry: Session) -> date:
     """Return the local day a session belongs to.
 
     Read with the session's *own* offset, never the day's. The day's offset
@@ -110,7 +136,7 @@ def starting_day(entry) -> date:
     return local_day(entry.started_at, entry.utc_offset)
 
 
-def day_offsets(entries: list) -> dict[date, int]:
+def day_offsets(entries: list[Session]) -> dict[date, int]:
     """Decide each local day's offset from the session that opened it.
 
     A day is supposed to be a fixed 24-hour window. Letting every session carry
@@ -138,7 +164,9 @@ def day_offsets(entries: list) -> dict[date, int]:
     return {day: entry.utc_offset for day, entry in opener.items()}
 
 
-def daily_slices(entry, as_of: datetime, offsets: dict | None = None):
+def daily_slices(
+    entry: Session, as_of: datetime, offsets: dict[date, int] | None = None
+):
     """Divide a session across the local days it touches.
 
     A session from 22:00 to 02:00 yields two hours on each of two days. The
@@ -196,7 +224,7 @@ def daily_slices(entry, as_of: datetime, offsets: dict | None = None):
     return slices
 
 
-def check_no_overlap(entry, others: list) -> None:
+def check_no_overlap(entry: Session, others: list[Session]) -> None:
     """Check that a session does not overlap another on the same project.
 
     Two projects may run at once - that is the point of the tracker - but one
@@ -228,6 +256,22 @@ def check_no_overlap(entry, others: list) -> None:
             raise TimeRuleError("This overlaps another session on the same project")
 
 
+@runtime_checkable
+class Band(Protocol):
+    """One step of a tag's deduction rule, whatever is carrying it.
+
+    A `Protocol` for the same reason `Session` is one: the corpus dump builds
+    these from its own dataclass, so the rules must state the shape rather than
+    the class.
+    """
+
+    from_minutes: int
+    """Tracked minutes at or above which this band applies."""
+
+    deduct_minutes: int | None
+    """Minutes to take off, or None to cap the day at `from_minutes` instead."""
+
+
 def added_for(tracked_seconds: int, add_minutes: int | None) -> int:
     """Return the time a tag's rule adds to a day, in seconds.
 
@@ -253,7 +297,7 @@ def added_for(tracked_seconds: int, add_minutes: int | None) -> int:
     return add_minutes * 60
 
 
-def deduction_for(tracked_seconds: int, bands: list) -> int:
+def deduction_for(tracked_seconds: int, bands: list[Band]) -> int:
     """Return the deduction a day of this length attracts, in seconds.
 
     The highest threshold the day reaches is the one that applies, and the
@@ -268,7 +312,7 @@ def deduction_for(tracked_seconds: int, bands: list) -> int:
     ----------
     tracked_seconds : int
         What was tracked on the day, for one tag.
-    bands : list of models.DeductionBand
+    bands : list of Band
         The tag's rule, in any order.
 
     Returns
@@ -288,7 +332,9 @@ def deduction_for(tracked_seconds: int, bands: list) -> int:
     return min(tracked_seconds, band.deduct_minutes * 60)
 
 
-def reported(tracked_seconds: int, bands: list, add_minutes: int | None = None) -> int:
+def reported(
+    tracked_seconds: int, bands: list[Band], add_minutes: int | None = None
+) -> int:
     """Return what a day reports after its tag's whole rule.
 
     The addition lands **first**, and the bands are then tested against the
@@ -315,7 +361,7 @@ def reported(tracked_seconds: int, bands: list, add_minutes: int | None = None) 
     return total - deduction_for(total, bands)
 
 
-def summarise(entries: list, as_of: datetime) -> dict[date, dict[int, int]]:
+def summarise(entries: list[Session], as_of: datetime) -> dict[date, dict[int, int]]:
     """Total the time each project holds on each local day.
 
     Parameters

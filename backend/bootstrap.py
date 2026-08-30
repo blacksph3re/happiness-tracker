@@ -7,13 +7,6 @@ from security import hash_password
 from services import build_from_template
 from templates import CATALOGUE_TEMPLATES, DEFAULT_TEMPLATE
 
-DEFAULT_CATALOGUE_NAME = CATALOGUE_TEMPLATES[DEFAULT_TEMPLATE].name
-"""Name of the catalogue created on a fresh installation.
-
-Read from the template rather than declared here, so the starter set has one
-definition. `templates.py` is where it lives.
-"""
-
 
 def bootstrap(db: Session, settings: Settings) -> None:
     """Create the admin account and starter catalogue if they are absent.

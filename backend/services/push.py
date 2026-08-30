@@ -13,8 +13,11 @@ Google would.
 import json
 import logging
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from pywebpush import WebPushException, webpush
+
+from config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +56,33 @@ class Delivery:
     """Attempts that failed for some other reason, and may work next time."""
 
 
-def send_to(subscriptions: list, payload: dict, settings) -> Delivery:
+@runtime_checkable
+class Device(Protocol):
+    """The four fields `send_to` reads off a subscription.
+
+    A `Protocol` rather than `models.PushSubscription` because the send path is
+    exercised against a real HTTP server with rows the ORM never built — and
+    because the docstring here claimed the ORM type while the tests had always
+    passed something else, which is the sort of disagreement only an annotation
+    can be held to.
+    """
+
+    id: int
+    """Which row to prune, when the push service says the endpoint is gone."""
+
+    endpoint: str
+    """The capability URL the browser handed out. Never sent back to a client."""
+
+    p256dh: str
+    """The browser's public key, for encrypting the payload to it."""
+
+    auth: str
+    """The browser's auth secret, likewise."""
+
+
+def send_to(
+    subscriptions: list[Device], payload: dict[str, str], settings: Settings
+) -> Delivery:
     """Send one notification to every one of a person's browsers.
 
     Each endpoint is attempted independently: one dead phone must not stop the
@@ -61,7 +90,7 @@ def send_to(subscriptions: list, payload: dict, settings) -> Delivery:
 
     Parameters
     ----------
-    subscriptions : list of models.PushSubscription
+    subscriptions : list of Device
         The browsers to notify.
     payload : dict
         What the service worker will read. **Append-only** — see the handler in

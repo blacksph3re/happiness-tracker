@@ -30,16 +30,15 @@ fills them. Above 1024px the same text takes two. The heading reserves that
 space, so no question makes the answer scale jump down the page.
 """
 
-ORIGIN_ASKED = "asked"
-"""A question the user answers."""
+QuestionKind = Literal["enum", "discrete", "continuous"]
+"""What a question's answers are shaped like.
 
-ORIGIN_AUTO = "auto"
-"""An auto-tracked question the server records for them."""
+An enum is a choice between options with no order between them; the other two
+are points on a scale, whole steps or anywhere along it. The distinction decides
+what may be scored, what may be a habit and what an answer row stores.
+"""
 
-ORIGIN_COMPUTED = "computed"
-"""A score derived from other questions, computed when read and never stored."""
-
-ORIGINS = (ORIGIN_ASKED, ORIGIN_AUTO, ORIGIN_COMPUTED)
+QuestionOrigin = Literal["asked", "auto", "computed"]
 """Where a question's answers come from.
 
 Replaces asking "is `system_key` set?" to mean "the user does not answer this".
@@ -47,11 +46,37 @@ That test had only two outcomes, so a third kind of question would have needed a
 second, parallel notion of the same thing.
 """
 
-AGGREGATES = ("sum", "mean")
+ORIGIN_ASKED: QuestionOrigin = "asked"
+"""A question the user answers."""
+
+ORIGIN_AUTO: QuestionOrigin = "auto"
+"""An auto-tracked question the server records for them."""
+
+ORIGIN_COMPUTED: QuestionOrigin = "computed"
+"""A score derived from other questions, computed when read and never stored."""
+
+ScoreAggregate = Literal["sum", "mean"]
 """How a score combines the questions that feed it."""
 
-SYSTEM_KEYS = ("weekday", "day_of_year", "month", "year", "first_answer_hour")
-"""Stable identifiers of the five auto-tracked questions, in display order."""
+AGGREGATES: tuple[ScoreAggregate, ...] = ("sum", "mean")
+"""`ScoreAggregate` as data, for the check constraint and the service rules."""
+
+SystemKey = Literal["weekday", "day_of_year", "month", "year", "first_answer_hour"]
+"""Stable identifier of one of the five auto-tracked variables.
+
+Described rather than stored: no question row carries these, so the key is the
+only name they have. `services/clock.py` and `lib/day.js` both compute against
+it, which is why the spelling is a type rather than a convention.
+"""
+
+SYSTEM_KEYS: tuple[SystemKey, ...] = (
+    "weekday",
+    "day_of_year",
+    "month",
+    "year",
+    "first_answer_hour",
+)
+"""The five, in display order."""
 
 HabitPeriod = Literal["day", "week", "month"]
 """The period a habit's target is measured over.
@@ -61,13 +86,13 @@ is not one an app helps with, and every extra period is another column in the
 streak grid that would draw two cells.
 """
 
-HABIT_PERIODS: tuple[str, ...] = ("day", "week", "month")
+HABIT_PERIODS: tuple[HabitPeriod, ...] = ("day", "week", "month")
 """`HabitPeriod` as data, for the check constraint and the service rules."""
 
 HabitDirection = Literal["at_least", "at_most"]
 """Whether a habit's target is a floor to reach or a ceiling to stay under."""
 
-HABIT_DIRECTIONS: tuple[str, ...] = ("at_least", "at_most")
+HABIT_DIRECTIONS: tuple[HabitDirection, ...] = ("at_least", "at_most")
 """`HabitDirection` as data, for the check constraint and the service rules."""
 
 ICON_MAX_LENGTH = 16
@@ -303,8 +328,8 @@ class Question(Base):
     )
     """Owning catalogue. Never null, including for auto-tracked questions."""
 
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    """One of ``enum``, ``discrete`` or ``continuous``."""
+    kind: Mapped[QuestionKind] = mapped_column(String(16), nullable=False)
+    """What the answers to this question are shaped like."""
 
     prompt: Mapped[str] = mapped_column(String(PROMPT_MAX_LENGTH), nullable=False)
     """Question text shown to the user."""
@@ -315,13 +340,13 @@ class Question(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     """Whether the question still appears in the questionnaire."""
 
-    origin: Mapped[str] = mapped_column(
+    origin: Mapped[QuestionOrigin] = mapped_column(
         String(16), default=ORIGIN_ASKED, server_default=ORIGIN_ASKED, nullable=False
     )
-    """One of ``asked``, ``auto`` or ``computed``."""
+    """Where this question's answers come from."""
 
-    aggregate: Mapped[str | None] = mapped_column(String(8), nullable=True)
-    """``sum`` or ``mean``, for questions of origin ``computed``."""
+    aggregate: Mapped[ScoreAggregate | None] = mapped_column(String(8), nullable=True)
+    """How the components combine, for questions of origin ``computed``."""
 
     require_all: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="1", nullable=False
@@ -633,6 +658,14 @@ class Answer(Base):
 TRACK_NAME_MAX_LENGTH = 80
 """Longest a project or tag name may be, matching the question prompt cap."""
 
+EntrySource = Literal["pomodoro"]
+"""Where a session came from, when it was not tracked directly.
+
+One member today, and written as a set anyway: the point of the column is that
+there could be another, and a reader wanting to know what may appear in it
+should not have to grep for every write.
+"""
+
 
 class Project(Base):
     """Something a user tracks time against. A "timeline" in the iOS app."""
@@ -913,7 +946,7 @@ class TimeEntry(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     """Optional free text about the session."""
 
-    source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    source: Mapped[EntrySource | None] = mapped_column(String(16), nullable=True)
     """Where this session came from, when it was not tracked directly.
 
     Only `pomodoro` so far, set by the focus half's transfer. A plain column
@@ -968,6 +1001,17 @@ class TimeEntry(Base):
 # Time reaches the tracker only as a copy, when somebody presses the transfer
 # button, which is why there is no foreign key in either direction.
 # ---------------------------------------------------------------------------
+
+
+PomodoroState = Literal["running", "abandoned", "complete"]
+"""Which of the three outcomes a pomodoro is in.
+
+Derived on read from `ended_at`, the planned end and the two phase lengths, and
+deliberately not a column: a stored outcome is one an edit could contradict.
+Named here rather than beside the rules in `services/pomodoro.py` because
+`schemas.py` sends it to the client and `services` imports `schemas`, so the
+other direction would be a cycle.
+"""
 
 
 class Pomodoro(Base):

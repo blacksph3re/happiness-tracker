@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import or_, select
@@ -156,66 +157,9 @@ def _tags_of(db: DbSession, user_id: int) -> dict[int, list[int]]:
     return {p.id: [tag.id for tag in p.tags] for p in projects}
 
 
-def _local(instant: datetime | None, utc_offset: int) -> str:
-    """Render an instant in the offset it was recorded in.
-
-    Parameters
-    ----------
-    instant : datetime.datetime or None
-        The stored UTC instant, or None for a session still running.
-    utc_offset : int
-        Minutes east of UTC captured at check-in.
-
-    Returns
-    -------
-    str
-        ``YYYY-MM-DD HH:MM`` local, or an empty string when there is nothing to
-        render.
-    """
-    if instant is None:
-        return ""
-    return (instant + timedelta(minutes=utc_offset)).isoformat(
-        sep=" ", timespec="minutes"
-    )
-
-
-def _day_offset(entry, offsets: dict) -> int:
-    """Return the offset the entry's day keeps.
-
-    Parameters
-    ----------
-    entry : TimeEntry
-        The session.
-    offsets : dict
-        ``{day: offset}`` as `day_offsets` returns.
-
-    Returns
-    -------
-    int
-        The day's offset, falling back to the session's own.
-    """
-    return offsets.get(starting_day(entry), entry.utc_offset)
-
-
-def _offset_label(utc_offset: int) -> str:
-    """Render a UTC offset the way a clock reads it, e.g. ``UTC+02:00``.
-
-    Parameters
-    ----------
-    utc_offset : int
-        Minutes east of UTC.
-
-    Returns
-    -------
-    str
-        The offset in hours and minutes, signed.
-    """
-    sign = "+" if utc_offset >= 0 else "-"
-    minutes = abs(utc_offset)
-    return f"UTC{sign}{minutes // 60:02d}:{minutes % 60:02d}"
-
-
-def _rules_of(db: DbSession, user_id: int) -> dict[int, tuple[int | None, list]]:
+def _rules_of(
+    db: DbSession, user_id: int
+) -> dict[int, tuple[int | None, list[DeductionBand]]]:
     """Map each of the user's tags to its whole rule.
 
     Parameters
@@ -251,7 +195,7 @@ def _summary_rows(
     start: date | None,
     end: date | None,
     as_of: datetime,
-    by: str,
+    by: Literal["project", "tag"],
 ) -> list[SummaryRow]:
     """Total tracked time per day, grouped by project or by tag.
 
@@ -295,7 +239,7 @@ def _summary_rows(
         if entry.project_id in live
     ]
     totals = summarise(entries, as_of)
-    rules: dict[int, tuple[int | None, list]] = {}
+    rules: dict[int, tuple[int | None, list[DeductionBand]]] = {}
     if by == "tag":
         totals = group_by_tag(totals, _tags_of(db, user_id))
         rules = _rules_of(db, user_id)
@@ -497,7 +441,7 @@ def summary(
     start: date | None = Query(default=None),
     end: date | None = Query(default=None),
     as_of: datetime | None = Query(default=None),
-    by: str = Query(default="project", pattern="^(project|tag)$"),
+    by: Literal["project", "tag"] = Query(default="project"),
 ) -> list[SummaryRow]:
     """Return tracked totals per day.
 

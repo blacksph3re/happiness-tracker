@@ -17,6 +17,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
+from sqlalchemy.orm import Session
 
 from config import get_settings
 from database import SessionLocal
@@ -38,7 +39,7 @@ quarter minute.
 """
 
 
-def _due(db, now: datetime) -> list[Pomodoro]:
+def _due(db: Session, now: datetime) -> list[Pomodoro]:
     """Return the pomodoros whose focus has just ended.
 
     Bounded in SQL before the rules are applied, so an idle pass reads nothing:
@@ -73,7 +74,7 @@ def _due(db, now: datetime) -> list[Pomodoro]:
     return [row for row in candidates if is_due(row, now)]
 
 
-def _claim(db, pomodoro: Pomodoro, now: datetime) -> bool:
+def _claim(db: Session, pomodoro: Pomodoro, now: datetime) -> bool:
     """Take responsibility for announcing one pomodoro.
 
     The whole of the concurrency story. The update is conditional on the column

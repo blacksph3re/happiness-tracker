@@ -12,6 +12,9 @@ connection, or knows what a notification looks like.
 """
 
 from datetime import datetime, timedelta
+from typing import Protocol, runtime_checkable
+
+from services.pomodoro import Block
 
 GRACE = timedelta(minutes=1)
 """How late an announcement may be and still be worth making.
@@ -25,7 +28,27 @@ database is far outside the window, so the first run announces nothing.
 """
 
 
-def focus_ends_at(pomodoro) -> datetime:
+@runtime_checkable
+class Announceable(Block, Protocol):
+    """A block the announcer can describe and claim.
+
+    Three fields beyond the derivation shape, and each is here for a reason the
+    rules above are not: the id collapses repeats into one notification, the
+    task is what the message says, and `notified_at` is the claim itself —
+    `UPDATE ... WHERE notified_at IS NULL`, send only if it touched a row.
+    """
+
+    id: int
+    """Surrogate key, used as the notification's collapse tag."""
+
+    task: str | None
+    """What the focus was for, shown as the notification's title."""
+
+    notified_at: datetime | None
+    """When this block's end was announced, or None while it is unclaimed."""
+
+
+def focus_ends_at(pomodoro: Block) -> datetime:
     """Return the instant a pomodoro's focus phase is over.
 
     Parameters
@@ -41,7 +64,7 @@ def focus_ends_at(pomodoro) -> datetime:
     return pomodoro.started_at + timedelta(seconds=pomodoro.focus_seconds)
 
 
-def is_due(pomodoro, now: datetime) -> bool:
+def is_due(pomodoro: Announceable, now: datetime) -> bool:
     """Report whether a pomodoro's focus has just ended and wants announcing.
 
     Three things disqualify one, and they are different kinds of "no":
@@ -72,7 +95,7 @@ def is_due(pomodoro, now: datetime) -> bool:
     return ends <= now <= ends + GRACE
 
 
-def announcement(pomodoro) -> dict:
+def announcement(pomodoro: Announceable) -> dict[str, str]:
     """Build the payload for a pomodoro whose focus has ended.
 
     **Append-only.** The service worker reading this may be an older release

@@ -15,16 +15,18 @@ presses the transfer button, and `transferable` is what that button reads.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Protocol, runtime_checkable
 
+from models import PomodoroState
 from services.clock import offset_is_real
 
-RUNNING = "running"
+RUNNING: PomodoroState = "running"
 """Started, and its planned end has not passed."""
 
-ABANDONED = "abandoned"
+ABANDONED: PomodoroState = "abandoned"
 """Stopped by hand before the focus was over."""
 
-COMPLETE = "complete"
+COMPLETE: PomodoroState = "complete"
 """The focus was seen through, whether or not the break ran its course."""
 
 MAX_PHASE_SECONDS = 24 * 60 * 60
@@ -78,6 +80,44 @@ class Transferable:
     """How many pomodoros would be marked as copied."""
 
 
+@runtime_checkable
+class Block(Protocol):
+    """The four fields the pomodoro rules read, whatever is carrying them.
+
+    A `Protocol` for the reason `Session` is one in `services/timetrack.py`:
+    `scripts/dump_derivations.py` passes its own dataclass through these
+    functions to build the conformance corpus, so `models.Pomodoro` would be an
+    annotation the corpus disproves on every run. Everything derived about a
+    pomodoro comes from exactly these four — which is what makes the three
+    outcomes free of any scheduler.
+    """
+
+    started_at: datetime
+    """When the focus began, in UTC."""
+
+    ended_at: datetime | None
+    """When it was stopped by hand, or None if nothing stopped it."""
+
+    focus_seconds: int
+    """How long the focus phase was set to run."""
+
+    break_seconds: int
+    """How long the break after it was set to run. May be zero."""
+
+
+@runtime_checkable
+class Countable(Block, Protocol):
+    """A block the transfer totals: the four above, plus its taint label.
+
+    Separate from `Block` because the corpus dump does not carry a taint and
+    does not need to — taint is a label on time, never a change to it, so
+    nothing derived from the four fields depends on it.
+    """
+
+    tainted: bool
+    """Whether this block's time is marked as not counting cleanly."""
+
+
 def check_pomodoro_shape(
     started_at: datetime,
     ended_at: datetime | None,
@@ -118,7 +158,7 @@ def check_pomodoro_shape(
         raise PomodoroRuleError("A pomodoro has to end after it started")
 
 
-def planned_end(pomodoro) -> datetime:
+def planned_end(pomodoro: Block) -> datetime:
     """Return where a pomodoro said it would end when it started.
 
     Parameters
@@ -136,7 +176,7 @@ def planned_end(pomodoro) -> datetime:
     )
 
 
-def effective_end(pomodoro) -> datetime:
+def effective_end(pomodoro: Block) -> datetime:
     """Return the instant a pomodoro is measured to.
 
     `ended_at` is written only when something stopped the pomodoro early, so an
@@ -162,7 +202,7 @@ def effective_end(pomodoro) -> datetime:
     return min(pomodoro.ended_at, limit)
 
 
-def elapsed_seconds(pomodoro) -> int:
+def elapsed_seconds(pomodoro: Block) -> int:
     """Return how long a pomodoro lasted in total.
 
     Parameters
@@ -178,7 +218,7 @@ def elapsed_seconds(pomodoro) -> int:
     return int((effective_end(pomodoro) - pomodoro.started_at).total_seconds())
 
 
-def pomodoro_state(pomodoro, as_of: datetime) -> str:
+def pomodoro_state(pomodoro: Block, as_of: datetime) -> PomodoroState:
     """Return which of the three states a pomodoro is in.
 
     Derived rather than stored, so correcting a time re-reads the state instead
@@ -203,7 +243,7 @@ def pomodoro_state(pomodoro, as_of: datetime) -> str:
     return COMPLETE
 
 
-def split_seconds(pomodoro) -> tuple[int, int]:
+def split_seconds(pomodoro: Block) -> tuple[int, int]:
     """Divide a pomodoro's elapsed time into focus and break.
 
     Parameters
@@ -222,7 +262,7 @@ def split_seconds(pomodoro) -> tuple[int, int]:
     return focus, max(0, elapsed - pomodoro.focus_seconds)
 
 
-def transferable(pomodoros: list, as_of: datetime) -> Transferable:
+def transferable(pomodoros: list[Countable], as_of: datetime) -> Transferable:
     """Total what the transfer button would copy to a project.
 
     Only one kind is left out: a pomodoro still running has no final duration,

@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import Answer, Pomodoro, Project, Question, QuestionOption, TimeEntry
-from schemas import AnswerIn, SyncEntryPayload
+from schemas import AnswerIn, SyncEntryPayload, SyncPomodoroPayload
 from services.pomodoro import PomodoroRuleError, check_pomodoro_shape
 from services.timetrack import TimeRuleError, check_entry_shape, check_no_overlap
 from services.wellbeing import QuestionRuleError, check_answer
@@ -364,7 +364,7 @@ def apply_pomodoro(
     user_id: int,
     client_id: str,
     claimed: datetime,
-    payload,
+    payload: SyncPomodoroPayload,
     now: datetime,
 ) -> tuple[str, str | None, Pomodoro | None]:
     """Record or correct one pomodoro from a device's queue.
