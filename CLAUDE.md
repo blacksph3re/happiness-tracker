@@ -341,6 +341,39 @@ listening, and none of them visible in the code:
 `sounds.test.js` measures railing, the seam against the buffer's own steps, and
 window RMS where the fade used to be. Each fails when its defect is put back.
 
+- **A fifth was the sound being the wrong sound.** "Harsh" was reported, and no
+  level or filter tweak by ear would have found it, because two separate things
+  were wrong and both are arithmetic. `(last + 0.02 * white) / 1.02` is not an
+  integrator — it is a one-pole low-pass at **151 Hz**, so what shipped as brown
+  noise was *flat* across everything below that and the deep half of the sound
+  did not exist. And brown falls 6 dB per octave where the reference recording
+  falls 10.4, because that recording is brown noise that has then been
+  low-passed. A genuine integral (pole at 3 Hz), the roll-off moved from 60 Hz
+  down to 12, and one pole at 220 Hz on top: **0.7 dB RMS error against the
+  reference from 20 Hz to 12 kHz, against 23.3 dB before.**
+
+  Two things that came out of fitting it against a real recording rather than
+  against an idea of one:
+
+  - **The reference is the arbiter of what is a defect.** True brown noise
+    wanders in level, and `holds a steady level overall` failed at 9.2 dB where
+    it had allowed 5. The recording the owner likes spans **16.7 dB** over the
+    same windows — it is *less* steady than what this now generates. The
+    threshold was calibrated against noise that was never brown, so the
+    threshold moved, and the measurement is written beside it.
+  - **A test can be structurally unable to fail.** The loop seam is closed by
+    subtracting the line between the buffer's two ends, which makes the endpoints
+    equal *by construction* — so the seam step is always exactly zero and
+    `joins itself with no step worse than the ones already in it` cannot see a
+    filter that fails to settle. It still catches the drift removal itself
+    (a 3.8e-2 step when deleted). The second lap of `lowPass` is kept for the
+    same reason `highPass` has one and is honestly not isolated by any test here.
+
+  Levels are per kind now, and had to be: a real integral has a crest factor near
+  3.9, so at white's 0.25 RMS brown peaked at exactly 1.0 and the clamp began to
+  engage — on *some* seeds, which is why the headroom test runs six of them
+  rather than trusting the one every other test measures.
+
 **A fourth was not in the samples at all**, and no measurement of the buffer
 could have found it. "Pulsating with small gaps" came back a second time, and
 this time the noise was perfect: the *page* was rebuilding it once a second.

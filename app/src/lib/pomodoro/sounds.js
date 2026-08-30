@@ -96,8 +96,44 @@ export function playChime(id) {
 /** Seconds of noise generated. Long enough that the loop is not a rhythm. */
 const LOOP_SECONDS = 12
 
-/** Where the brown noise is rolled off, in hertz. */
-const RUMBLE_HZ = 60
+/** Where the brown noise is rolled off at the bottom, in hertz.
+ *
+ * 12 Hz, below hearing, and it is there for the wander rather than for the
+ * tone: an integral with no leak drifts, and the drift is what reads as
+ * pulsing. It used to be 60 Hz, which was taking out warmth the ear does hear —
+ * the reference recording carries +5 dB at 60 Hz relative to 100 Hz, and this
+ * was 4 dB down.
+ */
+const RUMBLE_HZ = 12
+
+/** The integrator's own pole, in hertz.
+ *
+ * Brown noise is 1/f², which means integrating white noise with as little leak
+ * as the arithmetic allows. The old form, `(last + 0.02 * white) / 1.02`, is a
+ * one-pole low-pass at **151 Hz** — so what it produced was flat, not brown,
+ * across the whole bottom of its range, and the deep half of the sound was
+ * simply missing. At 3 Hz the integral is brown down to where hearing stops.
+ */
+const BROWN_POLE_HZ = 3
+
+/** Where the brown noise is smoothed off at the top, in hertz.
+ *
+ * The harshness, and the one thing no amount of level adjustment fixed. Brown
+ * noise falls at 6 dB per octave; the reference recording falls at about 10.4,
+ * because it is brown noise that has then been low-passed. Fitted against its
+ * spectrum, one pole at 220 Hz reproduces that: measured 0.7 dB RMS error from
+ * 20 Hz to 12 kHz, against 23.3 dB before it.
+ */
+const SMOOTH_HZ = 220
+
+/** Target RMS per kind.
+ *
+ * Brown sits lower because it now has a crest factor near 3.9 — a genuine
+ * integral swings much further from its own average than the leaky one did — and
+ * at 0.25 the peaks reached exactly 1.0 and the clamp began to engage. 0.20 is
+ * also where the reference recording is mastered, measured.
+ */
+const LEVEL = { brown: 0.2, white: 0.25 }
 
 /**
  * A one-pole high-pass, run twice so the buffer can loop through it.
@@ -121,6 +157,28 @@ function highPass(samples, hz, rate) {
       previousOut = decay * (previousOut + input - previousIn)
       previousIn = input
       if (pass === 1) samples[i] = previousOut
+    }
+  }
+}
+
+/**
+ * A one-pole low-pass, run twice so the buffer can loop through it.
+ *
+ * The same two-lap trick as `highPass` and for the same reason: run once, the
+ * filter starts from silence and ends somewhere else, and that difference is a
+ * step at the seam.
+ *
+ * @param {Float32Array} samples Modified in place.
+ * @param {number} hz Corner frequency.
+ * @param {number} rate Samples per second.
+ */
+function lowPass(samples, hz, rate) {
+  const decay = Math.exp((-2 * Math.PI * hz) / rate)
+  let previous = 0
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (let i = 0; i < samples.length; i += 1) {
+      previous = decay * previous + (1 - decay) * samples[i]
+      if (pass === 1) samples[i] = previous
     }
   }
 }
@@ -157,13 +215,21 @@ export function noiseSamples(rate, kind, random = Math.random) {
   const samples = new Float32Array(frames)
 
   if (kind === 'brown') {
+    // A near-lossless integral, which is what makes it brown rather than
+    // merely dark: the pole sits at 3 Hz instead of the 151 Hz the old
+    // arithmetic worked out to.
+    const leak = Math.exp((-2 * Math.PI * BROWN_POLE_HZ) / rate)
     let last = 0
     for (let i = 0; i < frames; i += 1) {
-      last = (last + 0.02 * (random() * 2 - 1)) / 1.02
+      last = leak * last + (1 - leak) * (random() * 2 - 1)
       samples[i] = last
     }
     // The slowest wander is what reads as pulsing rather than as a texture.
     highPass(samples, RUMBLE_HZ, rate)
+    // And the top, which is what "harsh" meant. Brown noise on its own is
+    // still bright enough to hiss; the reference recording is brown noise with
+    // this on top of it.
+    lowPass(samples, SMOOTH_HZ, rate)
     // Close the loop. Brown noise moves so little from sample to sample that
     // matching the two end *values* is enough for the join to be inaudible.
     const drift = (samples[frames - 1] - samples[0]) / (frames - 1)
@@ -183,8 +249,9 @@ export function noiseSamples(rate, kind, random = Math.random) {
     power += samples[i] * samples[i]
   }
   const rms = Math.sqrt(power / frames) || 1
+  const level = LEVEL[kind] ?? 0.25
   for (let i = 0; i < frames; i += 1) {
-    samples[i] = Math.max(-1, Math.min(1, (samples[i] / rms) * 0.25))
+    samples[i] = Math.max(-1, Math.min(1, (samples[i] / rms) * level))
   }
   return samples
 }
