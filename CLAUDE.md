@@ -102,7 +102,7 @@ The app is three trackers sharing a login, and the code says so. Four zones, and
 | Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `pomodoro.py` | `auth.py`, `users.py`, `admin.py`, `changes.py`, `sync.py` |
 | Services | `services/wellbeing.py` | `services/timetrack.py` | `services/pomodoro.py` | `services/clock.py`; `services/__init__.py` re-exports all |
 | Routes | `routes/wellbeing/` | `routes/time/` | `routes/pomodoro/` | `routes/` — Landing, Login, Settings, Users |
-| Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `period.js`, `Swimlanes.svelte`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js` |
+| Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `day.js`, `period.js`, `Swimlanes.svelte`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js` |
 
 Focus is the newest and shows the rule working: it needs `saveEntry` and
 `projects`, both already exported from the shared `store.js`, so importing
@@ -110,8 +110,8 @@ Focus is the newest and shows the rule working: it needs `saveEntry` and
 `local_day` moved to `services/clock.py` the moment a pomodoro also had to
 decide which local day a UTC instant lands in.
 
-The frontend has made the same move twice, and both were overdue rather than
-new. **`lib/clock.js`** holds the generic half of what was `lib/time/duration.js`
+The frontend has made the same move three times, and each was overdue rather
+than new. **`lib/clock.js`** holds the generic half of what was `lib/time/duration.js`
 — formatting a duration, reading a wall clock out of an instant and an offset,
 `fromLocal`, `nowUtc`. `store.js`, the landing page and every pomodoro view were
 reaching *across* for those, which is the tell. What stayed in
@@ -121,7 +121,12 @@ project, one lane per day and the focus strip are all the same component now.
 What they share is not the drawing — that part is easy — but the axis thinning
 and the pointer label, which is a pin/dismiss machine with three global
 listeners and a phone caveat behind each one. **`lib/period.js`** followed for
-the same reason: named windows are calendar work, not session work.
+the same reason: named windows are calendar work, not session work. And
+**`systemValues` with `SYSTEM_SPECS`** left `lib/wellbeing/derive.js` for
+`lib/day.js` when the auto-tracked variables stopped being answers: a weekday is
+a fact about a date, both halves filter on one, and `facets.js` — which is
+shared — was about to import from a zone, which points *outward* and is worse
+than pointing across.
 
 Because the component takes an axis rather than owning one, a caller can hand
 it a *relative* window. The focus strip does: two hours per lane, each labelled
@@ -483,10 +488,51 @@ Two things to know when the next thing becomes owned, both of which bit here:
 ## Derived values are computed on read, never stored
 
 Scores over questions, deduction bands over tags, the midnight split, tag
-grouping, a day's clock — none of these are written to the database. The reason
-is the same every time: a stored derivation can disagree with the definition it
-came from, and a definition change should be retroactive. Editing a score's
-components fixes last month; so does editing a lunch-break band.
+grouping, a day's clock, **the auto-tracked variables** — none of these are
+written to the database. The reason is the same every time: a stored derivation
+can disagree with the definition it came from, and a definition change should be
+retroactive. Editing a score's components fixes last month; so does editing a
+lunch-break band.
+
+The auto-tracked ones were the last holdout and the clearest case. Weekday, month,
+year and day-of-year were **stored answer rows** — 36% of that table, each one a
+stored `date.isoweekday()` — written per catalogue, which is why one weekday
+variable spanned several question rows and `Variable.question_ids` had to be a
+list. Deleting them removed all of it: the cross-catalogue merge, the
+`(catalogue_id, system_key)` unique, `sync_system_answers` and its arbitrary
+choice of which catalogue a day's values went into, the 38 option rows, and
+`scripts/restore_system_options.py`, whose entire job was repairing data that
+need not have existed.
+
+Three things make that work, and each is load-bearing:
+
+- **They are described, not stored.** `SYSTEM_QUESTION_SPECS` on the server and
+  `SYSTEM_SPECS` in `lib/day.js` say what the five are; `system_values(day, hour)`
+  and its port `systemValues` say what they equal. No question row, so
+  `Variable.question_ids` is `[]` for them and at most one element for everything
+  else — and an enum's option id is its **position**, which is also the number
+  the client derives, so a filter chip and a day compare without a lookup.
+- **The client computes them, not the server.** The exception to "the server
+  computes it once", and deliberately: `/api/stats/variables` answers nothing at
+  all for an account with no answers, and the *time* half still has weekdays. A
+  facet built from that endpoint silently lost the weekday filter for a
+  time-only account — caught by `weekdays narrow the hours of an account that
+  has never answered anything`. `lib/facets.js` reads the calendar instead, which
+  is what it always did for its own weekday facet: **the calendar always knows.**
+- **They are filters, not columns.** The record table dropped weekday,
+  day-of-year, month and year on request: it is days across and questions down,
+  so a Weekday row reading Mon under a header reading 2026-06-15 restates its
+  own heading, and so do the other three. They keep their place in *filters*,
+  where "only Saturdays" is worth something. The hour stays as a column, being
+  the one auto-tracked value the date does not already say — and the export
+  follows the columns, so it lost the same four.
+- **The hour is real data and moved to a column.** `Answer.local_hour`, read as
+  `min(local_hour)` over the day. The stored version kept whichever write
+  *arrived* first, so a phone answering at 08:00 offline and syncing after a
+  laptop that answered at 14:00 recorded 14. A minimum cannot depend on arrival
+  order. On rows backfilled by the migration the column means "the day's first
+  hour" rather than "this row's", which is invisible to a reader taking the
+  minimum.
 
 The corollary is that the **server computes it once** and the client reads the
 result. `/api/time/summary` does the split and the grouping so the screen and
@@ -697,6 +743,34 @@ beside the server's own, when a cached worker is a release behind.
   with the page. One run in three, and only under a full parallel load. It waits
   for the page to stop saving now. Where a helper waits on traffic it did not
   cause, wait for **quiet**, not for one response.
+- **A "flaky" test is a defect until measured otherwise.** Two tests failed
+  about once per full suite run and passed alone. Neither was a timing artefact.
+  One was a **read that failed and was cached as an answer**: `ensureTagRules`
+  read `quietly`'s `null` as "this tag has no rule", wrote the blank into the
+  cache and called the load complete — so the record reported *tracked* time
+  where reported time belongs, and nothing ever asked again. That is the app
+  inventing data, and the flake was the only thing saying so. `ensurePreferences`
+  had the same shape with a worse ending: the page mirrors its state into
+  preferences on the first frame, so a dropped `GET /api/me/preferences` saved
+  the page's **defaults over the account's own** — a stored `week` measured
+  becoming `month` on the server. Every `ensure*` that ends in `fetched.add`
+  needs the guard: mark it fetched only on a confirmed read.
+  - The guard on the *write* has to be narrow. Blocking saves whenever the copy
+    was unconfirmed broke `an edit survives the settings load that was still in
+    flight when it was made`, six runs out of six — an edit made while the read
+    is outstanding is a real edit. Blocked only after a read has come back
+    empty-handed. The probe that matters is the one that **widens** the guard
+    and watches the in-flight test fail.
+- **Poll both halves of a claim in one read.** The other flake was mine: I
+  polled one series to `10.75`, then took a fresh `getOption()` and asserted on
+  a different series, which read `0`. Two polls, or a poll and a later read, can
+  each be satisfied by a *different* render. Read every positive claim out of
+  one option object and poll that.
+- **One backend per worker.** `--workers=8` on a suite whose `global-setup.js`
+  started seven sends the extra worker at a port with nothing on it, and every
+  test there fails with `login as … failed`. That is the harness, not the app —
+  reproduce load with the configured `WORKERS` (or `PW_WORKERS`), and read a
+  sudden crop of login failures as having over-parallelised.
 - **A flake that only appears in the full suite is still a bug.** Six different
   tests failed once each across eight runs here and every one passed alone.
   Three were one defect — a write stranded in the outbox — and one was this
@@ -747,7 +821,7 @@ Do not re-open these without being asked to; each was decided deliberately.
 | Login attempts | 5 failures per username per 15 minutes, counted in process memory and cleared by a restart. Keyed on the **submitted username**, never the client IP — the app sits behind nginx and does not trust proxy headers, so every request would otherwise share one key. A locked username answers `429` whether or not the account exists |
 | Schema | The server never creates tables. An unmigrated database fails with `no such table` |
 | Deployment | A VM behind nginx doing SSL and a second auth layer. **The domain is an environment variable, never in the repo** |
-| Answers | **Never deleted** — there is no delete endpoint, and none should be added. Re-answering a day *does* overwrite, last-write-wins on the device's own clock (`test_repeated_answers_upsert_rather_than_duplicate`); this row used to read "never rewritten", which the upsert has contradicted for some time. A session, by contrast, is corrected and deleted freely |
+| Answers | **Never deleted** — there is no delete endpoint, and none should be added. Re-answering a day *does* overwrite, last-write-wins on the device's own clock (`test_repeated_answers_upsert_rather_than_duplicate`); this row used to read "never rewritten", which the upsert has contradicted for some time. A session, by contrast, is corrected and deleted freely. The rule protects what a **person** recorded: a migration deleted 635 server-written auto-tracked rows on request, every value of which was recomputable, and that is the only kind of answer that may go |
 | Scores | Over scaled questions only; an enum has no numeric value to contribute |
 | Projects and tags | Per user. Sharing is a later feature |
 | Catalogues | **Per user**, like everything else. There is no editor permission and no shared catalogue: a new account is built its own copy from a starter set in `templates.py`, and one account's questions answer 404 to another. Deleting your last catalogue is allowed — the questionnaire offers to build one |

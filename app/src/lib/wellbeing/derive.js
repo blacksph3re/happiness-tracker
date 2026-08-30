@@ -2,40 +2,15 @@
  * The values the server derives from a day's answers, worked out here.
  *
  * The wellbeing half of the same trade `lib/time/summary.js` explains: with no
- * connection there is nothing to ask, and a record missing its weekday column
- * and every score is not the record. `derive.test.js` holds these against the
- * Python they were ported from, case by case.
- */
-
-/**
- * The auto-tracked values for a day.
+ * connection there is nothing to ask, and a record missing every score is not
+ * the record. `conformance.test.js` holds these against the Python they were
+ * ported from, case by case.
  *
- * Enum keys yield the zero-based position of the option to select; scaled keys
- * yield the value itself. The server writes these alongside a day's first
- * answer, so a day first answered offline would otherwise have none of them
- * until it synced — and the record builds its columns from what it holds.
- *
- * @param {string} day A `YYYY-MM-DD` key.
- * @param {number} localHour The hour the day's first answer was given.
- * @returns {Record<string, number>} One value per system key.
+ * The auto-tracked values used to live here too. They are calendar facts that
+ * both halves filter on, so they moved to `lib/day.js` — the same move
+ * `lib/clock.js` and `lib/period.js` made, and for the same reason: the shared
+ * zone was reaching across for them.
  */
-export function systemValues(day, localHour) {
-  const [year, month, date] = day.split('-').map(Number)
-  const at = new Date(Date.UTC(year, month - 1, date))
-  // `getUTCDay` counts from Sunday; the server counts from Monday, and the
-  // labels are ordered that way.
-  const weekday = (at.getUTCDay() + 6) % 7
-  const startOfYear = Date.UTC(year, 0, 1)
-  const dayOfYear = Math.round((at.getTime() - startOfYear) / 86_400_000) + 1
-
-  return {
-    weekday,
-    day_of_year: dayOfYear,
-    month: month - 1,
-    year,
-    first_answer_hour: localHour,
-  }
-}
 
 /**
  * Combine one day's answers into one computed score.

@@ -3,9 +3,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
-from models import ORIGIN_COMPUTED, Answer, Question
+from models import ORIGIN_AUTO, ORIGIN_COMPUTED, SYSTEM_KEYS, Answer, Question
 from schemas import OptionOut, Variable
-from services import score_bounds
+from services import SYSTEM_QUESTION_SPECS, score_bounds
 
 router = APIRouter(prefix="/stats", tags=["Stats"])
 
@@ -25,6 +25,50 @@ Weekday over time is a sawtooth and weekday on a radar is meaningless. What
 these variables are actually good for is narrowing the data behind the other
 plots - weekends only, winter only - so that is all they are offered for.
 """
+
+
+def _system_variables() -> list[Variable]:
+    """Describe the auto-tracked variables, which have no question row at all.
+
+    Weekday, month, year and day-of-year are functions of the calendar day and
+    the hour is a column on the answer, so none of them is stored and none has
+    an id to be read under. The client derives the values; this says what they
+    are, what they are called and what may be picked.
+
+    An enum option is identified by its **position**, because there is no option
+    row to carry a key. That is also the number the client derives for a day, so
+    a chip and a day compare directly.
+
+    Returns
+    -------
+    list of Variable
+        One per system key, in the order they are declared.
+    """
+    out: list[Variable] = []
+    for key in SYSTEM_KEYS:
+        spec = SYSTEM_QUESTION_SPECS[key]
+        low, high, low_label, high_label = spec.get("bounds", (None, None, None, None))
+        out.append(
+            Variable(
+                key=key,
+                origin=ORIGIN_AUTO,
+                label=spec["prompt"],
+                kind=spec["kind"],
+                system_key=key,
+                min_value=low,
+                max_value=high,
+                min_label=low_label,
+                max_label=high_label,
+                options=[
+                    OptionOut(id=position, label=label, position=position)
+                    for position, label in enumerate(spec.get("options", ()))
+                ],
+                question_ids=[],
+                component_ids=[],
+                roles=SYSTEM_ROLES,
+            )
+        )
+    return out
 
 
 @router.get(
@@ -93,27 +137,24 @@ def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
         else []
     )
 
+    if not answered:
+        return []
+
     questions = sorted([*answered, *scores], key=lambda q: (q.position, q.id))
 
     variables: list[Variable] = []
-    by_system_key: dict[str, Variable] = {}
     for question in questions:
-        if question.system_key is not None:
-            merged = by_system_key.get(question.system_key)
-            if merged is not None:
-                merged.question_ids.append(question.id)
-                continue
         low, high = (
             score_bounds(question)
             if question.origin == ORIGIN_COMPUTED
             else (question.min_value, question.max_value)
         )
         variable = Variable(
-            key=question.system_key or f"q{question.id}",
+            key=f"q{question.id}",
             origin=question.origin,
             label=question.prompt,
             kind=question.kind,
-            system_key=question.system_key,
+            system_key=None,
             min_value=low,
             max_value=high,
             min_label=question.min_label,
@@ -129,14 +170,10 @@ def list_variables(user: CurrentUser, db: DbSession) -> list[Variable]:
             roles=(
                 COMPUTED_ROLES
                 if question.origin == ORIGIN_COMPUTED
-                else SYSTEM_ROLES
-                if question.system_key is not None
                 else ENUM_ROLES
                 if question.kind == "enum"
                 else NUMERIC_ROLES
             ),
         )
-        if question.system_key is not None:
-            by_system_key[question.system_key] = variable
         variables.append(variable)
-    return variables
+    return [*variables, *_system_variables()]

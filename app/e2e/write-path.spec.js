@@ -17,23 +17,19 @@ test('moving between questions makes no server call', async ({ page, account }) 
   await page.getByRole('button', { name: 'Skip →' }).click()
   expect(calls).toEqual([])
 
-  // The day's first answer costs one read as well as the write: the server
-  // writes the auto-tracked values — weekday, month, hour — alongside it, and
-  // they are in no response the client sees, so the record would build its
-  // columns without them until something forced a reload.
+  // The day's first answer is a write and nothing else. It used to cost a read
+  // as well, because the server wrote the auto-tracked values alongside it and
+  // they were in no response the client had; those are computed from the day
+  // now, so the re-read had nothing left to bring back.
   //
   // The write is the queue draining, not a direct PUT. An answer is recorded on
   // the device and replayed, which is what lets it happen with no connection at
   // all — and from here it looks like one request either way.
-  //
-  // Sorted, because the order is not the contract and is no longer fixed: the
-  // re-read is kicked off by the answer landing on the device, and the queue
-  // drains alongside it rather than in front of it.
   await answerBand(page, 3)
-  expect(calls.toSorted()).toEqual(['GET /api/answers', 'POST /api/sync'])
+  expect(calls).toEqual(['POST /api/sync'])
 
-  // Every answer after it is the write alone, which is the property this is
-  // really guarding: answering is not a page that re-reads itself.
+  // Every answer after it is the same, which is the property this is really
+  // guarding: answering is not a page that re-reads itself.
   calls.length = 0
   await answerBand(page, 2)
   expect(calls).toEqual(['POST /api/sync'])

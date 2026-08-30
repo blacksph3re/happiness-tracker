@@ -389,7 +389,7 @@ def delete_catalogue(catalogue_id: int, user: CurrentUser, db: DbSession) -> Non
     answered = db.execute(
         select(Answer.id)
         .join(Question, Question.id == Answer.question_id)
-        .where(Question.catalogue_id == catalogue.id, Question.system_key.is_(None))
+        .where(Question.catalogue_id == catalogue.id)
         .limit(1)
     ).first()
     if answered is not None:

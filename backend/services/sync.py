@@ -27,7 +27,7 @@ from models import Answer, Pomodoro, Project, Question, QuestionOption, TimeEntr
 from schemas import AnswerIn, SyncEntryPayload
 from services.pomodoro import PomodoroRuleError, check_pomodoro_shape
 from services.timetrack import TimeRuleError, check_entry_shape, check_no_overlap
-from services.wellbeing import QuestionRuleError, check_answer, sync_system_answers
+from services.wellbeing import QuestionRuleError, check_answer
 
 
 class SyncOutcome:
@@ -139,6 +139,7 @@ def apply_answer(
 
     stored.value = payload.value
     stored.option_id = payload.option_id
+    stored.local_hour = payload.local_hour
     stored.client_updated_at = claimed
     stored.server_received_at = now
 
@@ -150,16 +151,6 @@ def apply_answer(
     # answer and a correction to it would not find the first when the second
     # went looking, and would insert the same day twice.
     db.flush()
-
-    # The day's auto-tracked answers are written by the same rule as an online
-    # answer, so a day first answered offline is not missing its weekday.
-    sync_system_answers(
-        db,
-        user_id,
-        question.catalogue_id,
-        payload.day,
-        payload.local_hour,
-    )
     return SyncOutcome.APPLIED, None
 
 

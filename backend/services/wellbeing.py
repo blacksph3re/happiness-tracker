@@ -2,18 +2,15 @@ import math
 from datetime import date
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from models import (
     AGGREGATES,
     ORIGIN_ASKED,
-    ORIGIN_AUTO,
     ORIGIN_COMPUTED,
-    SYSTEM_KEYS,
     Answer,
     Catalogue,
     Question,
-    QuestionOption,
     ScoreComponent,
 )
 from templates import SCORE_POSITION, Template
@@ -66,11 +63,11 @@ data, and the remaining three are scales that happen to be recorded for you.
 
 
 def create_catalogue(db: Session, name: str, user_id: int) -> Catalogue:
-    """Create a catalogue together with its five auto-tracked questions.
+    """Create an empty catalogue.
 
-    Every catalogue carries its own copy of the system questions, so no code
-    path downstream has to special-case a catalogue that lacks them. This is the
-    only supported way to create a catalogue.
+    It used to arrive with five auto-tracked questions of its own. Those are
+    computed from the day now — see `SYSTEM_QUESTION_SPECS` — so a catalogue
+    holds only what its owner puts in it.
 
     Parameters
     ----------
@@ -88,29 +85,6 @@ def create_catalogue(db: Session, name: str, user_id: int) -> Catalogue:
     """
     catalogue = Catalogue(name=name, user_id=user_id)
     db.add(catalogue)
-    db.flush()
-    for offset, key in enumerate(SYSTEM_KEYS):
-        spec = SYSTEM_QUESTION_SPECS[key]
-        low, high, low_label, high_label = spec.get("bounds", (None, None, None, None))
-        question = Question(
-            catalogue_id=catalogue.id,
-            kind=spec["kind"],
-            prompt=spec["prompt"],
-            position=1000 + offset,
-            active=True,
-            origin=ORIGIN_AUTO,
-            system_key=key,
-            min_value=low,
-            max_value=high,
-            min_label=low_label,
-            max_label=high_label,
-        )
-        db.add(question)
-        db.flush()
-        for position, label in enumerate(spec.get("options", ())):
-            db.add(
-                QuestionOption(question_id=question.id, label=label, position=position)
-            )
     db.flush()
     return catalogue
 
@@ -427,18 +401,25 @@ def question_is_answered(db: Session, question_id: int) -> bool:
     return db.execute(stmt).first() is not None
 
 
-def _system_values(day: date, local_hour: int) -> dict[str, float]:
+def system_values(day: date, local_hour: int) -> dict[str, float]:
     """Compute the auto-tracked values for a day.
 
-    Enum keys yield the zero-based position of the option to select; scaled keys
-    yield the value itself.
+    Nothing stores these. They are a function of the calendar day and of the
+    day's earliest `Answer.local_hour`, computed wherever they are needed —
+    which is what keeps them right on a day the questionnaire never saw.
+
+    This is also the reference the client's port in `lib/wellbeing/derive.js` is
+    held against, case by case, by `derivations.json`.
+
+    Enum keys yield the zero-based position of the option to select, which is
+    also the id that option is offered under; scaled keys yield the value.
 
     Parameters
     ----------
     day : datetime.date
-        The client-local calendar day being answered.
+        The client-local calendar day being described.
     local_hour : int
-        Client-local hour at which the day's first answer arrived.
+        Earliest client-local hour recorded on that day.
 
     Returns
     -------
@@ -452,93 +433,6 @@ def _system_values(day: date, local_hour: int) -> dict[str, float]:
         "year": float(day.year),
         "first_answer_hour": float(local_hour),
     }
-
-
-def sync_system_answers(
-    db: Session, user_id: int, catalogue_id: int, day: date, local_hour: int
-) -> None:
-    """Ensure a day's auto-tracked answers exist for a user.
-
-    Written in the same transaction as the day's first real answer. Existing
-    rows are left untouched, so ``first_answer_hour`` keeps recording the first
-    submission rather than the most recent one.
-
-    Parameters
-    ----------
-    db : sqlalchemy.orm.Session
-        Active database session. Not committed by this function.
-    user_id : int
-        The answering user.
-    catalogue_id : int
-        Catalogue that owns the question just answered.
-    day : datetime.date
-        The client-local calendar day being answered.
-    local_hour : int
-        Client-local hour of the submission.
-    """
-    # A day gets exactly one set of auto-tracked answers, no matter how many
-    # catalogues it was answered in. Scoping this check to the answered
-    # catalogue instead would give a user who switches catalogue mid-day two
-    # conflicting `first_answer_hour` values for the same day.
-    already_recorded = db.execute(
-        select(Answer.id)
-        .join(Question, Question.id == Answer.question_id)
-        .where(
-            Answer.user_id == user_id,
-            Answer.day == day,
-            Question.system_key.is_not(None),
-        )
-        .limit(1)
-    ).first()
-    if already_recorded is not None:
-        return
-
-    system_questions = (
-        db.execute(
-            select(Question)
-            .options(selectinload(Question.options))
-            .where(
-                Question.catalogue_id == catalogue_id,
-                Question.system_key.is_not(None),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    values = _system_values(day, local_hour)
-    # Flushed at the end of this function, and the reason is the session: it is
-    # created with `autoflush=False`, so a later call in the same transaction
-    # would not see what this one added and would write the day's auto-tracked
-    # answers a second time. One request now carries a whole queue — several
-    # answers for one day arrive together — where it used to carry one write
-    # that committed before the next arrived.
-    for question in system_questions:
-        computed = values[question.system_key]
-        if question.kind == "enum":
-            # The computed number is the option's position, not the answer.
-            option = next(
-                (o for o in question.options if o.position == int(computed)), None
-            )
-            if option is None:
-                continue
-            db.add(
-                Answer(
-                    user_id=user_id,
-                    question_id=question.id,
-                    day=day,
-                    option_id=option.id,
-                )
-            )
-            continue
-        db.add(
-            Answer(
-                user_id=user_id,
-                question_id=question.id,
-                day=day,
-                value=computed,
-            )
-        )
-    db.flush()
 
 
 def check_answer(question, option, day_value, day_option_id) -> None:

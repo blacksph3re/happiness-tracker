@@ -9,7 +9,14 @@
     ensureAllCatalogues,
     ensureAnswers,
   } from '../../lib/store.js'
-  import { dayLabel, shiftDay, today } from '../../lib/day.js'
+  import {
+    SYSTEM_SPECS,
+    dayLabel,
+    shiftDay,
+    systemValues,
+    today,
+  } from '../../lib/day.js'
+  import { earliestHours } from '../../lib/facets.js'
   import { navigate } from '../../lib/router.js'
   import { wide } from '../../lib/media.js'
   import { fly } from 'svelte/transition'
@@ -147,13 +154,50 @@
     return all
   })
 
-  const cells = $derived(
-    Object.fromEntries(rows.map((row) => [`${row.question_id}:${row.day}`, row]))
-  )
+  // The record is days across and questions down, so a Weekday row reading Mon
+  // under a header reading 2026-06-15 restates its own column heading — as do
+  // month, year and day-of-year. They are still offered as *filters*, where
+  // narrowing to Saturdays is worth something; as columns they were four
+  // restatements of the date and were cut. The hour is the one auto-tracked
+  // value the header does not already say.
+  const autoColumns = SYSTEM_SPECS.filter(
+    (spec) => spec.key === 'first_answer_hour'
+  ).map((spec) => ({
+    id: spec.key,
+    prompt: spec.label,
+    origin: 'auto',
+    kind: spec.kind,
+    options: (spec.labels ?? []).map((label, id) => ({ id, label })),
+  }))
 
-  const shown = $derived(
-    questions.filter((question) => rows.some((row) => row.question_id === question.id))
-  )
+  const hoursByDay = $derived(earliestHours(rows))
+
+  const cells = $derived.by(() => {
+    const out = Object.fromEntries(
+      rows.map((row) => [`${row.question_id}:${row.day}`, row])
+    )
+    for (const day of answered) {
+      const hour = hoursByDay[day]
+      const values = systemValues(day, hour ?? 0)
+      for (const column of autoColumns) {
+        // The hour is the one that can genuinely be missing — rows written
+        // before it had a column carry none — and an invented midnight would
+        // read as a fact.
+        if (column.id === 'first_answer_hour' && hour === undefined) continue
+        const value = values[column.id]
+        out[`${column.id}:${day}`] =
+          column.kind === 'enum'
+            ? { day, question_id: column.id, value: null, option_id: value }
+            : { day, question_id: column.id, value, option_id: null }
+      }
+    }
+    return out
+  })
+
+  const shown = $derived([
+    ...questions.filter((question) => rows.some((row) => row.question_id === question.id)),
+    ...(rows.length ? autoColumns : []),
+  ])
 
   function render(row, question) {
     if (!row) return '·'

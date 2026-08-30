@@ -195,11 +195,7 @@ def test_an_overlapping_session_is_merged_into_the_union(client, admin_headers):
     results = sync(
         client,
         admin_headers,
-        [
-            entry_intent(
-                2, "two", project["id"], LATER, start_hour=11, end_hour=16
-            )
-        ],
+        [entry_intent(2, "two", project["id"], LATER, start_hour=11, end_hour=16)],
     )
 
     assert results[2]["outcome"] == "merged"
@@ -278,18 +274,19 @@ def stored_answer(client, headers, question_id, day="2026-06-10"):
     )
 
 
-def test_a_queued_answer_lands_with_its_auto_tracked_day(client, admin_headers):
+def test_a_queued_answer_lands_carrying_the_hour_it_was_given_at(client, admin_headers):
     question = scaled_question(client, admin_headers)
     intents = [answer_intent(1, question["id"], EARLIER, 4)]
     results = sync(client, admin_headers, intents)
 
     assert results[1]["outcome"] == "applied"
     assert stored_answer(client, admin_headers, question["id"]) == 4
-    # A day first answered offline is not missing its weekday: the same rule
-    # that writes them online runs here.
+    # The hour is the one thing about a day the calendar cannot work out, so it
+    # rides on the answer rather than being written as one.
     rows = client.get("/api/answers", headers=admin_headers).json()
-    system = [row for row in rows if row["day"] == "2026-06-10"]
-    assert len(system) > 1
+    day = [row for row in rows if row["day"] == "2026-06-10"]
+    assert len(day) == 1
+    assert day[0]["local_hour"] == 9
 
 
 def test_the_later_answer_wins_whichever_arrives_first(client, admin_headers):

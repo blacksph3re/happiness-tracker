@@ -41,6 +41,7 @@ def _with_scores(db: DbSession, user_id: int, answers: list[Answer]) -> list[dic
             "day": answer.day,
             "value": answer.value,
             "option_id": answer.option_id,
+            "local_hour": answer.local_hour,
         }
         for answer in answers
     ]
@@ -74,6 +75,9 @@ def _with_scores(db: DbSession, user_id: int, answers: list[Answer]) -> list[dic
                         "day": day,
                         "value": computed,
                         "option_id": None,
+                        # A score is not a submission, so it has no hour of its
+                        # own; the day's hour is on the answers it is made of.
+                        "local_hour": None,
                     }
                 )
     return rows

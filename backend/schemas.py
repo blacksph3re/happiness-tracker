@@ -497,9 +497,6 @@ class QuestionOut(BaseModel):
     origin: str
     """``asked``, ``auto`` or ``computed``: where this question's answers come from."""
 
-    system_key: str | None
-    """Which auto-tracked variable this is, for questions of origin ``auto``."""
-
     aggregate: str | None
     """``sum`` or ``mean``, for scores."""
 
@@ -669,12 +666,20 @@ class AnswerOut(BaseModel):
     option_id: int | None
     """Chosen option, for enum questions."""
 
+    local_hour: int | None
+    """Client-local hour the answer was given at, 0-23.
+
+    What `first_answer_hour` is derived from: the reader takes the minimum over
+    a day. Null on rows written before the column existed.
+    """
+
 
 class Variable(BaseModel):
     """A plottable variable on the stats page.
 
-    Auto-tracked variables are merged across catalogues by their system key, so
-    a user who switches catalogue still sees one continuous series.
+    Auto-tracked variables have no question behind them at all: weekday, month,
+    year and day-of-year are functions of the calendar day, and the hour is a
+    column on the answer. They are described here and computed by the reader.
     """
 
     key: str
@@ -708,11 +713,13 @@ class Variable(BaseModel):
     """Choices, for enum variables."""
 
     question_ids: list[int] = []
-    """Every question id contributing to this variable.
+    """The question this variable reads, as a list of at most one.
 
-    What the variable *is*. A list rather than one id only because auto-tracked
-    variables are merged across catalogues by their system key, so one weekday
-    variable can span several question rows.
+    What the variable *is*. It held several while auto-tracked variables were
+    merged across catalogues by their system key; now that those are computed
+    from the day, a variable is one question or — for the auto-tracked ones —
+    none at all. Still a list, so a reader that already handles the empty case
+    needs no other shape.
     """
 
     component_ids: list[int] = []

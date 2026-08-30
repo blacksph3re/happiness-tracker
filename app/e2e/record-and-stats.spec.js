@@ -33,8 +33,8 @@ test('the record shows the history and opens a day for answering', async ({
   await expect(table.getByRole('rowheader', { name: questions[0].prompt })).toBeVisible()
   await expect(table.getByRole('columnheader', { name: 'Today' })).toBeVisible()
 
-  // Auto-tracked variables are part of the record too.
-  await expect(table.getByRole('rowheader', { name: 'Weekday' })).toBeVisible()
+  // The one auto-tracked value the date column does not already state.
+  await expect(table.getByRole('rowheader', { name: 'Hour of first answer' })).toBeVisible()
 
   // A day's Answer button opens the questionnaire on that day.
   await table.getByRole('button', { name: 'Answer' }).first().click()
@@ -119,6 +119,22 @@ test('the export downloads a csv', async ({ page, account }) => {
   for await (const chunk of await download.createReadStream()) chunks.push(chunk)
   const text = Buffer.concat(chunks).toString('utf8')
   expect(text.replace(/^\uFEFF/, '')).toMatch(/^Day,/)
+
+  // Weekday, day-of-year, month and year are gone from the file: every one of
+  // them restates the day already in the first column, and a computed column
+  // that says what the row says is not worth a column. The hour is the one that
+  // says something the date does not, so it stays — computed, from the answers'
+  // own `local_hour`.
+  // Split on CRLF: `toCsv` writes real CSV line endings, and splitting on \n
+  // alone leaves a \r stuck to the last field of every row — which silently
+  // makes the header's final column never match its own name.
+  const [header, ...body] = text.replace(/^\uFEFF/, '').trim().split(/\r?\n/)
+  for (const gone of ['Weekday', 'Month', 'Year', 'Day of the year']) {
+    expect(header.split(',')).not.toContain(gone)
+  }
+  const hour = header.split(',').indexOf('Hour of first answer')
+  expect(hour, 'the hour column is still in the export').toBeGreaterThan(0)
+  expect(body.at(-1).split(',')[hour]).toMatch(/^\d+$/)
 })
 
 test('the window never claims more days than were answered', async ({ page, account }) => {

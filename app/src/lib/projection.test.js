@@ -42,52 +42,6 @@ describe('answers', () => {
     expect(shown.find((row) => row.day === '2026-06-14').value).toBe(2)
   })
 
-  test('a day answered offline gains the auto-tracked values', () => {
-    // 2026-06-15 is a Monday, so weekday is 0 and the day of the year is 166.
-    const catalogues = {
-      1: {
-        questions: [
-          { id: 90, system_key: 'weekday' },
-          { id: 91, system_key: 'day_of_year' },
-          { id: 92, system_key: 'month' },
-          { id: 93, system_key: 'year' },
-          { id: 94, system_key: 'first_answer_hour' },
-        ],
-      },
-    }
-    const shown = overlayAnswers([], [answer('2026-06-15', 1, 4)], catalogues)
-
-    const byQuestion = Object.fromEntries(shown.map((row) => [row.question_id, row.value]))
-    expect(byQuestion[90]).toBe(0)
-    expect(byQuestion[91]).toBe(166)
-    expect(byQuestion[92]).toBe(5)
-    expect(byQuestion[93]).toBe(2026)
-    expect(byQuestion[94]).toBe(9)
-  })
-
-  test('the server’s auto-tracked value is never overwritten by ours', () => {
-    const catalogues = { 1: { questions: [{ id: 94, system_key: 'first_answer_hour' }] } }
-    const stored = [{ day: '2026-06-15', question_id: 94, value: 6 }]
-    const shown = overlayAnswers(stored, [answer('2026-06-15', 1, 4, { local_hour: 22 })], catalogues)
-
-    // The server wrote 6 when the day was first answered; a later queued answer
-    // does not get to move it, exactly as the server would not move it.
-    expect(shown.find((row) => row.question_id === 94).value).toBe(6)
-  })
-
-  test('the earliest queued hour is the one the day claims', () => {
-    const catalogues = { 1: { questions: [{ id: 94, system_key: 'first_answer_hour' }] } }
-    const shown = overlayAnswers(
-      [],
-      [
-        answer('2026-06-15', 1, 4, { local_hour: 22 }),
-        answer('2026-06-15', 2, 3, { local_hour: 7 }),
-      ],
-      catalogues
-    )
-
-    expect(shown.find((row) => row.question_id === 94).value).toBe(7)
-  })
 })
 
 /**

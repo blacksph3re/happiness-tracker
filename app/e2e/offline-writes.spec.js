@@ -259,18 +259,17 @@ test('a window never fetched is still totalled with no connection', async ({
   await expect(page.locator('[data-total]')).toContainText('7h 15m')
 })
 
-test('a day answered offline still knows its own weekday', async ({
+test('a day answered offline still knows what hour it was answered at', async ({
   page,
   account,
   context,
 }) => {
   const catalogue = await catalogueOf(account.api)
   const [question] = realQuestions(catalogue)
-  // The auto-tracked questions are written by the server beside a day's first
-  // answer. Offline there is no server to write them, and the record builds its
-  // columns from what it holds.
-  const weekday = catalogue.questions.find((one) => one.system_key === 'weekday')
-  expect(weekday, 'no auto-tracked weekday question').toBeTruthy()
+  // The four calendar values need no test offline — they are functions of the
+  // day key and cannot go missing. The hour can: it is recorded on the answer
+  // itself, so with no connection it has to come off the queued write rather
+  // than off anything the server said.
 
   await page.goto('/answer')
   await expect(page.getByRole('group')).toBeVisible()
@@ -284,9 +283,9 @@ test('a day answered offline still knows its own weekday', async ({
   // routes is all in the client, and works now.
   await page.getByRole('link', { name: 'Record', exact: true }).click()
   await expect(page.locator(`[data-cell="${question.id}:${TODAY}"]`)).not.toBeEmpty()
-  // 2026-06-15 is a Monday, which is the first weekday and so reads as its
-  // first option rather than as a gap.
-  await expect(page.locator(`[data-cell="${weekday.id}:${TODAY}"]`)).not.toHaveText('·')
+  await expect(page.locator(`[data-cell="first_answer_hour:${TODAY}"]`)).not.toHaveText(
+    '·'
+  )
 })
 
 test('a refusal survives the reload that follows it', async ({ page, account }) => {

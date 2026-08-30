@@ -60,7 +60,7 @@ from services.wellbeing import (
     question_is_answered,
     score_bounds,
     score_for_day,
-    sync_system_answers,
+    system_values,
 )
 
 __all__ = [
@@ -107,5 +107,5 @@ __all__ = [
     "score_for_day",
     "starting_day",
     "summarise",
-    "sync_system_answers",
+    "system_values",
 ]

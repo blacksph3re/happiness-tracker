@@ -1,4 +1,3 @@
-from datetime import date
 from itertools import count
 
 from tests.conftest import make_user
@@ -49,52 +48,6 @@ def answer(client, headers, question_id, value=None, day=DAY, hour=9, option_id=
     return response.json()["results"][0]
 
 
-def system_answers(client, headers, catalogue_id, day=DAY):
-    """Return the auto-tracked answers for a day, keyed by system key.
-
-    Enum system questions resolve to their option label, scaled ones to their
-    number, which is how each reads everywhere else in the app.
-    """
-    detail = client.get(f"/api/catalogues/{catalogue_id}", headers=headers).json()
-    by_id = {q["id"]: q for q in detail["questions"] if q["system_key"]}
-    labels = {
-        option["id"]: option["label"]
-        for question in by_id.values()
-        for option in question["options"]
-    }
-    rows = client.get("/api/answers", headers=headers).json()
-    return {
-        by_id[row["question_id"]]["system_key"]: (
-            labels[row["option_id"]] if row["option_id"] is not None else row["value"]
-        )
-        for row in rows
-        if row["question_id"] in by_id and row["day"] == day
-    }
-
-
-def test_answering_a_day_materialises_system_answers(
-    client, admin_headers, catalogue_id, starter_questions
-):
-    written = answer(client, admin_headers, starter_questions[0]["id"], 4)
-    assert written["outcome"] == "applied"
-    recorded = system_answers(client, admin_headers, catalogue_id)
-    assert set(recorded) == SYSTEM_KEYS
-    assert recorded["weekday"] == "Wed"  # 2026-03-04 was a Wednesday
-    assert recorded["day_of_year"] == float(date.fromisoformat(DAY).timetuple().tm_yday)
-    assert recorded["month"] == "Mar"
-    assert recorded["year"] == 2026.0
-    assert recorded["first_answer_hour"] == 9.0
-
-
-def test_later_answers_do_not_move_the_first_hour(
-    client, admin_headers, catalogue_id, starter_questions
-):
-    answer(client, admin_headers, starter_questions[0]["id"], 4, hour=9)
-    answer(client, admin_headers, starter_questions[1]["id"], 2, hour=21)
-    tracked = system_answers(client, admin_headers, catalogue_id)
-    assert tracked["first_answer_hour"] == 9.0
-
-
 def test_repeated_answers_upsert_rather_than_duplicate(
     client, admin_headers, starter_questions
 ):
@@ -131,12 +84,6 @@ def test_answers_are_filtered_by_range(client, admin_headers, starter_questions)
         "/api/answers?from=2026-05-01&to=2026-07-01", headers=admin_headers
     ).json()
     assert {row["day"] for row in rows} == {"2026-06-01"}
-
-
-def test_system_questions_reject_direct_writes(client, admin_headers, catalogue_id):
-    detail = client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers).json()
-    system_id = next(q["id"] for q in detail["questions"] if q["system_key"])
-    assert answer(client, admin_headers, system_id, 3)["outcome"] == "conflict"
 
 
 def test_values_outside_bounds_are_rejected(client, admin_headers, starter_questions):
@@ -263,28 +210,6 @@ def test_stats_variables_report_roles(
     assert "axis" not in by_key[f"q{created['id']}"]["roles"]
 
 
-def test_system_variables_merge_across_catalogues(
-    client, admin_headers, catalogue_id, starter_questions
-):
-    """Switching catalogue must not split an auto-tracked variable in two."""
-    answer(client, admin_headers, starter_questions[0]["id"], 4, day="2026-03-04")
-
-    second = client.post(
-        "/api/catalogues", headers=admin_headers, json={"name": "Second"}
-    ).json()
-    other_question = client.post(
-        f"/api/catalogues/{second['id']}/questions",
-        headers=admin_headers,
-        json={"kind": "discrete", "prompt": "Sleep", "min_value": 1, "max_value": 5},
-    ).json()
-    answer(client, admin_headers, other_question["id"], 3, day="2026-03-06")
-
-    variables = client.get("/api/stats/variables", headers=admin_headers).json()
-    weekday = [v for v in variables if v["system_key"] == "weekday"]
-    assert len(weekday) == 1
-    assert len(weekday[0]["question_ids"]) == 2
-
-
 def test_non_finite_values_are_rejected(client, admin_headers, starter_questions):
     """NaN slips past every bound comparison, so it must be refused up front."""
     import json
@@ -315,49 +240,6 @@ def test_non_finite_values_are_rejected(client, admin_headers, starter_questions
         assert response.status_code == 200, f"{raw} -> {response.status_code}"
         verdict = response.json()["results"][0]
         assert verdict["outcome"] == "conflict", f"{raw} -> {verdict}"
-
-
-def test_one_set_of_system_answers_per_day_across_catalogues(
-    client, admin_headers, starter_questions
-):
-    """A mid-day catalogue switch must not record a second first-answer hour."""
-    answer(client, admin_headers, starter_questions[0]["id"], 4, hour=8)
-
-    second = client.post(
-        "/api/catalogues", headers=admin_headers, json={"name": "Evening"}
-    ).json()
-    other = client.post(
-        f"/api/catalogues/{second['id']}/questions",
-        headers=admin_headers,
-        json={"kind": "discrete", "prompt": "Sleep", "min_value": 1, "max_value": 5},
-    ).json()
-    answer(client, admin_headers, other["id"], 3, hour=20)
-
-    variables = client.get("/api/stats/variables", headers=admin_headers).json()
-    hour_variable = next(v for v in variables if v["system_key"] == "first_answer_hour")
-    rows = client.get("/api/answers", headers=admin_headers).json()
-    hour_ids = hour_variable["question_ids"]
-    hours = [row["value"] for row in rows if row["question_id"] in hour_ids]
-    assert hours == [8.0], "the day must carry exactly one first-answer hour"
-
-
-def test_a_second_catalogue_adds_no_second_set_of_system_rows(
-    client, admin_headers, starter_questions
-):
-    """One day carries one set of auto-tracked answers, whatever it was answered in."""
-    answer(client, admin_headers, starter_questions[0]["id"], 4, hour=8)
-    second = client.post(
-        "/api/catalogues", headers=admin_headers, json={"name": "Evening"}
-    ).json()
-    other = client.post(
-        f"/api/catalogues/{second['id']}/questions",
-        headers=admin_headers,
-        json={"kind": "discrete", "prompt": "Sleep", "min_value": 1, "max_value": 5},
-    ).json()
-    answer(client, admin_headers, other["id"], 3, hour=20)
-
-    rows = client.get("/api/answers", headers=admin_headers).json()
-    assert len(rows) == 7, "two real answers plus one set of five auto-tracked rows"
 
 
 def test_a_deactivated_question_leaves_the_variables(

@@ -229,7 +229,6 @@ class Question(Base):
 
     __tablename__ = "questions"
     __table_args__ = (
-        UniqueConstraint("catalogue_id", "system_key", name="uq_question_system_key"),
         CheckConstraint(
             "kind in ('enum', 'discrete', 'continuous')", name="ck_question_kind"
         ),
@@ -266,9 +265,6 @@ class Question(Base):
         String(16), default=ORIGIN_ASKED, server_default=ORIGIN_ASKED, nullable=False
     )
     """One of ``asked``, ``auto`` or ``computed``."""
-
-    system_key: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    """Which auto-tracked variable this is, for questions of origin ``auto``."""
 
     aggregate: Mapped[str | None] = mapped_column(String(8), nullable=True)
     """``sum`` or ``mean``, for questions of origin ``computed``."""
@@ -461,6 +457,20 @@ class Answer(Base):
         ForeignKey("question_options.id", ondelete="CASCADE"), nullable=True
     )
     """Chosen option for enum questions."""
+
+    local_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Client-local hour at which this answer was given, 0-23.
+
+    The whole of what `first_answer_hour` needs, and it belongs here rather than
+    in an answer row of its own: the variable is `min(local_hour)` over the day,
+    which is order-independent. The stored version took whichever write landed
+    first, so a phone answering at 08:00 offline and syncing after a laptop that
+    answered at 14:00 recorded 14.
+
+    Null for rows written before the column existed, and for the backfilled ones
+    it means the *day's* first hour rather than this row's. Invisible to the
+    only reader, which takes the minimum either way.
+    """
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False

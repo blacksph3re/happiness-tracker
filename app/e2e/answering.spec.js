@@ -371,19 +371,20 @@ test('a long question does not shift the answer scale down the page', async ({
   }
 })
 
-test('the auto-tracked rows reach the record without a reload', async ({
-  page,
-  account,
-}) => {
+test('the hour reaches the record without a reload', async ({ page, account }) => {
   await page.goto('/answer')
   await answerBand(page, 3)
 
   // Through the navigation, not a fresh load: the store answers the record from
-  // memory, and what it held was only the answer this page sent. Weekday, month
-  // and the rest are written by the *server* alongside the day's first answer,
-  // so they existed and the record simply could not see them.
+  // memory, and what it holds is the answer this page just sent. The hour is
+  // read off that answer's own `local_hour`, so it is on screen with nothing
+  // fetched — where it used to be a row the *server* wrote, which the record
+  // could not see until something forced a reload.
   await page.getByRole('link', { name: 'Record' }).click()
   const table = page.getByRole('table')
-  await expect(table.getByRole('rowheader', { name: 'Weekday' })).toBeVisible()
-  await expect(table.getByRole('rowheader', { name: 'Month' })).toBeVisible()
+  await expect(table.getByRole('rowheader', { name: 'Hour of first answer' })).toBeVisible()
+
+  // And the four the date already states are not columns at all.
+  await expect(table.getByRole('rowheader', { name: 'Weekday' })).toHaveCount(0)
+  await expect(table.getByRole('rowheader', { name: 'Month' })).toHaveCount(0)
 })

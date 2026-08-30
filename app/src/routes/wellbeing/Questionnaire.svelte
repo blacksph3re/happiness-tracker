@@ -1,5 +1,4 @@
 <script>
-  import { get } from 'svelte/store'
   import { swipe } from '../../lib/swipe.js'
   import { flush } from '../../lib/sync.js'
   import Ladder from '../../lib/wellbeing/Ladder.svelte'
@@ -11,7 +10,6 @@
     ensureCatalogue,
     ensureCatalogues,
     ensureMe,
-    refreshDay,
     saveAnswer,
   } from '../../lib/store.js'
   import { dayLabel, localHour, shiftDay, today } from '../../lib/day.js'
@@ -118,27 +116,20 @@
     const question = current
     answers = { ...answers, [question.id]: { question_id: question.id, ...payload } }
 
-    // Whether this is the first thing recorded on this day, read before the
-    // cache is told about it: the server answers the day's first write by also
-    // writing the auto-tracked values, and only a re-read has those.
-    const opensTheDay = !get(answerStore).some((row) => row.day === day)
     // Queued, not sent: the answer is on the device before this returns, and
     // reaches the server whenever there is one to reach. The next question
     // opens either way.
-    // Chained on the queue draining, not on the answer being recorded: the
-    // auto-tracked values are written by the *server* alongside the day's first
-    // answer, so re-reading before it has one is a request that can only come
-    // back without them.
+    //
+    // Nothing is re-read afterwards. A day's first answer used to be followed
+    // by a fetch, because the server wrote the auto-tracked values alongside it
+    // and only a re-read had them; those are computed from the day now, so the
+    // request had nothing left to bring back.
     saveAnswer({
       day,
       local_hour: localHour(),
       question_id: question.id,
       ...payload,
     })
-      .then(() => flush())
-      .then(() => {
-        if (opensTheDay) refreshDay(day)
-      })
 
     advance()
   }

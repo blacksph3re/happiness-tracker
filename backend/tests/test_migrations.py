@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 import pytest
@@ -119,6 +120,9 @@ def _has_table(db, name):
 CATALOGUE_OWNERSHIP = "3f1a7c4e9b20"
 """The revision that gives every catalogue an owner and clones it per user."""
 
+COMPUTED_SYSTEM_VALUES = "c3e81f47a9d2"
+"""The revision that deletes the auto-tracked answers and moves the hour."""
+
 
 def test_shared_catalogues_become_one_per_user_without_losing_answers(migrated):
     # The migration that can lose history, on the shape that can lose it: two
@@ -159,7 +163,11 @@ def test_shared_catalogues_become_one_per_user_without_losing_answers(migrated):
     )
     db.commit()
 
-    upgrade("head")
+    # To that revision, not to head: the auto-tracked rows this seeds are the
+    # subject of `COMPUTED_SYSTEM_VALUES` further down the chain, which deletes
+    # them. Walking past here would make the enum assertions below untestable
+    # for a reason that has nothing to do with the migration under test.
+    upgrade(CATALOGUE_OWNERSHIP)
 
     # One catalogue each, both still called what they were called.
     owners = db.execute(
@@ -210,3 +218,116 @@ def test_shared_catalogues_become_one_per_user_without_losing_answers(migrated):
     # Nothing of the shared originals is left behind, and no dangling rows.
     assert db.execute("SELECT count(*) FROM catalogues").fetchone()[0] == 2
     assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_auto_tracked_answers_become_computed_without_losing_the_hour(migrated):
+    """The migration that deletes answers, on the data it deletes them from.
+
+    `test_migrating_a_populated_database_keeps_its_rows` cannot see this: it
+    seeds a question with a null `system_key`, so a migration deleting only
+    auto-tracked rows walks past it untouched. What has to hold here is that
+    every recorded answer survives, the hour reaches its new column, and nothing
+    auto-tracked is left.
+    """
+    chain = revisions()
+    upgrade(chain[chain.index(COMPUTED_SYSTEM_VALUES) - 1])
+
+    db = sqlite3.connect(migrated)
+    db.executescript(
+        """
+        INSERT INTO users (id, username, password_hash, is_admin)
+             VALUES (1, 'alice', 'h', 1);
+        INSERT INTO catalogues (id, name, user_id) VALUES (1, 'WHO-5', 1);
+        INSERT INTO questions
+               (id, catalogue_id, kind, prompt, position, active, origin,
+                require_all, min_value, max_value)
+             VALUES (10, 1, 'discrete', 'Cheerful', 0, 1, 'asked', 1, 0, 5);
+        INSERT INTO questions
+               (id, catalogue_id, kind, prompt, position, active, origin,
+                system_key, require_all)
+             VALUES (11, 1, 'enum', 'Weekday', 1000, 1, 'auto', 'weekday', 1);
+        INSERT INTO questions
+               (id, catalogue_id, kind, prompt, position, active, origin,
+                system_key, require_all, min_value, max_value)
+             VALUES (12, 1, 'discrete', 'Hour of first answer', 1004, 1, 'auto',
+                     'first_answer_hour', 1, 0, 23);
+        INSERT INTO question_options (id, question_id, label, position)
+             VALUES (20, 11, 'Mon', 0), (21, 11, 'Tue', 1);
+        UPDATE users SET default_catalogue_id = 1;
+        INSERT INTO answers (user_id, question_id, day, value)
+             VALUES (1, 10, '2026-06-01', 5), (1, 10, '2026-06-02', 3);
+        INSERT INTO answers (user_id, question_id, day, option_id)
+             VALUES (1, 11, '2026-06-01', 20), (1, 11, '2026-06-02', 21);
+        INSERT INTO answers (user_id, question_id, day, value)
+             VALUES (1, 12, '2026-06-01', 8), (1, 12, '2026-06-02', 17);
+        UPDATE users SET preferences = '{"stats": {"filters": {"weekday": [20],
+                                         "q10": [5]}}}';
+        """
+    )
+    db.commit()
+
+    upgrade(COMPUTED_SYSTEM_VALUES)
+
+    # Only what a person recorded is left, and each row kept its own value.
+    assert db.execute(
+        "SELECT question_id, day, value FROM answers ORDER BY day"
+    ).fetchall() == [(10, "2026-06-01", 5.0), (10, "2026-06-02", 3.0)]
+
+    # The hour reached the column, per day. This is the irreversible step.
+    assert db.execute(
+        "SELECT day, local_hour FROM answers ORDER BY day"
+    ).fetchall() == [("2026-06-01", 8), ("2026-06-02", 17)]
+
+    # Nothing auto-tracked survives, options included.
+    assert (
+        db.execute("SELECT count(*) FROM questions WHERE origin = 'auto'").fetchone()[0]
+        == 0
+    )
+    assert db.execute("SELECT count(*) FROM question_options").fetchone()[0] == 0
+    assert "system_key" not in {
+        row[1] for row in db.execute("PRAGMA table_info(questions)").fetchall()
+    }
+
+    # A weekday filter held an option row id, which now means nothing. It comes
+    # back empty rather than silently matching no day at all; a filter on a real
+    # question is untouched.
+    stored = json.loads(
+        db.execute("SELECT preferences FROM users WHERE id = 1").fetchone()[0]
+    )
+    assert stored["stats"]["filters"] == {"q10": [5]}
+
+    assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_the_migration_refuses_rather_than_lose_an_hour(migrated):
+    """The guard, on the one shape that would lose data silently.
+
+    A day whose only rows are auto-tracked has nowhere to put its hour, so the
+    backfill leaves nothing behind and the delete would take the fact with it.
+    A migration that refuses beats one that half-succeeds.
+    """
+    chain = revisions()
+    upgrade(chain[chain.index(COMPUTED_SYSTEM_VALUES) - 1])
+
+    db = sqlite3.connect(migrated)
+    db.executescript(
+        """
+        INSERT INTO users (id, username, password_hash, is_admin)
+             VALUES (1, 'alice', 'h', 1);
+        INSERT INTO catalogues (id, name, user_id) VALUES (1, 'WHO-5', 1);
+        INSERT INTO questions
+               (id, catalogue_id, kind, prompt, position, active, origin,
+                system_key, require_all, min_value, max_value)
+             VALUES (12, 1, 'discrete', 'Hour of first answer', 1004, 1, 'auto',
+                     'first_answer_hour', 1, 0, 23);
+        INSERT INTO answers (user_id, question_id, day, value)
+             VALUES (1, 12, '2026-06-01', 8);
+        """
+    )
+    db.commit()
+
+    with pytest.raises(Exception, match="would lose their first-answer hour"):
+        upgrade(COMPUTED_SYSTEM_VALUES)
+
+    # And it refused before deleting anything.
+    assert db.execute("SELECT count(*) FROM answers").fetchone()[0] == 1

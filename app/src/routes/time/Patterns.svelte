@@ -1,9 +1,9 @@
 <script>
-  import { answerFacet, matchingDays, weekdayFacet } from '../../lib/facets.js'
+  import { answerFacet, earliestHours, matchingDays, systemFacet } from '../../lib/facets.js'
   import { chart } from '../../lib/chart-action.js'
   import { resource } from '../../lib/resource.svelte.js'
   import { ensureSummary, summaryRevision } from '../../lib/store.js'
-  import { dayLabel, shiftDay, today } from '../../lib/day.js'
+  import { SYSTEM_SPECS, dayLabel, shiftDay, today } from '../../lib/day.js'
   import { daysIn, period, stepPeriod } from '../../lib/period.js'
   import { formatDuration, hours, nowUtc } from '../../lib/clock.js'
   import DayTimeline from '../../lib/time/DayTimeline.svelte'
@@ -409,12 +409,17 @@
    */
   const facets = $derived.by(() => {
     const all = daysIn(unit, anchor, customDays)
+    const hours = earliestHours($answerStore)
+    // Over *every* day in the window, not only the answered ones, and from the
+    // calendar rather than the variables endpoint — which answers nothing for
+    // an account that has never used the questionnaire. This half has weekdays
+    // either way.
+    const computed = SYSTEM_SPECS.map((spec) => systemFacet(spec.key, all, hours))
     const fromAnswers = ($variableStore ?? [])
       .filter((variable) => variable.roles.includes('filter') || variable.kind === 'enum')
-      .filter((variable) => variable.system_key !== 'weekday')
+      .filter((variable) => !variable.system_key)
       .map((variable) => answerFacet(variable, $answerStore))
-      .filter(Boolean)
-    return [weekdayFacet(all), ...fromAnswers]
+    return [...computed, ...fromAnswers].filter(Boolean)
   })
 
   const activeFilters = $derived(

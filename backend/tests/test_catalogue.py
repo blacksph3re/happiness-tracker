@@ -1,7 +1,5 @@
 import sqlite3
 
-SYSTEM_KEYS = {"weekday", "day_of_year", "month", "year", "first_answer_hour"}
-
 
 def test_bootstrap_creates_starter_catalogue(client, admin_headers, catalogue_id):
     detail = client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers).json()
@@ -18,47 +16,12 @@ def test_bootstrap_creates_starter_catalogue(client, admin_headers, catalogue_id
     # The WHO-5 response scale runs 0-5, not 1-5.
     assert all((q["min_value"], q["max_value"]) == (0.0, 5.0) for q in asked)
     assert all(q["min_label"] == "At no time" for q in asked)
-    keys = {q["system_key"] for q in detail["questions"] if q["system_key"]}
-    assert keys == SYSTEM_KEYS
-
-
-def test_new_catalogue_gets_its_own_system_questions(client, admin_headers):
-    created = client.post(
-        "/api/catalogues", headers=admin_headers, json={"name": "Work"}
-    ).json()
-    detail = client.get(
-        f"/api/catalogues/{created['id']}", headers=admin_headers
-    ).json()
-    keys = {q["system_key"] for q in detail["questions"] if q["system_key"]}
-    assert keys == SYSTEM_KEYS
-    assert [q for q in detail["questions"] if q["origin"] != "auto"] == []
 
 
 def test_duplicate_catalogue_name_is_rejected(client, admin_headers):
     client.post("/api/catalogues", headers=admin_headers, json={"name": "Work"})
     again = client.post("/api/catalogues", headers=admin_headers, json={"name": "Work"})
     assert again.status_code == 409
-
-
-def test_system_questions_cannot_be_edited_or_deleted(
-    client, admin_headers, catalogue_id
-):
-    detail = client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers).json()
-    system_id = next(q["id"] for q in detail["questions"] if q["system_key"])
-    assert (
-        client.put(
-            f"/api/questions/{system_id}", headers=admin_headers, json={"prompt": "no"}
-        ).status_code
-        == 403
-    )
-    assert (
-        client.post(
-            f"/api/questions/{system_id}/options",
-            headers=admin_headers,
-            json={"label": "no"},
-        ).status_code
-        == 403
-    )
 
 
 def test_unanswered_questions_are_freely_editable(
@@ -305,8 +268,8 @@ def test_renaming_a_catalogue_keeps_its_questions_and_answers(
     assert [c["name"] for c in listed] == ["Evening check-in"]
 
     detail = client.get(f"/api/catalogues/{catalogue_id}", headers=admin_headers).json()
-    # The five auto-tracked variables and the seeded score come along too.
-    assert len(detail["questions"]) == len(starter_questions) + 6
+    # The seeded score comes along too.
+    assert len(detail["questions"]) == len(starter_questions) + 1
     assert client.get("/api/answers", headers=admin_headers).json() != []
 
 

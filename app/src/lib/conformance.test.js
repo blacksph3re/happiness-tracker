@@ -10,7 +10,8 @@ import {
   summarise,
 } from './time/summary.js'
 import { elapsedSeconds, pomodoroState, splitSeconds } from './pomodoro/derive.js'
-import { scoreForDay, systemValues } from './wellbeing/derive.js'
+import { systemValues } from './day.js'
+import { scoreForDay } from './wellbeing/derive.js'
 
 /**
  * The two implementations agree, case by case.

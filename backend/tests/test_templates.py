@@ -61,6 +61,5 @@ def test_the_bootstrapped_admin_starts_on_the_template(
     scores = [q for q in body["questions"] if q["origin"] == "computed"]
     assert [q["prompt"] for q in scores] == ["Raw score"]
 
-    # And the auto-tracked questions every catalogue carries.
-    auto = [q for q in body["questions"] if q["origin"] == "auto"]
-    assert len(auto) == 5
+    # And nothing auto-tracked: those are computed from the day now.
+    assert [q for q in body["questions"] if q["origin"] == "auto"] == []

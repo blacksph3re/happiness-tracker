@@ -27,6 +27,7 @@
     variables as variableStore,
   } from '../../lib/store.js'
   import { dayLabel } from '../../lib/day.js'
+  import { earliestHours, systemFacet } from '../../lib/facets.js'
 
   // Read from the stores rather than snapshotted out of the loader, so that a
   // background revalidation — an answer recorded on another device — redraws
@@ -227,16 +228,24 @@
     return out
   }
 
+  // The earliest hour each day recorded, which is all `first_answer_hour` is:
+  // nothing stores it any more, and a minimum cannot depend on arrival order.
+  const hoursByDay = $derived(earliestHours(rows))
+
   /** Axis configuration, categorical for enum variables and linear otherwise. */
   function facetChoices(variable) {
     if (variable.kind === 'enum') {
       return variable.options.map((option) => ({ id: option.id, label: option.label }))
     }
-    const ids = new Set(variable.question_ids)
-    const seen = new Set()
-    for (const row of rows) {
-      if (ids.has(row.question_id) && row.value != null) seen.add(row.value)
-    }
+    const seen = new Set(
+      variable.system_key
+        ? Object.values(facetByDay(variable))
+        : rows
+            .filter(
+              (row) => variable.question_ids.includes(row.question_id) && row.value != null
+            )
+            .map((row) => row.value)
+    )
     if (seen.size > CHIP_LIMIT) return []
     return [...seen]
       .sort((a, b) => a - b)
@@ -245,6 +254,11 @@
 
   /** Map each day to the value this variable recorded for it. */
   function facetByDay(variable) {
+    // Auto-tracked variables have no rows behind them: four are functions of
+    // the day key and the fifth is the day's earliest hour.
+    if (variable.system_key) {
+      return systemFacet(variable.system_key, allDays, hoursByDay)?.byDay ?? {}
+    }
     const ids = new Set(variable.question_ids)
     const out = {}
     for (const row of rows) {

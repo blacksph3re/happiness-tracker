@@ -401,6 +401,102 @@ test('a tag rule is applied in the record too', async ({ page, account }) => {
   await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('7h 15m')
 })
 
+test('preferences that fail to load are asked for again, not defaulted for good', async ({
+  page,
+  account,
+}) => {
+  // The same defect as the tag rule above, one loader along: a failed read was
+  // recorded as a successful one, so the device ran on defaults and never asked
+  // again. Worth its own test because the consequence is worse — the page then
+  // *saves* those defaults over what the account had.
+  // Week, because the page defaults to month: a stored value equal to the
+  // default proves nothing about whether it was ever read.
+  await account.api.put('/api/me/preferences', {
+    data: { time: { unit: 'week', by: 'project' } },
+  })
+
+  let refused = 0
+  await page.route('**/api/me/preferences', (route) => {
+    if (route.request().method() === 'GET' && refused === 0) {
+      refused += 1
+      return route.abort('failed')
+    }
+    return route.continue()
+  })
+
+  await page.goto('/time/patterns')
+  await expect(page.locator('[data-period]')).toBeVisible()
+  expect(refused, 'the preferences request was refused once').toBe(1)
+  // The read failed, so the page is on its default and not on the account's.
+  await expect(page.getByRole('button', { name: 'Month', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+
+  // And the account's copy is untouched. This is the half that made it data
+  // loss rather than an inconvenience: the page mirrors its state into
+  // preferences on the first frame, so those defaults were saved straight over
+  // the stored `week` — one dropped read, and the setting was gone from the
+  // server as well as from the screen.
+  await page.waitForTimeout(1500)
+  const stored = await (await account.api.get('/api/me/preferences')).json()
+  expect(stored.time.unit, 'the account kept the window it had').toBe('week')
+
+  // Leaving and coming back asks again, and the stored window arrives with it
+  // rather than the default standing in for it for good.
+  await page.getByRole('link', { name: 'Record', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Record' })).toBeVisible()
+  await page.getByRole('link', { name: 'Patterns' }).click()
+  await expect(page.getByRole('button', { name: 'Week', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+})
+
+test('a rule that fails to load is retried, never cached as no rule at all', async ({
+  page,
+  account,
+}) => {
+  // A tag's rule arrives in a request of its own, and a failed one used to be
+  // read as "this tag has no rule": the blank was written into the cache and
+  // the load marked complete, so nothing ever asked again. The page then
+  // reported *tracked* time as though it were reported time — the app inventing
+  // a rule it had simply failed to read — and a lunch break silently stopped
+  // being deducted until a reload happened to land.
+  const errands = await makeTag(account, 'Errands')
+  const project = await makeProject(account, 'Groceries', { tag_ids: [errands.id] })
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T09:30:00`)
+  await account.api.put(`/api/tags/${errands.id}/rule`, {
+    data: { add_minutes: 15, bands: [] },
+  })
+
+  let refused = 0
+  await page.route('**/api/tags/*/rule', (route) => {
+    if (refused === 0) {
+      refused += 1
+      return route.abort('failed')
+    }
+    return route.continue()
+  })
+
+  await page.goto('/time/record')
+  await page.locator('[data-group-by="tag"]').click()
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  await expect(day.locator('[data-row]')).toBeVisible()
+  expect(refused, 'the rule request was refused once').toBe(1)
+
+  // Leaving and coming back is enough to ask again, because the failure was
+  // never recorded as an answer.
+  await page.getByRole('link', { name: 'Patterns' }).click()
+  await expect(page.getByRole('heading', { name: 'Patterns' })).toBeVisible()
+  await page.getByRole('link', { name: 'Record', exact: true }).click()
+  // Grouping is a saved preference and its write is debounced, so re-selecting
+  // it here rather than relying on the round trip having landed.
+  await page.locator('[data-group-by="tag"]').click()
+  await expect(day.locator('[data-row]')).toContainText('0h 45m')
+  await expect(day.locator('[data-row]')).toContainText('+0h 15m')
+})
+
 test('a tag addition is named in the record too, not only a deduction', async ({
   page,
   account,
@@ -1145,28 +1241,43 @@ test('a smoothing span left over from a long window does not average the daily b
   await page.getByRole('button', { name: '← Previous' }).click()
 
   const FRIDAY = '2026-06-12'
+  const MONDAY = '2026-06-08'
   await expect(page.locator('[data-day-chart]')).toBeVisible()
-  const trips = async () => {
+
+  /** Both positive claims, read from one option object. */
+  const drawn = async () => {
     const option = await chartOption(page, '[data-day-chart]')
-    const at = option.xAxis[0].data.indexOf(FRIDAY)
-    return option.series.find((one) => one.name === 'Dienstreise')?.data?.[at] ?? null
+    const days = option.xAxis[0].data
+    const seriesFor = (name) => option.series.find((one) => one.name === name)?.data
+    return {
+      friday: seriesFor('Dienstreise')?.[days.indexOf(FRIDAY)] ?? null,
+      monday: seriesFor('Work')?.[days.indexOf(MONDAY)] ?? null,
+    }
   }
-  // Polled first, and only for the positive half: the chart is mounted before
-  // the totals behind it arrive, and a one-shot read of an empty chart would
-  // satisfy every "nothing here" assertion below without drawing anything.
-  await expect.poll(trips, { message: 'the trip never reached the chart' }).toBe(10.75)
+  // Polled, and both together in a single read. The chart is mounted before the
+  // totals behind it arrive, so a one-shot read satisfies every "nothing here"
+  // assertion below without anything having been drawn — and polling the two
+  // claims *separately* is no better, because they can pass on two different
+  // renders. Reading Monday off a fresh `getOption()` after the trip had
+  // arrived is exactly how this failed: 0, about once per full suite run.
+  await expect
+    .poll(drawn, { message: 'the chart never settled on its own data' })
+    .toEqual({ friday: 10.75, monday: 9 })
 
-  const option = await chartOption(page, '[data-day-chart]')
-  const days = option.xAxis[0].data
-  const spread = days
-    .map((day, at) => [day, option.series.find((one) => one.name === 'Dienstreise').data[at]])
-    .filter(([day, value]) => day !== FRIDAY && value)
-  expect(spread, 'the trip was drawn on days it did not happen').toEqual([])
-
-  // The other half of the same claim: what is left is the day itself, not an
-  // average that happens to land near it.
-  const worked = option.series.find((one) => one.name === 'Work').data
-  expect(worked[days.indexOf('2026-06-08')], 'Monday was averaged').toBe(9)
+  // The negative half needs the opposite treatment: a poll passes on the first
+  // sample that satisfies it, and an empty chart satisfies "drawn nowhere
+  // else". Sample repeatedly and judge the worst thing seen.
+  let worst = []
+  for (let sample = 0; sample < 5; sample += 1) {
+    const option = await chartOption(page, '[data-day-chart]')
+    const days = option.xAxis[0].data
+    const spread = days
+      .map((day, at) => [day, option.series.find((one) => one.name === 'Dienstreise')?.data?.[at]])
+      .filter(([day, value]) => day !== FRIDAY && value)
+    if (spread.length > worst.length) worst = spread
+    await page.waitForTimeout(100)
+  }
+  expect(worst, 'the trip was drawn on days it did not happen').toEqual([])
 })
 
 test('untagged time is reported below the total, not inside the charts', async ({
@@ -1271,6 +1382,26 @@ test('weekdays narrow the hours', async ({ page, account }) => {
   // And the filters come off in one move rather than one chip at a time.
   await page.getByRole('button', { name: 'Clear all' }).click()
   await expect(page.locator('[data-group="The rewrite"]')).toContainText('4h 00m')
+})
+
+test('weekdays narrow the hours of an account that has never answered anything', async ({
+  page,
+  account,
+}) => {
+  // The regression this exists for: the weekday filter used to be built by
+  // hand from the calendar, then briefly from `/api/stats/variables` — which
+  // answers nothing at all for an account with no answers, so a time-only user
+  // silently lost the control. The calendar always knows, whichever half asks.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  await recordSession(account, project.id, '2026-06-13T09:00:00', '2026-06-13T10:00:00')
+
+  await page.goto('/time/patterns')
+  await expect(page.locator('[data-group="The rewrite"]')).toContainText('4h 00m')
+
+  await page.getByRole('button', { name: /Only days where/ }).click()
+  await page.getByRole('button', { name: 'Sat', exact: true }).click()
+  await expect(page.locator('[data-group="The rewrite"]')).toContainText('1h 00m')
 })
 
 test('a filter narrows the strip, not only the numbers beside it', async ({

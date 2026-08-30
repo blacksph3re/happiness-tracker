@@ -276,10 +276,10 @@ const fetched = new Set()
  * The answers as the server last gave them, before the queue is laid over.
  *
  * Kept apart from what is on screen because the projection has to be *rebuilt*,
- * not applied once: it depends on the queue and on the catalogues — the
- * auto-tracked rows need the question ids — and either can arrive after the
- * answers did. Projecting at fetch time alone left a day answered offline
- * missing its weekday until something happened to refetch.
+ * not applied once: it depends on the queue and on the catalogues — a score
+ * needs its components — and either can arrive after the answers did.
+ * Projecting at fetch time alone left a day answered offline showing a stale
+ * score until something happened to refetch.
  */
 let fromServer = []
 
@@ -507,32 +507,6 @@ export async function ensureAnswers({ force = false } = {}) {
   })
 }
 
-/**
- * Re-read one day's answers from the server and fold them into the cache.
- *
- * The auto-tracked values — weekday, month, year, day-of-year, hour — are
- * written by the *server*, with the day's first answer, so they are in no
- * response the client sees and `rememberAnswer` cannot know about them. The
- * record builds its columns from the rows it holds, which is why they were
- * missing from it until something forced a full reload.
- *
- * One day rather than everything, and merged rather than replaced: answering is
- * a run of quick writes, and swapping the whole array underneath them would
- * drop any answer whose own write had not landed yet.
- *
- * @param {string} day The `YYYY-MM-DD` key to re-read.
- */
-export async function refreshDay(day) {
-  // Quietly: this runs after every day's first answer, and with no connection
-  // it is a read the app already has a local answer for. Toasting "could not
-  // reach the server" at someone who is deliberately offline, once per day they
-  // answer, is the app complaining about the thing it was built to survive.
-  const rows = await quietly(() => listAnswers({ query: { from: day, to: day } }))
-  if (!rows) return
-  fromServer = [...fromServer.filter((row) => row.day !== day), ...rows]
-  reproject()
-}
-
 /** Load the plottable variables, unless they are already known. */
 export async function ensureVariables({ force = false } = {}) {
   await ready()
@@ -562,11 +536,22 @@ export async function ensurePreferences({ force = false } = {}) {
   const cached = get(preferences)
   if (!force && cached && fetched.has('preferences')) return cached
   return once('preferences', async () => {
-    const loaded = (await quietly(() => getMyPreferences())) ?? get(preferences) ?? {}
+    // What the server actually said, kept apart from what stands in for it. A
+    // failed read used to be recorded as a successful one, so a device that
+    // missed this request ran on defaults and never asked again — and then
+    // *saved* those defaults over the account's own, because `persisted` below
+    // was set from the stand-in too.
+    const confirmed = await quietly(() => getMyPreferences())
+    // Attempted and failed, which is not the same as still outstanding. A save
+    // made while the read is *in flight* is a real edit and must go — that race
+    // has its own test. A save made after the read came back empty-handed is a
+    // page mirroring its defaults over a server copy nobody has seen.
+    unread = !confirmed
+    const loaded = confirmed ?? get(preferences) ?? {}
     const merged = { ...loaded, ...(held ?? {}) }
     held = merged
     preferences.set(merged)
-    fetched.add('preferences')
+    if (confirmed) fetched.add('preferences')
     // Against what the server actually confirmed, not the merged copy: an
     // edit folded back in here has not been sent yet, and marking it sent
     // early is what the comment on `persistPreferences` warns a failed save
@@ -578,6 +563,9 @@ export async function ensurePreferences({ force = false } = {}) {
 
 let persisted = null
 let saveTimer = null
+
+/** Whether a preferences read has been attempted and failed. */
+let unread = false
 
 /** The preferences document as this module last knew it, for merging into. */
 let held = null
@@ -598,6 +586,18 @@ let held = null
  * @param {object} values The state that section wants remembered.
  */
 export function persistPreferences(section, values) {
+  // Nothing at all once a read has come back empty-handed. A page mounts
+  // holding its defaults and mirrors them here on the first frame, and defaults
+  // are not an edit: with the server's copy unknown, sending them replaces
+  // whatever the account had with whatever this page happens to open on. One
+  // dropped `GET /api/me/preferences` turned a saved "week" into "month" on
+  // the server, measured.
+  //
+  // Narrowly on a *failed* read, not on an outstanding one. An edit made while
+  // the load is still in flight is a genuine edit and has to reach the server —
+  // `an edit survives the settings load that was still in flight when it was
+  // made` is the test, and blocking that case broke it six runs out of six.
+  if (unread) return
   // From the module's own copy rather than `get(preferences)`: this is called
   // from inside the caller's `$effect`, and reading a store there that the same
   // call then writes is the shape of feedback this app has been caught by
@@ -748,17 +748,30 @@ export async function ensureTagRules({ force = false } = {}) {
   if (!force && get(tagRules) && fetched.has('rules')) return get(tagRules)
   return once('tag-rules', async () => {
     const known = await ensureTags()
+    // Whether every tag actually answered. A request that failed is not a tag
+    // without a rule, and the difference is a number on the screen: reading a
+    // failure as "no rule" reports *tracked* time where reported time belongs,
+    // so a lunch break silently stops being deducted. Marking the load complete
+    // on top of that cached the wrong answer for good, because nothing asks
+    // again for something already fetched.
+    let complete = true
     const pairs = await Promise.all(
-      known.map(async (tag) => [
-        tag.id,
-        (await quietly(() => getTagRule({ path: { tag_id: tag.id } }))) ??
-          (get(tagRules) ?? {})[tag.id] ??
-          { add_minutes: null, bands: [] },
-      ])
+      known.map(async (tag) => {
+        const rule = await quietly(() => getTagRule({ path: { tag_id: tag.id } }))
+        if (rule) return [tag.id, rule]
+        complete = false
+        // Whatever was known stays; a tag never read yet has to show something,
+        // and a blank rule at least matches what the totals already draw before
+        // any rule has arrived. It is not remembered as an answer.
+        return [
+          tag.id,
+          (get(tagRules) ?? {})[tag.id] ?? { add_minutes: null, bands: [] },
+        ]
+      })
     )
     const rules = Object.fromEntries(pairs)
     tagRules.set(rules)
-    fetched.add('rules')
+    if (complete) fetched.add('rules')
     return rules
   })
 }
