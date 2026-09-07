@@ -901,6 +901,84 @@ test('a session over midnight is shown on both days', async ({ page, account }) 
   await expect(page.locator('[data-day="2026-06-14"]')).toContainText('continues')
 })
 
+/**
+ * The sessions the *server* holds, once the queue has caught up.
+ *
+ * Polled, not read once: the record repaints from the local store the instant
+ * Delete is tapped, so a straight read races the queue draining behind it. And
+ * asserted on the spans rather than on a count, because splitting a session in
+ * two and leaving it alone both end with rows on the server - a count cannot
+ * tell them apart.
+ */
+async function storedSpans(page, account, expected) {
+  await expect(async () => {
+    await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0', {
+      timeout: 1_000,
+    })
+    const rows = await (await account.api.get('/api/time/entries')).json()
+    expect(
+      rows.map((row) => [row.started_at, row.ended_at]).sort(),
+      'the sessions the server holds'
+    ).toEqual(expected.sort())
+  }).toPass({ timeout: 15_000 })
+}
+
+test('deleting one day of a session over midnight keeps the other', async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'Night shift')
+  // 22:00 to 02:00: two hours on each side of midnight, one row on each day.
+  await recordSession(account, project.id, '2026-06-14T22:00:00', `${TODAY}T02:00:00`)
+
+  await page.goto('/time/record')
+  const today = page.locator(`[data-day="${TODAY}"]`)
+
+  // The button says which day it takes, which is the whole of the report: a
+  // row clipped to its day carrying a button that took the session was the
+  // label describing something the click did not do.
+  const cut = today.getByRole('button', { name: /^Delete/ })
+  await expect(cut).toHaveAttribute('aria-label', 'Delete Night shift on Mon, Jun 15')
+  await cut.click()
+
+  // Today is gone entirely; yesterday keeps every minute it had.
+  await expect(page.locator(`[data-day="${TODAY}"]`)).toHaveCount(0)
+  await expect(page.locator('[data-day-total="2026-06-14"]')).toHaveText('2h 00m')
+
+  // Shortened, not merely hidden: the row that read "22:00 - 00:00 continues"
+  // now ends there and says nothing about a day beyond it.
+  const yesterday = page.locator('[data-day="2026-06-14"]')
+  await expect(yesterday.locator('[data-row]')).toContainText('22:00')
+  await expect(yesterday).not.toContainText('continues')
+
+  await storedSpans(page, account, [['2026-06-14T22:00:00', '2026-06-15T00:00:00']])
+})
+
+test('deleting the middle day of a session splits it in two', async ({ page, account }) => {
+  const project = await makeProject(account, 'Night shift')
+  // Three days: two hours of the 13th, the whole of the 14th, two of the 15th.
+  await recordSession(account, project.id, '2026-06-13T22:00:00', `${TODAY}T02:00:00`)
+
+  await page.goto('/time/record')
+  await page
+    .locator('[data-day="2026-06-14"]')
+    .getByRole('button', { name: /^Delete/ })
+    .click()
+
+  // The day taken out is gone and the days either side of it both survive -
+  // which is the split, and which one row moving would also satisfy if only
+  // one end were asserted.
+  await expect(page.locator('[data-day="2026-06-14"]')).toHaveCount(0)
+  await expect(page.locator('[data-day-total="2026-06-13"]')).toHaveText('2h 00m')
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('2h 00m')
+
+  // Two sessions now, not one drawn twice.
+  await storedSpans(page, account, [
+    ['2026-06-13T22:00:00', '2026-06-14T00:00:00'],
+    ['2026-06-15T00:00:00', '2026-06-15T02:00:00'],
+  ])
+})
+
 test('resuming reopens the last session and absorbs the gap', async ({ page, account }) => {
   const project = await makeProject(account, 'The rewrite')
   // Stopped an hour ago by mistake, on the day the suite's clock is pinned to.

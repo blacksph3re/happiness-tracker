@@ -281,10 +281,28 @@ test.describe('at phone width', () => {
     ])
     await makeProject(account, 'The rewrite')
 
+    // How many each page must have rendered before it is read. `main` being
+    // visible is not that: a page paints before the data its controls are built
+    // from arrives, so a one-shot read after it examined whichever selects
+    // happened to exist. A slow `/api/catalogues` drops `/questions` from two
+    // to none, and a full parallel run does the same thing by accident - which
+    // is what a single global floor of "more than four" could not tell from a
+    // page that legitimately has fewer.
+    //
+    // Waiting for the count is a *positive* claim, so an auto-retrying
+    // assertion is the right tool; the geometry read that follows is one shot
+    // over a page that has settled.
+    const expected = { '/questions': 2, '/settings': 3, '/time/record': 1 }
+
     let seen = 0
-    for (const path of ['/questions', '/settings', '/time/record']) {
+    for (const [path, count] of Object.entries(expected)) {
       await page.goto(path)
       await expect(page.locator('main')).toBeVisible()
+      // The record's selects all sit inside panels, so the page contributes
+      // nothing until one is open - and it was on this page that the arrow ran
+      // under the text in the first place.
+      if (path === '/time/record') await page.locator('[data-add-session]').click()
+      await expect(page.locator('select')).toHaveCount(count)
       const selects = await page.locator('select').evaluateAll((nodes) =>
         nodes.map((node) => {
           const style = getComputedStyle(node)
@@ -309,7 +327,7 @@ test.describe('at phone width', () => {
     }
     // A page that happens to render no select proves nothing, and three of them
     // would make this pass by drawing nothing at all.
-    expect(seen, 'no select was examined').toBeGreaterThan(4)
+    expect(seen, 'no select was examined').toBe(6)
   })
 
   test('the questions Totals view does not scroll sideways', async ({ page, account, admin }) => {

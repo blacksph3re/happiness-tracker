@@ -905,13 +905,69 @@ export async function saveEntries(entries) {
 }
 
 /**
- * Remove a session here, and tell the server when there is one.
+ * Rewrite one session as the parts of it that remain, in a single gesture.
  *
- * @param {string} client_id The session's own identity.
+ * What the record's Delete does. Handed no parts it removes the session, which
+ * is the whole of what deleting used to mean; handed one it shortens the
+ * session; handed two it splits it, which is a day taken out of the middle of
+ * one drawn across several. See `withoutDay` for which of the three a row is.
+ *
+ * Two things about the batch are load-bearing rather than tidiness:
+ *
+ * - **One `enqueueAll`, never a loop over `saveEntry`.** Splitting is two
+ *   writes meaning one action, and `enqueue` starts a flush that has already
+ *   read the queue — so queued separately the second write would sit there
+ *   unsent until somebody happened to write again.
+ * - **The shortened session goes first and the new part second.** Sent the
+ *   other way the two overlap on one project for as long as it takes the first
+ *   to land, and `apply_entry` merges an overlap into its union rather than
+ *   refusing it: the split would be silently undone by the server. Split in
+ *   this order there is a whole deleted day between the parts and nothing
+ *   overlaps.
+ *
+ * The first part keeps the session's own identity, so a correction stays a
+ * correction and the record does not blink the row it is drawn from out of
+ * existence and back.
+ *
+ * @param {{client_id: string, project_id: number, utc_offset: number,
+ *   note?: string|null}} entry The session being rewritten.
+ * @param {Array<{started_at: string, ended_at: string|null}>} spans What is
+ *   left of it, in order. Empty deletes it.
+ * @returns {Promise<number>} How many writes reached the device. Short of
+ *   `spans.length` means the rest are not saved, as with `saveEntries`.
  */
-export async function removeEntry(client_id) {
-  await enqueue({ kind: 'entry.delete', client_id })
-  forgetEntry(client_id)
+export async function replaceEntry(entry, spans) {
+  const parts = spans.map((span, index) => ({
+    client_id: index === 0 ? entry.client_id : crypto.randomUUID(),
+    project_id: entry.project_id,
+    started_at: span.started_at,
+    ended_at: span.ended_at ?? null,
+    utc_offset: entry.utc_offset,
+    note: entry.note ?? null,
+  }))
+
+  const intents = parts.length
+    ? parts.map(({ client_id, ...payload }) => ({
+        kind: 'entry.upsert',
+        client_id,
+        payload,
+      }))
+    : [{ kind: 'entry.delete', client_id: entry.client_id }]
+
+  // Durable before it is visible - see `saveAnswer` - and only what landed
+  // becomes visible, or a refused write would show as a session existing
+  // nowhere.
+  const stored = await enqueueAll(intents)
+  const saved = parts.slice(0, stored)
+
+  forgetSummaries()
+  if (stored) {
+    timeEntries.update((all) => [
+      ...all.filter((row) => row.client_id !== entry.client_id),
+      ...saved,
+    ])
+  }
+  return stored
 }
 
 /**
@@ -934,16 +990,6 @@ export function rememberEntry(entry) {
     ),
     entry,
   ])
-}
-
-/**
- * Drop a session from the cache after it has been deleted on the server.
- *
- * @param {number} id Identifier of the session.
- */
-export function forgetEntry(client_id) {
-  forgetSummaries()
-  timeEntries.update((all) => all.filter((row) => row.client_id !== client_id))
 }
 
 // A merge or a dropped deletion is the server deciding differently from what

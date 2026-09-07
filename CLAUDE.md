@@ -401,10 +401,24 @@ before your second intent was on it** — `settle()`'s docstring has said so for
 while, but the consequence is easy to miss from the calling side.
 
 Anything that means *one* user action uses `enqueueAll` — `saveEntries`,
-`savePomodoros`. Starting a pomodoro during a break is exactly this shape: it
-ends one and begins another, and queued separately the second silently did not
-reach the server. It passed alone and failed under a full parallel run, which is
-the only reason it was found.
+`savePomodoros`, `replaceEntry`. Starting a pomodoro during a break is exactly
+this shape: it ends one and begins another, and queued separately the second
+silently did not reach the server. It passed alone and failed under a full
+parallel run, which is the only reason it was found.
+
+**Order inside the batch is a rule of its own, and it is the half a test can
+still catch.** `replaceEntry` splits a session by shortening the original and
+adding the part after the gap, and it must queue them **in that order**: sent
+the other way the two overlap on one project until the first lands, and
+`apply_entry` merges an overlap into its union rather than refusing it — so the
+split is silently undone by the server. Reversing the batch fails *deleting the
+middle day of a session splits it in two* by name.
+
+Be honest about which half a probe reaches. Breaking `replaceEntry` into two
+separate `enqueue` calls **does not** fail anything here, and that is not a gap
+in the test: the trailing pass below now brings a stranded write back on its
+own, so for a two-write gesture with nothing racing it the batch buys ordering
+and one reprojection rather than a write that never arrives.
 
 That is still the rule, but it was never the whole of the problem, and this
 passage used to say the stranded write "sits in the outbox until the next wake
@@ -991,6 +1005,18 @@ the test name, and do not move on until you can make it fail on demand.
   *visible* before the data it draws has arrived, which is how an
   `expect(...).toBeVisible()` followed by a one-shot read of its options
   produced `[0, 0, 0]` about once per full suite run.
+- **"More than four" is a floor with no margin.** The chevron test counted every
+  `select` across three pages and required more than four; a healthy run saw
+  exactly five, so losing one to a slow load failed it — about once per full
+  suite run, passing alone. The read was one shot after `expect(main)
+  .toBeVisible()`, which is the trap two entries below in its plainest form: a
+  1500ms delay on `/api/catalogues` drops `/questions` from two selects to none
+  and reproduces it every time. It waits for a **per-page** count now, which is
+  a positive claim and so the right thing to poll, and the guard is the exact
+  total rather than a floor. `/time/record` was contributing **zero** — its
+  selects all sit inside panels — so the test opens the add panel, which is how
+  a page named in the comment as where the bug was found came to be examined at
+  all.
 - **A poll cannot prove a negative.** `expect.poll` succeeds the moment *any*
   sample satisfies it, so polling for "this page does not scroll sideways"
   passes on the first frame — before the thing that overflows has rendered. It
@@ -1169,6 +1195,8 @@ Do not re-open these without being asked to; each was decided deliberately.
 | Pomodoro → Time | **A copy, made on request, never a link.** One button writes one session of the day's summed focus and break time, placed at the first pomodoro; `transferred_at` stops the same hour going twice. Correcting a pomodoro afterwards cannot reach the session, which is exactly why there is no synchronisation to keep. An earlier design linked them and generated merge windows, a `source` column and four edit-propagation rules before it was thrown away |
 | A copied pomodoro | Still fully editable and deletable. Guards that froze one "so the two cannot disagree" were **removed on request** — the two are allowed to disagree, because a copy never promised otherwise, and the alternative was a row nobody could correct. Deleting one leaves its session behind; that is a job for the Time view |
 | Copying twice | Allowed to be attempted. The offer is the **whole day**, always, so it matches the total on the same screen; the second copy is then refused by the ordinary overlap rule on the project, and deleting the first session in the Time view is the way through. Filtering the offer by what had already been copied is what made two numbers on one screen disagree |
+| Deleting a session | Takes **the day whose row was tapped**, never the whole session. A session drawn across several days is drawn as one row per day, clipped to it, so Delete there shortens the session — or splits it in two where a middle day goes. A row marked *kept whole* is one row and one session and goes entirely, and the button names the day it takes so the label cannot promise something else again |
+| A running session losing a day | Keeps running when it loses a **past** day, and **stops** at that midnight when it loses the day it is running in. One left open would re-accumulate the day just deleted and be back on the screen a second later — which is also why deleting a single-day running session removes it outright |
 | A running pomodoro | Is in the day's list and climbs the totals from the moment it starts. It carries no edit or delete control — an end time still moving is not something to correct — and it is **excluded from the transfer**, which needs a duration that is final. The card says so rather than quietly offering less |
 | Focus sounds | Synthesised, not shipped. **"None" stays a valid choice**, which is why audio cannot be relied on to keep a backgrounded tab alive — and so why a pomodoro finishing while the app is closed is reported late. See `PUSH_NOTIFICATIONS_PROPOSAL.md` |
 | Habits | An enum question with a target, in both directions. **No tap-to-answer on the landing chip** — a habit is answered in the questionnaire like the ordinary question it is, and a tick could not offer a three-way choice anyway |

@@ -108,3 +108,53 @@ export function slices(entry, now, offsets = {}) {
   }
   return out
 }
+
+/**
+ * What is left of a session once one local day of it is removed.
+ *
+ * The record draws a session crossing midnight as one row per day, clipped to
+ * that day, so a Delete on such a row means "this day of it" and nothing more.
+ * That leaves nothing when the day was the whole session, one span when the day
+ * was at either end of it, and — deleting a middle day — two, which is the
+ * session split in half around the gap.
+ *
+ * The days come from `slices`, so the cut points are the ones the row was drawn
+ * from and the two cannot disagree about where a day starts. The survivors are
+ * decided by the removed slice's *position* rather than by comparing instants:
+ * the slices already tile the session end to end, so the slice before this one
+ * existing is exactly what makes a head exist, and no rounding enters it. That
+ * is also why a session kept whole across a clock change needs no case of its
+ * own — it has a single slice, which is both the first and the last, and the
+ * answer is the empty list.
+ *
+ * A running session's tail keeps its open end. Removing the day it is running
+ * in leaves no tail at all, so what comes back is a session that stops at that
+ * midnight: one left open would re-accumulate the day just deleted.
+ *
+ * @param {{started_at: string, ended_at: string|null, utc_offset: number}} entry
+ * @param {string} day The local day to remove, as `slices` names it.
+ * @param {number} now Milliseconds since the epoch, for a running session.
+ * @param {Record<string, number>} [offsets] As `dayOffsets` returns.
+ * @returns {Array<{started_at: string, ended_at: string|null}>} The spans that
+ *   survive, in order. Empty when nothing does; the session unchanged when it
+ *   never touched `day`.
+ */
+export function withoutDay(entry, day, now, offsets = {}) {
+  const parts = slices(entry, now, offsets)
+  const index = parts.findIndex((part) => part.day === day)
+  if (index === -1) return [{ started_at: entry.started_at, ended_at: entry.ended_at }]
+
+  const minutes = offsets[startingDay(entry)] ?? entry.utc_offset
+  /** The instant a local day opens, in the clock that day is read by. */
+  const opening = (key) =>
+    new Date(Date.parse(`${key}T00:00:00Z`) - minutes * 60_000).toISOString().slice(0, 19)
+
+  const out = []
+  // Untouched endpoints are carried across verbatim rather than rebuilt, so a
+  // session recorded with milliseconds keeps them.
+  if (index > 0) out.push({ started_at: entry.started_at, ended_at: opening(day) })
+  if (index < parts.length - 1) {
+    out.push({ started_at: opening(parts[index + 1].day), ended_at: entry.ended_at })
+  }
+  return out
+}

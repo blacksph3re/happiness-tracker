@@ -16,7 +16,7 @@
     offsetLabel,
     utcOffset,
   } from '../../lib/clock.js'
-import { dayOffsets, slices } from '../../lib/time/duration.js'
+import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
@@ -29,7 +29,7 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
     ensureTimeEntries,
     ensureTrackedRange,
     projects as projectStore,
-    removeEntry,
+    replaceEntry,
     saveEntry,
     tagRules,
     tags as tagStore,
@@ -541,8 +541,16 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
     adding = null
   }
 
-  async function remove(entry) {
-    await removeEntry(entry.client_id)
+  /**
+   * Delete what the row draws, which on a crossing row is one day of a session.
+   *
+   * The row is a *slice*: it is clipped to its day, says so, and carries its
+   * own button, so taking the whole session with it was the button doing more
+   * than the row claimed. `withoutDay` says what survives — nothing, a
+   * shortened session, or two of them where a middle day went.
+   */
+  async function remove(entry, day) {
+    await replaceEntry(entry, withoutDay(entry, day, $now, dayOffsets($timeEntries)))
     editing = null
   }
 
@@ -898,12 +906,23 @@ import { dayOffsets, slices } from '../../lib/time/duration.js'
                             >
                               <IconPencil />
                             </button>
+                            <!-- Named for what it takes. A crossing row is one
+                                 day of a session and deleting it leaves the
+                                 rest — splitting the session where a middle day
+                                 goes — so a label promising the whole session
+                                 would be the same lie the other way round. A
+                                 row kept whole is one row and one session, and
+                                 reads as it always did. -->
+                            {@const cut =
+                              row.crosses && !row.whole
+                                ? `Delete ${shown.name} on ${dayLabel(day)}`
+                                : `Delete ${shown.name} session`}
                             <button
                               class="meta rounded-md border border-white/15 p-2
                                      hover:border-ember"
-                              aria-label="Delete {shown.name} session"
-                              title="Delete {shown.name} session"
-                              onclick={() => remove(only)}
+                              aria-label={cut}
+                              title={cut}
+                              onclick={() => remove(only, day)}
                             >
                               <IconBin />
                             </button>
