@@ -57,13 +57,43 @@ test('a double tap during the change does not skip a question', async ({ page, a
   const questions = realQuestions(await catalogueOf(account.api))
   await page.goto('/answer')
 
-  // Two clicks inside the exit animation must answer one question, not two.
-  const first = bands(page).nth(2)
-  await first.click()
-  await first.click({ force: true, timeout: 1000 }).catch(() => {})
+  // Two taps inside the exit animation must answer one question, not two.
+  //
+  // Dispatched as one task in the page rather than as two Playwright clicks.
+  // The window is `FLIP_MS`, 150ms, and a second `click()` has to travel over
+  // the wire and pass actionability checks to land inside it — which it does on
+  // an idle machine and does not under load, and the test then answers the
+  // *next* question and reports a skip the app never made. One in twelve, and
+  // the assertion said `Received: "I have felt active and vigorous"`, which is
+  // the question after the one expected.
+  //
+  // Back to back in one task the second tap is inside the window by
+  // construction, because `record` sets `leaving` synchronously before it
+  // returns. That is the guard this test is about; the scheduler is not.
+  //
+  // Two *different* bands, because the guard's effect is on which answer is
+  // kept. Tapping the same band twice cannot see it at all: without the guard
+  // the second tap re-answers the question still on screen — `index` has not
+  // moved yet — and calls `advance()` from the same place, so it lands on the
+  // same question with the same value and the test passes against a version
+  // with no guard in it. That is what the first attempt at this fix did.
+  const group = page.getByRole('group')
+  await group.evaluate((row) => {
+    const taps = row.querySelectorAll('button')
+    taps[2].click()
+    taps[4].click()
+  })
 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[1].prompt)
   await expect(page.getByText(`2/${questions.length}`)).toBeVisible()
+
+  // The answer kept is the first tap's. The second arrived while the card was
+  // leaving and was dropped, rather than overwriting what had just been
+  // recorded on a question the person had already finished with.
+  await page.getByRole('button', { name: '← Back' }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
+  await expect(bands(page).nth(2)).toHaveAttribute('aria-pressed', 'true')
+  await expect(bands(page).nth(4)).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('a finished day reopens for review and reloads intact', async ({ page, account }) => {

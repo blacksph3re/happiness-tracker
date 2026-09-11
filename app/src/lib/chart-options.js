@@ -20,6 +20,22 @@ const MUTED = '#b9b3cc'
 const GRIDLINE = '#2a2440'
 const AXIS_LINE = '#3a3350'
 
+/**
+ * The radar's rings and spokes, which are brighter than every other chart's
+ * gridlines on purpose.
+ *
+ * A cartesian chart carries tick labels and an axis line, so a faint splitline
+ * is a hint beside things that already say where a value sits. A radar has none
+ * of that: the web *is* the scale, and at `GRIDLINE` it measured **1.07:1**
+ * against the `ink-soft` card it is drawn on — reported as barely readable,
+ * which is what a ratio that close to 1 looks like. This is 2.21:1: present
+ * enough to read a value off, and still well under the plotted shape.
+ *
+ * `charts.test.js` asserts the ratio rather than this hex, or it would only be
+ * restating the line below back to itself.
+ */
+const RADAR_WEB = '#5a5185'
+
 /** The chrome every view shares: dusk palette, muted gridlines, scrolling legend. */
 export function baseOptions() {
   return {
@@ -123,9 +139,9 @@ export function radarOptions({ indicators, averages }) {
     radar: {
       indicator: indicators,
       axisName: { color: MUTED },
-      splitLine: { lineStyle: { color: GRIDLINE } },
+      splitLine: { lineStyle: { color: RADAR_WEB } },
       splitArea: { areaStyle: { color: ['transparent'] } },
-      axisLine: { lineStyle: { color: GRIDLINE } },
+      axisLine: { lineStyle: { color: RADAR_WEB } },
     },
     series: [
       {

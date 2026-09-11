@@ -86,6 +86,10 @@ test('a file longer than one chunk imports every row of it', async ({
   page,
   account,
 }) => {
+  // Genuinely heavy, and the only test here that is: 250 rows go up in three
+  // chunks, each ending in a `settle()` that waits for the server to have
+  // them. That is three round trips of real work, not a render.
+  test.slow()
   const project = await makeProject(account, 'Consulting')
   // Two hundred and fifty rows, an hour apart so none of them collide: more
   // than the hundred a chunk holds, which is the only size at which a second
@@ -102,7 +106,14 @@ test('a file longer than one chunk imports every row of it', async ({
   await expect(page.locator('[data-count="ready"]')).toContainText('250')
 
   await page.click('[data-import-write]')
-  await expect(page.locator('[data-import-done]')).toContainText('250 sessions')
+  // Given room, rather than the 7s an unqualified assertion allows. This failed
+  // in two full suite runs and passed alone in 1.4s, which reads like flakiness
+  // and is not: holding `/api/sync` to 3s a chunk reproduces it every time, and
+  // at the 7s mark the panel says `Writing 250 of 250…` and goes on to store
+  // all 250. The budget was the defect, not the import.
+  await expect(page.locator('[data-import-done]')).toContainText('250 sessions', {
+    timeout: 30_000,
+  })
 
   expect(await sessionsOf(account, project)).toHaveLength(250)
 })
