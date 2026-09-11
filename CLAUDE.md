@@ -12,6 +12,16 @@ API routes must be registered before that mount and should live under `/api`.
 
 The owner reviews by reading, then by using. Both are served by the same habits:
 
+- **A sensible refactor does not need permission.** Technical debt a prompt
+  turned up is worth paying off *then*, not later: more time cleaning up now
+  beats arriving somewhere messy. So when the shape of a fix is clear, take it —
+  including the tidying around it — rather than stopping to ask.
+
+  A proposal is for **architectural trade-offs and changes a user would notice**:
+  a schema, an API surface, which of two defensible behaviours a screen has.
+  "This view holds its data in local state and should read the store" is not one
+  of those, however many files it touches. Asked as a question it costs a round
+  trip and returns the answer that was already obvious.
 - **Propose before building anything substantial.** A markdown plan in the repo
   root — database design, an API sketch, the tests you intend, and the open
   questions marked `[assumed: X]` so a silent default is visible as a default.
@@ -69,6 +79,42 @@ Two, both standing, both cheaper to honour from the first commit:
   calls across a navigation. It was relaxed deliberately: forbidding the request
   was only ever a proxy for forbidding the wait, and it made a stale tab
   unfixable without a reload.
+
+  **The shape that breaks it is `let loading = $state(true)` cleared in a
+  `finally`.** Reported from use: on a slow connection the homescreen painted at
+  once and tapping into Track then sat on "Loading your projects…" for seconds.
+  Measured at **3388ms against 68ms** once fixed, with every request held to 3s.
+  The snapshot restores `projects` before either read is sent, so the cards were
+  there the whole time and the flag was reporting the *request*. `Track` and
+  `time/Projects` both had it; `Record`, `Patterns`, both wellbeing views,
+  `Users` and `Landing` all already wrote the derived form, which is the one to
+  copy — `loaded.loading && nothing.length === 0`. Going through `resource()`
+  fixes the other half at the same time, since `$effect(() => load())` where
+  `load` assigns `loading` is the forbidden shape two sections down.
+
+  A view holding its data in local `$state` assigned from a loader cannot take
+  that form at all — there is nothing to count until the await returns. That was
+  `wellbeing/Questionnaire`, and it is why the rule and *"read from the store"*
+  above are one rule rather than two. Its rewrite turned up two things worth
+  keeping:
+
+  - **Placing the cursor is not a one-shot on the day.** `/answer` opens on the
+    first unanswered question, and with `answers` derived that calculation is one
+    careless `$derived` away from re-running on every tap and walking the reader
+    to the next *gap*. But a day guard alone is also wrong: a cold load renders
+    the questions when the *catalogue* lands, a round trip before the answers do,
+    so it latched on question one however much of the day was filled — which the
+    offline walkthrough caught, deterministically, three runs in three. It is
+    revised while the first read is outstanding and stops the moment the reader
+    steers.
+  - **A read can lose a write it outran.** `ensureAnswers` replaces its baseline
+    with a reply describing the server as it was when the request was *sent*, so
+    an answer typed in between is absent from it — and once the queue drains it
+    is absent from the projection too. The answer is safely stored and vanishes
+    off the screen. Pre-existing; the questionnaire's private copy of `answers`
+    had been hiding it. Writes made during a read are now merged back over the
+    reply, and **the projection is rebuilt from that merge rather than from the
+    reply** — getting that second half wrong is what the test caught first.
 
   `lib/revalidate.js` now asks `GET /api/changes` what moved and re-reads only
   that. The digest fingerprints each collection as a row **count and**

@@ -10,6 +10,7 @@
 import { elapsed } from '../../lib/time/duration.js'
   import { today } from '../../lib/day.js'
   import { nextColour } from '../../lib/time/palette.js'
+  import { resource } from '../../lib/resource.svelte.js'
   import { now } from '../../lib/time/tick.js'
   import {
     ensureProjects,
@@ -22,7 +23,6 @@ import { elapsed } from '../../lib/time/duration.js'
   import { connection } from '../../lib/sync.js'
   import { pushToast } from '../../lib/toasts.js'
 
-  let loading = $state(true)
   /**
    * Whether a project can be created at all right now.
    *
@@ -42,6 +42,32 @@ import { elapsed } from '../../lib/time/duration.js'
   let busy = $state([])
 
   const active = $derived(($projectStore ?? []).filter((project) => project.active))
+
+  const loaded = resource(
+    () => today(),
+    () =>
+      Promise.all([
+        ensureProjects(),
+        // Only today matters here; an open session from further back still
+        // arrives, because the range never drops one that is still running.
+        ensureTimeEntries({ start: today(), end: today() }),
+      ]),
+    { name: 'time track' }
+  )
+
+  /**
+   * True only while there is genuinely nothing to draw.
+   *
+   * Not "a request is out". Reported from use: on a slow connection the
+   * homescreen painted at once and Track then sat on its ellipsis for seconds,
+   * because this was a flag set before the fetch and cleared after it. The
+   * snapshot restores `projects` before either request is sent, so a device
+   * that has seen this account has the cards to draw the whole time — and a
+   * device that has not shows the ellipsis until the read lands, which is what
+   * it is for. The same shape as the record, the patterns and both wellbeing
+   * views; this page was the one that still owned its own fetch state.
+   */
+  const loading = $derived(loaded.loading && active.length === 0)
 
   /**
    * The project a link asked for, so arriving from the record lands on it.
@@ -105,10 +131,6 @@ import { elapsed } from '../../lib/time/duration.js'
       }))
   )
 
-  $effect(() => {
-    load()
-  })
-
   // The tab carries the longest-running timer, so a forgotten one is noticed
   // from any other tab rather than after three accidental hours. Restored on
   // teardown, or every other page inherits a stale timer in its title.
@@ -122,19 +144,6 @@ import { elapsed } from '../../lib/time/duration.js'
       document.title = original
     }
   })
-
-  async function load() {
-    try {
-      await Promise.all([
-        ensureProjects(),
-        // Only today matters here; an open session from further back still
-        // arrives, because the range never drops one that is still running.
-        ensureTimeEntries({ start: today(), end: today() }),
-      ])
-    } finally {
-      loading = false
-    }
-  }
 
   /**
    * Start or stop one project, leaving every other timer alone.

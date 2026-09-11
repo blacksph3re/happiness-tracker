@@ -2,7 +2,7 @@ import { test as base, expect, request } from '@playwright/test'
 
 import { ADMIN, NOW, TEMPLATE, TODAY, baseUrlFor } from '../playwright.config.js'
 
-export { expect, TODAY }
+export { expect, NOW, TODAY }
 
 let sequence = 0
 

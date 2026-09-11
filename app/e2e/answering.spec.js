@@ -2,8 +2,10 @@ import {
   answerBand,
   catalogueOf,
   expect,
+  NOW,
   privateCatalogue,
   realQuestions,
+  seedAnswer,
   test,
   TODAY,
 } from './fixtures.js'
@@ -417,4 +419,38 @@ test('the hour reaches the record without a reload', async ({ page, account }) =
   // And the four the date already states are not columns at all.
   await expect(table.getByRole('rowheader', { name: 'Weekday' })).toHaveCount(0)
   await expect(table.getByRole('rowheader', { name: 'Month' })).toHaveCount(0)
+})
+
+test('saving an answer never moves the cursor by itself', async ({ page, account }) => {
+  // The page opens a day on its first unanswered question, and now that
+  // `answers` is read from the store that calculation is one tap away from
+  // being live: saving moves the store immediately, so the same expression as a
+  // `$derived` would carry the cursor to the next *gap* on every answer.
+  //
+  // The clock is what makes this visible at all. The cursor is moved by a
+  // 150ms timer, and that timer overwrites the damage a beat later — which is
+  // why the mutation only failed the double-tap test, and only two runs in
+  // three. Held, what is left is the save's own effect on the cursor and
+  // nothing else.
+  const questions = realQuestions(await catalogueOf(account.api))
+  // An answer further along, so "the next question" and "the next gap" differ.
+  await seedAnswer(account.api, { day: TODAY, question_id: questions[1].id, value: 4 })
+
+  await page.goto('/answer')
+  await expect(page.getByText(`1/${questions.length}`)).toBeVisible()
+
+  // A moment ahead of the pinned clock: pausing *at* it would be asking the
+  // page to travel backwards, since the run has taken time to get here.
+  await page.clock.pauseAt(new Date(NOW.getTime() + 60_000))
+  await page.getByRole('group').getByRole('button').nth(3).click()
+
+  // Still on the question just answered: the card is leaving, and nothing but
+  // the timer may decide where it lands.
+  await expect(page.getByText(`1/${questions.length}`)).toBeVisible()
+
+  // And when the timer does run, it lands on the next question in order rather
+  // than skipping the one already answered.
+  await page.clock.fastForward(500)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[1].prompt)
+  await expect(page.getByText(`2/${questions.length}`)).toBeVisible()
 })

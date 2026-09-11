@@ -21,6 +21,7 @@
     tags as tagStore,
     timeEntries,
   } from '../../lib/store.js'
+  import { resource } from '../../lib/resource.svelte.js'
   import { connection } from '../../lib/sync.js'
   import { previewPoints } from '../../lib/time/deductions.js'
   import { addedFor, deductionFor } from '../../lib/time/summary.js'
@@ -38,7 +39,6 @@
    * tag-a-project loop never leaves it.
    */
 
-  let loading = $state(true)
   let newProject = $state('')
   let newTag = $state('')
   let editing = $state(null)
@@ -87,6 +87,17 @@
   })
 
   const projects = $derived($projectStore ?? [])
+
+  const loaded = resource(
+    () => null,
+    () => Promise.all([ensureProjects(), ensureTags()]),
+    { name: 'time projects' }
+  )
+
+  // True only while there is nothing to draw, not while a request is out — the
+  // same rule Track was fixed for, and the same snapshot restoring the list
+  // before either read is sent.
+  const loading = $derived(loaded.loading && projects.length === 0)
   const tags = $derived($tagStore ?? [])
 
   /**
@@ -108,18 +119,6 @@
   const importable = $derived(
     ($timeEntries ?? []).filter((entry) => entry.project_id === importing)
   )
-
-  $effect(() => {
-    load()
-  })
-
-  async function load() {
-    try {
-      await Promise.all([ensureProjects(), ensureTags()])
-    } finally {
-      loading = false
-    }
-  }
 
   async function refresh() {
     await Promise.all([

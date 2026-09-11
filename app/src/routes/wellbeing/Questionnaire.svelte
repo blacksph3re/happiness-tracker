@@ -6,12 +6,16 @@
   import { attempt } from '../../lib/api.js'
   import {
     answers as answerStore,
+    catalogueDetails,
+    catalogues as catalogueStore,
     ensureAnswers,
     ensureCatalogue,
     ensureCatalogues,
     ensureMe,
+    me as account,
     saveAnswer,
   } from '../../lib/store.js'
+  import { resource } from '../../lib/resource.svelte.js'
   import { dayLabel, localHour, shiftDay, today } from '../../lib/day.js'
   import { ANSWER_MIN_HEIGHT } from '../../lib/layout.js'
   import { answerRatio, tint } from '../../lib/wellbeing/scale.js'
@@ -28,10 +32,7 @@
   // one gap, and a class name built at runtime would generate no CSS at all.
   const SEGMENT_GAP = 6
 
-  let catalogue = $state(null)
-  let answers = $state({})
   let index = $state(0)
-  let loading = $state(true)
   let leaving = $state(false)
 
   // The URL is the only record of which day is open. Holding it in state as
@@ -39,9 +40,43 @@
   // could undo a change made anywhere that did not also update the URL.
   const day = $derived($query.get('day') ?? today())
 
-  // Which day's answers are currently in `answers`. Bookkeeping rather than a
-  // second copy of the day: it says what has been loaded, not what is open.
+  // Which day `index` was last placed for. Bookkeeping rather than a second
+  // copy of the day: it says which day the cursor belongs to, not what is open.
   let shownDay = null
+
+  // Whether the reader has moved the cursor themselves on this day. Set by
+  // `flipTo` and `step`, which every reader-driven move goes through; the
+  // placement below assigns `index` directly and so never marks itself.
+  let steered = false
+
+  /**
+   * Which catalogue this page is about, and what it holds — read from the
+   * store, never copied out of a loader.
+   *
+   * Assigning `catalogue = await ensureCatalogue(id)` is what made this page
+   * wait for the network before it would draw anything: until the await
+   * returned there was nothing on the component to count, so "not loaded yet"
+   * and "no questions" were the same state and the only safe thing to show was
+   * an ellipsis. The device has had the answer in its snapshot the whole time.
+   */
+  const catalogueId = $derived(
+    $account?.default_catalogue_id ?? ($catalogueStore ?? [])[0]?.id ?? null
+  )
+  const catalogue = $derived(catalogueId ? ($catalogueDetails[catalogueId] ?? null) : null)
+
+  /**
+   * The day's answers, read from the shared history rather than copied from it.
+   *
+   * `saveAnswer` moves this store before it returns, so a tap is reflected here
+   * without the page keeping its own optimistic copy — one fewer place for the
+   * same fact to be, and what lets a day already answered draw from the
+   * snapshot instead of appearing blank until a read lands.
+   */
+  const answers = $derived(
+    Object.fromEntries(
+      $answerStore.filter((row) => row.day === day).map((row) => [row.question_id, row])
+    )
+  )
 
   const questions = $derived(
     catalogue ? catalogue.questions.filter((q) => q.active && q.origin === 'asked') : []
@@ -54,67 +89,68 @@
   const complete = $derived(questions.length > 0 && answeredCount === questions.length)
   const remaining = $derived(questions.length - answeredCount)
 
-  // The whole catalogue is fetched once. Everything after this is a write, so
-  // moving between questions never touches the network.
+  /**
+   * Start the reads. Nothing here decides what is drawn — the store does.
+   *
+   * Chained rather than parallel: which catalogue to read comes out of the
+   * account. On a device that has seen this account every one of them is
+   * already on screen from the snapshot before the first of these answers.
+   */
+  const loaded = resource(
+    () => null,
+    async () => {
+      const me = await ensureMe()
+      const id = me?.default_catalogue_id ?? (await ensureCatalogues())?.[0]?.id
+      // No toast, and no error: an account with no catalogue is a state a
+      // person can deliberately arrive at by deleting their last one, and the
+      // page says so below rather than reporting it as something gone wrong.
+      if (id) await ensureCatalogue(id)
+      await ensureAnswers()
+    },
+    { name: 'questionnaire' }
+  )
+
+  // True only while there is genuinely nothing to draw, never merely because a
+  // request is out. See `catalogue` above for what this page used to do.
+  const loading = $derived(loaded.loading && questions.length === 0)
+
+  /**
+   * Open a day on its first unanswered question.
+   *
+   * A *placement*, not a position, and the one line here that the two derived
+   * values above make delicate. `answers` moves the instant a tap is saved, so
+   * the same calculation left to re-run would carry the cursor to the next
+   * *gap* on every answer — answering the first question of a day whose second
+   * is already filled would land on the third, which is precisely what
+   * `advance()` exists to rule out.
+   *
+   * So it runs while two things are true, and stops for good once either ends:
+   *
+   * - **Until the reader steers.** `flipTo` and `step` are every way a person
+   *   moves through the run, and either one ends the placement for that day.
+   * - **Only while the first read is outstanding.** This is the half a day
+   *   guard alone got wrong: a cold load renders the questions the moment the
+   *   *catalogue* lands, which is a round trip before the day's answers do, so
+   *   latching there opened every online visit on question one however much of
+   *   the day was already filled. Revising it while the read is in flight is
+   *   what lets a snapshot place it at once and a cold load place it correctly.
+   */
   $effect(() => {
-    load()
-  })
-
-  // Any change of day - a stepper, a link from the record, the Back button -
-  // arrives as a change of URL, and is answered in exactly one place.
-  $effect(() => {
-    if (catalogue && day !== shownDay) loadDay()
-  })
-
-  /** Fetch the user's catalogue once, then the answers already given for the day. */
-  async function load() {
-    loading = true
-    try {
-      await loadCatalogue()
-    } finally {
-      // Without the finally, one failed request leaves the page stuck on
-      // "Loading…" with no way back short of a manual reload.
-      loading = false
-    }
-  }
-
-  /** Resolve which catalogue to show and pull it down with its questions. */
-  async function loadCatalogue() {
-    const account = await ensureMe()
-    if (!account) return
-    let catalogueId = account.default_catalogue_id
-    if (!catalogueId) {
-      const all = await ensureCatalogues()
-      catalogueId = all?.[0]?.id
-    }
-    // No toast, and no error: an account with no catalogue is a state a person
-    // can deliberately arrive at by deleting their last one, and the page says
-    // so below rather than reporting it as something gone wrong.
-    if (!catalogueId) return
-    catalogue = await ensureCatalogue(catalogueId)
-    await loadDay()
-  }
-
-  /** Load the answers already recorded for `day` and open the first gap. */
-  async function loadDay() {
-    shownDay = day
-    // Read from the shared history rather than a per-day request: the store
-    // already holds it, and every other view stays in step with what is typed.
-    const rows = (await ensureAnswers()) ?? []
-    answers = Object.fromEntries(
-      rows.filter((row) => row.day === day).map((row) => [row.question_id, row])
-    )
+    if (questions.length === 0) return
+    if (day !== shownDay) {
+      shownDay = day
+      steered = false
+    } else if (steered || !loaded.loading) return
     // Opening a finished day shows it for review rather than redirecting: only
     // answering the last question forwards to the stats page.
     index = Math.max(questions.findIndex((q) => !answers[q.id]), 0)
-  }
+  })
 
   function record(payload) {
     // A second tap during the exit animation would answer the question that is
     // already leaving and skip the next one entirely.
     if (leaving) return
     const question = current
-    answers = { ...answers, [question.id]: { question_id: question.id, ...payload } }
 
     // Queued, not sent: the answer is on the device before this returns, and
     // reaches the server whenever there is one to reach. The next question
@@ -149,6 +185,7 @@
 
   /** Turn the page to `next`, letting the current card leave first. */
   function flipTo(next) {
+    steered = true
     leaving = true
     setTimeout(() => {
       index = next
@@ -167,6 +204,7 @@
   }
 
   function step(delta) {
+    steered = true
     const next = index + delta
     // The closing card is the last position, so stepping forward can reach it.
     if (next >= 0 && next <= questions.length) index = next

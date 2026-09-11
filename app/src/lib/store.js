@@ -283,6 +283,27 @@ const fetched = new Set()
  */
 let fromServer = []
 
+/**
+ * Answers written on this device while a read of them was in the air.
+ *
+ * `ensureAnswers` replaces `fromServer` wholesale with what came back, and a
+ * response tells you what the server held when it was *sent*. An answer typed
+ * between the request and its reply is therefore not in it — and if the queue
+ * has drained by then it is not in the projection either, so the row would
+ * disappear off the screen while being perfectly safely stored. Keyed by day
+ * and question, cleared as soon as the read it outran has landed.
+ *
+ * Only writes made during a read are kept. Overlaying every local write for
+ * ever would be the other bug: a correction made on another device arrives
+ * precisely *by* a read replacing this one.
+ */
+let wroteDuringRead = new Map()
+
+/** The key an answer is held under, one per question per day. */
+function answerKey(row) {
+  return `${row.day}:${row.question_id}`
+}
+
 let projecting = false
 
 /** Lay the queue over the server's answers again, whatever just changed. */
@@ -493,14 +514,25 @@ export async function ensureAnswers({ force = false } = {}) {
   await ready()
   if (!force && get(answers).length && fetched.has('answers')) return get(answers)
   return once('answers', async () => {
+    // Anything written from here until the reply lands outran this request and
+    // has to survive it — see `wroteDuringRead`.
+    wroteDuringRead = new Map()
     const loaded = await quietly(() => listAnswers())
     if (!loaded) return get(answers)
-    fromServer = loaded
+    const mine = wroteDuringRead
+    wroteDuringRead = new Map()
+    fromServer = mine.size
+      ? [...loaded.filter((row) => !mine.has(answerKey(row))), ...mine.values()]
+      : loaded
     // Returned, not just stored: callers read the value this hands back — the
     // record builds its rows from it — so handing back the server's array while
     // storing the projected one shows a caller a day it has an answer for as
     // empty.
-    const shown = projected(loaded)
+    //
+    // Projected from the merged baseline, not from `loaded`: the two are the
+    // same array except when a write outran this read, which is the one case
+    // the merge above exists for and so the one case this must not undo.
+    const shown = projected(fromServer)
     answers.set(shown)
     fetched.add('answers')
     return shown
@@ -678,6 +710,7 @@ export function rememberAnswer(answer) {
   // as it drains, and a projection that then fell back to the last *fetched*
   // answers would undo the correction on screen — the server has it, this
   // device simply has not re-read it.
+  wroteDuringRead.set(answerKey(answer), answer)
   fromServer = [
     ...fromServer.filter(
       (row) => !(row.day === answer.day && row.question_id === answer.question_id)

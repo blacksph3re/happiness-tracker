@@ -1,11 +1,14 @@
 import {
   catalogueOf,
   expect,
+  makeProject,
   realQuestions,
   recentDays,
+  recordSession,
   seedAnswer,
   seedAnswers,
   test,
+  TODAY,
 } from './fixtures.js'
 
 /**
@@ -243,4 +246,161 @@ test('pressing the cloud asks the server what moved', async ({ page }) => {
   // Forced, so the floor that stops background checks stacking does not also
   // stop a person who just pressed the thing.
   await expect.poll(() => asked).toBeGreaterThan(0)
+})
+
+test('the track view paints from the store while its loads are still in the air', async ({
+  page,
+  account,
+}) => {
+  // Reported from use: on a slow connection, the homescreen painted at once and
+  // then tapping into Track sat on "Loading your projects…" for several
+  // seconds. The snapshot already held the projects — the view was waiting on
+  // the request rather than on having something to draw, which is the half of
+  // the rule `loading` exists to keep.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T11:00:00`)
+
+  // Once through, so this device has a snapshot of the account to restore.
+  await page.goto('/time')
+  await expect(page.locator(`[data-project="${project.id}"]`)).toBeVisible()
+
+  // A connection that never answers. Held from a cold load, so nothing has been
+  // fetched this session and every loader goes to the network — which is the
+  // state a slow start is actually in, and the one a warm `fetched` would hide.
+  let held = 0
+  const hang = async () => {
+    held += 1
+    await new Promise(() => {})
+  }
+  await page.route('**/api/projects**', hang)
+  await page.route('**/api/time/entries**', hang)
+
+  await page.goto('/')
+  await page.locator('[data-card="time"] [data-go="record"]').click()
+
+  // The card is drawn, named, and says what it has — while both of its requests
+  // are still outstanding.
+  await expect(page.getByRole('heading', { name: 'Track' })).toBeVisible()
+  await expect(page.locator(`[data-project="${project.id}"]`)).toContainText('The rewrite')
+  await expect(page.getByText('Loading your projects…')).toHaveCount(0)
+  expect(await page.evaluate(() => 1 + 1), 'the page stopped responding').toBe(2)
+  expect(held, 'the loads were never attempted').toBeGreaterThan(0)
+})
+
+test('the projects view paints from the store while its loads are still in the air', async ({
+  page,
+  account,
+}) => {
+  // The same defect as Track, found by reading the other views rather than by
+  // being reported: a flag set before the fetch and cleared after it.
+  const project = await makeProject(account, 'The rewrite')
+  await page.goto('/time/projects')
+  await expect(page.getByText('The rewrite')).toBeVisible()
+
+  let held = 0
+  const hang = async () => {
+    held += 1
+    await new Promise(() => {})
+  }
+  await page.route('**/api/projects**', hang)
+  await page.route('**/api/tags**', hang)
+
+  await page.goto('/')
+  await page.locator('[data-card="time"] [data-go="record"]').click()
+  await page.locator('nav').getByRole('link', { name: 'Projects' }).click()
+
+  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
+  await expect(page.getByText('The rewrite')).toBeVisible()
+  await expect(page.getByText('Loading…')).toHaveCount(0)
+  expect(await page.evaluate(() => 1 + 1), 'the page stopped responding').toBe(2)
+  expect(held, 'the loads were never attempted').toBeGreaterThan(0)
+})
+
+
+test('the questionnaire paints from the store while its loads are still in the air', async ({
+  page,
+  account,
+}) => {
+  // The third view with the shape Track was reported for, and the one that
+  // could not take the one-line fix: it kept its catalogue and its answers in
+  // local state assigned from the loader, so before the awaits returned it had
+  // nothing to count and no way to tell "not loaded yet" from "no questions".
+  const questions = realQuestions(await catalogueOf(account.api))
+  await seedAnswer(account.api, { day: TODAY, question_id: questions[1].id, value: 4 })
+
+  await page.goto('/answer')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
+
+  let held = 0
+  const hang = async () => {
+    held += 1
+    await new Promise(() => {})
+  }
+  await page.route('**/api/catalogues**', hang)
+  await page.route('**/api/answers**', hang)
+
+  await page.goto('/')
+  await page.locator('[data-card="wellbeing"] [data-go="record"]').click()
+
+  // The question is on screen with both reads outstanding.
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
+  await expect(page.getByText('Loading your questions…')).toHaveCount(0)
+
+  // And the day's existing answer is drawn with it. Painting the questions but
+  // not what was already recorded would show an answered day as blank, which is
+  // the app inventing data rather than merely being slow.
+  await page.getByRole('button', { name: 'Skip →' }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[1].prompt)
+  await expect(page.getByRole('group').getByRole('button').nth(4)).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  expect(await page.evaluate(() => 1 + 1), 'the page stopped responding').toBe(2)
+  expect(held, 'the loads were never attempted').toBeGreaterThan(0)
+})
+
+test('an answer typed while the answers are being read is not lost by the reply', async ({
+  page,
+  account,
+}) => {
+  // `ensureAnswers` replaces its baseline with whatever comes back, and a reply
+  // describes the server as it was when the request was *sent*. An answer typed
+  // in between is therefore not in it — and once the queue has drained it is not
+  // in the projection either, so a perfectly well stored answer disappears off
+  // the screen. A slow connection is what makes the window wide, which is where
+  // this was found.
+  const questions = realQuestions(await catalogueOf(account.api))
+
+  // What the server held *before* the answer, read through the account's own
+  // context. Fulfilling from plain JSON rather than proxying, so nothing holds
+  // an APIResponse across the wait below.
+  const before = await (await account.api.get('/api/answers')).json()
+
+  let release = null
+  const held = new Promise((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/answers**', async (route) => {
+    await held
+    await route.fulfill({ json: before })
+  })
+
+  await page.goto('/answer')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
+
+  // Answered, queued and sent, all while the read is still outstanding.
+  await page.getByRole('group').getByRole('button').nth(3).click()
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0')
+
+  // Now the stale reply lands.
+  release()
+
+  // The answer is still on the day. It reached the server — it is the screen
+  // that would have lost it.
+  await page.getByRole('button', { name: '← Back' }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(questions[0].prompt)
+  await expect(page.getByRole('group').getByRole('button').nth(3)).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
 })
