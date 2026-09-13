@@ -1,10 +1,11 @@
 """Domain rules, framework-free, split by the part of the app they belong to.
 
 `wellbeing` holds the question, score and auto-tracked-answer rules, `timetrack`
-the project and session rules, `pomodoro` the focus-timer rules. None of the
-three imports another. What more than one of them needs lives in `clock`, which
-is how `local_day` got there: a session and a pomodoro both have to agree which
-local day a UTC instant lands in.
+the project and session rules, `pomodoro` the focus-timer rules, `todos` the
+list, ordering and archive rules. None of the four imports another. What more
+than one of them needs lives in `clock`, which is how `local_day` got there: a
+session and a pomodoro both have to agree which local day a UTC instant lands
+in.
 
 Everything public is re-exported, so a caller writes ``from services import
 score_for_day`` without caring which half it lives in.
@@ -44,6 +45,29 @@ from services.timetrack import (
     starting_day,
     summarise,
 )
+from services.todos import (
+    ARCHIVE_PAGE_LIMIT,
+    SYSTEM_LIST_SPECS,
+    TodoRuleError,
+    append_list_rank,
+    append_todo_rank,
+    archived_page,
+    between,
+    decode_cursor,
+    encode_cursor,
+    ensure_system_lists,
+    find_step,
+    find_todo,
+    identity_is_taken,
+    lists_for,
+    member_list,
+    members_of,
+    membership,
+    open_todos,
+    own_list,
+    system_list,
+    visible_list_ids,
+)
 from services.wellbeing import (
     MONTH_LABELS,
     SYSTEM_QUESTION_SPECS,
@@ -67,6 +91,27 @@ from services.wellbeing import (
 
 __all__ = [
     "ABANDONED",
+    "ARCHIVE_PAGE_LIMIT",
+    "SYSTEM_LIST_SPECS",
+    "TodoRuleError",
+    "append_list_rank",
+    "append_todo_rank",
+    "archived_page",
+    "between",
+    "decode_cursor",
+    "encode_cursor",
+    "ensure_system_lists",
+    "find_step",
+    "find_todo",
+    "identity_is_taken",
+    "lists_for",
+    "member_list",
+    "members_of",
+    "membership",
+    "open_todos",
+    "own_list",
+    "system_list",
+    "visible_list_ids",
     "COMPLETE",
     "RUNNING",
     "MAX_UTC_OFFSET",

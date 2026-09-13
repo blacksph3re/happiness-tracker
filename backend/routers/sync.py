@@ -1,9 +1,10 @@
 """Replaying a device's offline queue.
 
-One endpoint for both halves, because a device queues answers and sessions
-together and replaying them in the order they were made is the point. The
-answers are per intent rather than per request: a session the server cannot
-accept must not wedge the fortnight of answers queued behind it.
+One endpoint for every half, because a device queues answers, sessions,
+pomodoros and tasks together and replaying them in the order they were made is
+the point — a step names a parent that may be two intents back in the same
+request. The answers are per intent rather than per request: a session the
+server cannot accept must not wedge the fortnight of answers queued behind it.
 """
 
 from datetime import UTC, datetime
@@ -20,6 +21,8 @@ from schemas import (
     SyncRequest,
     SyncResponse,
     SyncResult,
+    SyncStepPayload,
+    SyncTodoPayload,
     TimeEntryOut,
 )
 from services.sync import (
@@ -27,8 +30,12 @@ from services.sync import (
     apply_answer,
     apply_entry,
     apply_pomodoro,
+    apply_step,
+    apply_todo,
     delete_entry,
     delete_pomodoro,
+    delete_step,
+    delete_todo,
 )
 
 router = APIRouter(tags=["sync"])
@@ -182,6 +189,40 @@ def sync_intents(
 
         if intent.kind == "entry.delete":
             outcome, detail = delete_entry(db, user.id, intent.client_id, claimed)
+            results.append(SyncResult(seq=intent.seq, outcome=outcome, detail=detail))
+            continue
+
+        if intent.kind == "todo.delete":
+            outcome, detail = delete_todo(db, user.id, intent.client_id, claimed)
+            results.append(SyncResult(seq=intent.seq, outcome=outcome, detail=detail))
+            continue
+
+        if intent.kind == "step.delete":
+            outcome, detail = delete_step(db, user.id, intent.client_id, claimed)
+            results.append(SyncResult(seq=intent.seq, outcome=outcome, detail=detail))
+            continue
+
+        if intent.kind == "todo.upsert":
+            try:
+                task = SyncTodoPayload.model_validate(intent.payload)
+            except ValidationError as invalid:
+                results.append(_malformed(intent.seq, invalid))
+                continue
+            outcome, detail, _ = apply_todo(
+                db, user.id, intent.client_id, claimed, task, now
+            )
+            results.append(SyncResult(seq=intent.seq, outcome=outcome, detail=detail))
+            continue
+
+        if intent.kind == "step.upsert":
+            try:
+                subtask = SyncStepPayload.model_validate(intent.payload)
+            except ValidationError as invalid:
+                results.append(_malformed(intent.seq, invalid))
+                continue
+            outcome, detail, _ = apply_step(
+                db, user.id, intent.client_id, claimed, subtask, now
+            )
             results.append(SyncResult(seq=intent.seq, outcome=outcome, detail=detail))
             continue
 

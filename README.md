@@ -2,14 +2,14 @@
 
 Two things worth recording every day, in one place.
 
-**Wellbeing** — track your satisfaction with work/life/whatever in regular questionaries, then get automated statistics. **Time** — track where your hours go: check in to a project, check out when you stop, and read the week back. **Focus** — a pomodoro timer whose finished blocks can be copied into Time as one session.
+**Wellbeing** — track your satisfaction with work/life/whatever in regular questionaries, then get automated statistics. **Time** — track where your hours go: check in to a project, check out when you stop, and read the week back. **Focus** — a pomodoro timer whose finished blocks can be copied into Time as one session. **Tasks** — lists of what you mean to do, grouped five ways over three layouts, with a calendar and a timer you can start from a task.
 
 ## Screenshots
 
 The landing page: the state of each half before you touch it, a way in and a way
 to the patterns behind it, and a habit's streak underneath.
 
-![The landing page, with three section cards and a row of habit cards below them](docs/screenshots/landing.png)
+![The landing page, with four section cards and a row of habit cards below them](docs/screenshots/landing.png)
 
 Answering: one tap per question, and the next one opens without waiting for the server.
 

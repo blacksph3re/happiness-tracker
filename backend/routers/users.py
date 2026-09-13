@@ -6,7 +6,7 @@ from deps import AdminUser, DbSession
 from models import Catalogue, User
 from schemas import PasswordReset, UserCreate, UserOut, UserUpdate
 from security import clear_totp, hash_password
-from services import build_from_template
+from services import build_from_template, ensure_system_lists
 from templates import CATALOGUE_TEMPLATES
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -150,6 +150,11 @@ def create_user(payload: UserCreate, admin: AdminUser, db: DbSession) -> User:
 
     catalogue = build_from_template(db, template, user.id)
     user.default_catalogue_id = catalogue.id
+    # The inbox and the archive are real rows, so an account is built them here
+    # beside its starter catalogue. `bootstrap` calls the same helper at every
+    # startup, which is what gives an account created before todos existed its
+    # two lists without a migration having to have reached it.
+    ensure_system_lists(db, user.id)
     db.commit()
     db.refresh(user)
     return user

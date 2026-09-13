@@ -11,7 +11,7 @@
   import TimeField from '../../lib/time/TimeField.svelte'
   import StatusMark from '../../lib/pomodoro/StatusMark.svelte'
   import { now } from '../../lib/time/tick.js'
-  import { lengthsFor } from '../../lib/pomodoro/mode.js'
+  import { lengthsFor } from '../../lib/focus-mode.js'
   import { link } from '../../lib/router.js'
   import {
     COMPLETE,
@@ -29,15 +29,21 @@
     stopAmbience,
     unlockAudio,
   } from '../../lib/pomodoro/sounds.js'
+  import { taskTitle } from '../../lib/pomodoro/task.js'
   import {
     ensurePomodoros,
     ensurePreferences,
+    ensureTodoLists,
+    ensureTodos,
+    inboxList,
     preferenceSection,
     preferences,
     pomodoros as pomodoroStore,
     removePomodoro,
     savePomodoro,
-    savePomodoros,
+    settleActiveTasks,
+    startPomodoro,
+    todos as todoStore,
   } from '../../lib/store.js'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
@@ -57,11 +63,41 @@
   const day = today()
 
   let task = $state('')
-  /** Which phase the last chime was for, so one boundary rings exactly once. */
-  let chimed = $state(null)
+  /**
+   * Which phase the last chime was for, so one boundary rings exactly once.
+   *
+   * Deliberately **not** `$state`: nothing draws it, and the effect below both
+   * reads and writes it — which is the forbidden shape written out, however
+   * self-limiting the `return` on the next line makes it. A plain `let` leaves
+   * that effect depending on `phase` alone, which is the one thing that should
+   * make a chime ring.
+   */
+  let chimed = null
 
   const settings = $derived(preferenceSection($preferences, 'focus'))
   const mode = $derived(lengthsFor(settings))
+
+  /**
+   * The tasks this device holds, which is what a linked pomodoro is named by.
+   *
+   * Read from the store rather than snapshotted, and that is the whole point of
+   * the link: retitling a task in Todos retitles the hours spent on it here,
+   * without this page knowing anything happened.
+   */
+  const tasks = $derived($todoStore ?? [])
+
+  /** The inbox, where a task typed into the timer lands. */
+  const inbox = $derived($inboxList)
+
+  /**
+   * What one pomodoro is called.
+   *
+   * @param {object} pomodoro
+   * @returns {string|null}
+   */
+  function named(pomodoro) {
+    return taskTitle(pomodoro, tasks)
+  }
 
   // Read from the store rather than snapshotted out of the loader: a pomodoro
   // started on another device has to be able to arrive.
@@ -128,10 +164,31 @@
     return () => clearTimeout(handle)
   })
 
+  // Nothing reactive is read before the first await, so this effect has no
+  // dependencies and runs once — the shape that cannot re-trigger itself.
   $effect(() => {
-    ensurePomodoros({ start: day, end: day })
-    ensurePreferences()
+    void load()
   })
+
+  /**
+   * Today's pomodoros, the mode, and the tasks a pomodoro can be named by.
+   *
+   * The tasks are two things at once here: the title a linked block reads, and
+   * what makes the sweep below possible at all. The lists come with them
+   * because a task typed into the timer is created in the inbox, and a device
+   * that has never synced does not know which list that is.
+   */
+  async function load() {
+    await Promise.all([
+      ensurePomodoros({ start: day, end: day }),
+      ensurePreferences(),
+      ensureTodos(),
+      ensureTodoLists(),
+    ])
+    // A focus block that finished while the app was closed still finished. See
+    // `settleActive`: the task's clock stops where the block did, not now.
+    await settleActiveTasks()
+  }
 
   /**
    * Which phase the page is showing, including after the pomodoro has ended.
@@ -187,27 +244,44 @@
     chimed = now
   })
 
+  // A task activated by a pomodoro stops when that pomodoro's focus does, and
+  // this is the ordinary case: the page is open and the boundary goes past. It
+  // reads `phase`, which is a string, so the effect does not re-run on every
+  // tick of the countdown — and it writes tasks, which nothing here reads back
+  // into the phase, so there is no cycle to prevent. The sweep is a no-op
+  // whenever there is nothing to settle.
+  $effect(() => {
+    if (phase === 'focus') return
+    settleActiveTasks()
+  })
+
+  /**
+   * Start a block, and make the line that was typed into a real task.
+   *
+   * What was typed is a task, not a label: it is the same sentence somebody
+   * would have added to a list, and leaving it as a string on the pomodoro meant
+   * an hour of work that no list knew about. So it is created in the inbox,
+   * planned today and active from the moment the clock runs — and the text stays
+   * on the pomodoro as well, which is what a block whose task has been deleted
+   * still reads.
+   *
+   * `startPomodoro` owns the rest, including ending a running block: two
+   * callers, one rule. Empty box, no task — an unnamed pomodoro is an ordinary
+   * thing and inventing *New task* for it would be inventing data.
+   *
+   * A device that has never reached the server does not know its own inbox, and
+   * a task cannot be created in a list with no id. It falls back to the text on
+   * the pomodoro alone, which is exactly what every pomodoro before this
+   * feature has.
+   */
   async function start() {
     // While the tap is still on the stack. See `unlockAudio`.
     unlockAudio()
-    const next = {
-      task: task.trim() || null,
-      started_at: nowUtc(),
-      utc_offset: -new Date().getTimezoneOffset(),
-      focus_seconds: mode.focus,
-      break_seconds: mode.rest,
-      tainted: false,
-    }
-    // Starting during a break ends the one before it. That is the only way a
-    // break is ever cut short — there is no button for it — and the part that
-    // was used still counts as time spent.
-    //
-    // Both in one queue entry, not two calls: the flush the first would start
-    // is still in flight when the second is appended, and that drain already
-    // read the queue. The second would wait for the next wake.
-    await savePomodoros(
-      running ? [{ ...running, ended_at: nowUtc() }, next] : [next]
-    )
+    const text = task.trim()
+    await startPomodoro({
+      task: text || null,
+      todo: text && inbox ? { list_id: inbox.id, title: text, planned_on: day } : null,
+    })
     task = ''
     chimed = 'focus'
   }
@@ -238,7 +312,11 @@
     confirming = null
     editing = {
       client_id: pomodoro.client_id,
-      task: pomodoro.task ?? '',
+      task: named(pomodoro) ?? '',
+      // A linked block's name is the task's, so there is nothing here to edit:
+      // typing into it would write a second title that is never read. Renaming
+      // is done in Todos, and this half does not link there.
+      linked: Boolean(pomodoro.todo_client_id),
       startDay: localDay(pomodoro.started_at, pomodoro.utc_offset),
       startClock: clockLabel(pomodoro.started_at, pomodoro.utc_offset),
       minutes: Math.round(elapsedOf(pomodoro) / 60),
@@ -263,7 +341,9 @@
     )
     await savePomodoro({
       ...source,
-      task: editing.task.trim() || null,
+      // Read from the link and not from the box for a linked block, or a
+      // read-only field would still write what it was showing.
+      task: editing.linked ? source.task : editing.task.trim() || null,
       started_at,
       // The full length is stored as *no* end, not as an end at the planned
       // moment: that is what "nothing stopped it" means here, and writing one
@@ -308,8 +388,8 @@
       <div class="flex items-baseline justify-between gap-4">
         <!-- Not the heading font when there is nothing to head: "Unnamed" set
              in semibold read as a task actually called that. -->
-        {#if running.task}
-          <p class="min-w-0 truncate text-lg font-semibold">{running.task}</p>
+        {#if named(running)}
+          <p class="min-w-0 truncate text-lg font-semibold">{named(running)}</p>
         {:else}
           <p class="meta min-w-0 truncate normal-case text-haze" data-no-task>
             no task description
@@ -429,7 +509,7 @@
             </span>
             <!-- An unnamed pomodoro is an unlabelled gap rather than a
                  placeholder: the time and the mark already say what it was. -->
-            <span class="min-w-0 flex-1 truncate text-sm">{pomodoro.task ?? ''}</span>
+            <span class="min-w-0 flex-1 truncate text-sm">{named(pomodoro) ?? ''}</span>
             <span class="numeral shrink-0 text-sm tabular-nums">
               {formatDuration(split.focus)}
             </span>
@@ -516,10 +596,16 @@
                 <span class="meta">Task</span>
                 <input
                   bind:value={editing.task}
+                  readonly={editing.linked}
+                  data-linked={editing.linked ? '' : undefined}
                   placeholder="Optional"
                   class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm
-                         placeholder:text-haze/60"
+                         placeholder:text-haze/60
+                         {editing.linked ? 'text-haze' : ''}"
                 />
+                {#if editing.linked}
+                  <span class="meta normal-case text-haze">named by its task</span>
+                {/if}
               </label>
               <div class="flex flex-col gap-1.5">
                 <span class="meta">Started</span>

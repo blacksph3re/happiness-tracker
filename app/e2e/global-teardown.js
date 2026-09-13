@@ -1,8 +1,8 @@
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
-const RUN_DIR = path.join(os.tmpdir(), 'happiness-e2e')
+import { RUN_DIR } from '../playwright.config.js'
+
 const REGISTRY = path.join(RUN_DIR, 'servers.json')
 
 /** Stop every backend `global-setup.js` started, and remove their databases. */

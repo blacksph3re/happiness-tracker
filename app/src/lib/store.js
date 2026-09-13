@@ -1,14 +1,27 @@
-import { get, writable } from 'svelte/store'
+import { derived, get, writable } from 'svelte/store'
 
 import { tokenHolder, unwrap } from './api.js'
 import { purgePush } from './push.js'
 import {
+  archivedAway,
+  mergeDuringRead,
   overlayAnswers,
   overlayEntries,
   overlayPomodoros,
+  overlayTodos,
   withScores,
 } from './projection.js'
 import { nowUtc } from './clock.js'
+import { lengthsFor } from './focus-mode.js'
+// Two reads out into the halves, and the file already had three of them —
+// `startingDay`, `summaryRows` and `trackedEdges` are all the time zone's
+// rules. The store is where a *write* is composed, so it has to know the rule
+// the write obeys, and one copy of that rule here beats a second spelling of
+// "which pomodoro is running" or of "where the focus ended". What must not
+// happen is a zone reaching sideways for either, which is why both callers of
+// `startPomodoro` reach inward for it instead.
+import { pomodoroState, RUNNING } from './pomodoro/derive.js'
+import { settleActive } from './todos/active.js'
 import { startingDay } from './time/duration.js'
 import { summaryRows, trackedEdges } from './time/summary.js'
 import {
@@ -19,6 +32,7 @@ import {
   notices,
   queued,
   settle,
+  whenRefused,
 } from './sync.js'
 import {
   clearSnapshot,
@@ -28,6 +42,7 @@ import {
   writeSnapshot,
 } from './local.js'
 import {
+  addTodoListMember,
   getCatalogue,
   getCurrentUser,
   getMyPreferences,
@@ -37,8 +52,13 @@ import {
   listProjects,
   listStatsVariables,
   listTags,
+  listArchivedTodos,
   listPomodoros,
   listTimeEntries,
+  listTodoListMembers,
+  listTodoLists,
+  listTodos,
+  removeTodoListMember,
   setMyPreferences,
   transferPomodoros,
   timeSummary,
@@ -96,6 +116,55 @@ export const trackedDays = writable(null)
 
 /** Tracked sessions, for the days `loadedRange` covers. */
 export const timeEntries = writable([])
+
+/**
+ * Every task outside the archive, with its steps nested.
+ *
+ * **There is no range**, and deliberately no cache key shaped like one.
+ * Sessions and pomodoros are read by window because history is unbounded and
+ * irrelevant; an open task from March is neither, so this collection is read
+ * whole and the cache key is a boolean.
+ */
+export const todos = writable([])
+
+/** The account's lists, in column order, the inbox and archive among them. */
+export const todoLists = writable(null)
+
+/**
+ * The account's inbox, or null before the lists have been read.
+ *
+ * The two system lists are matched on `kind` and never on the name, because
+ * both are renameable — and that one-line rule was written out at six call
+ * sites across three zones, which is six places for a rename to start being a
+ * bug. Derived stores rather than functions so a view reads `$inboxList` and
+ * re-renders when the lists arrive, which is what the four `$derived` copies
+ * of this were doing by hand.
+ */
+export const inboxList = derived(todoLists, (held) =>
+  (held ?? []).find((one) => one.kind === 'inbox') ?? null
+)
+
+/** The account's archive list, or null before the lists have been read. */
+export const archiveList = derived(todoLists, (held) =>
+  (held ?? []).find((one) => one.kind === 'archive') ?? null
+)
+
+/**
+ * A page of the archive, newest arrival first.
+ *
+ * Deliberately **not** in `PERSISTED`: the archive is the one collection with
+ * no ceiling, and keeping it out of the device snapshot is what bounds the
+ * offline footprint however long the account lives.
+ */
+export const archive = writable([])
+
+/**
+ * The marker for the archive page after the one held, or null at the end.
+ *
+ * Readable because the view grows a *Show older* control only once there is a
+ * cursor to follow.
+ */
+export const archiveNext = writable(null)
 
 /**
  * Which local days `timeEntries` is known to hold every session for.
@@ -261,6 +330,8 @@ const PERSISTED = {
   trackedDays,
   timeEntries,
   pomodoros,
+  todos,
+  todoLists,
 }
 
 /**
@@ -296,6 +367,10 @@ let fromServer = []
  * Only writes made during a read are kept. Overlaying every local write for
  * ever would be the other bug: a correction made on another device arrives
  * precisely *by* a read replacing this one.
+ *
+ * **No tombstone here**, unlike the tasks: an answer is never deleted — there
+ * is no delete endpoint and none is to be added — so there is no delete for a
+ * read to lose. Re-answering a day is an ordinary write under the same key.
  */
 let wroteDuringRead = new Map()
 
@@ -521,9 +596,7 @@ export async function ensureAnswers({ force = false } = {}) {
     if (!loaded) return get(answers)
     const mine = wroteDuringRead
     wroteDuringRead = new Map()
-    fromServer = mine.size
-      ? [...loaded.filter((row) => !mine.has(answerKey(row))), ...mine.values()]
-      : loaded
+    fromServer = mergeDuringRead(loaded, mine, answerKey)
     // Returned, not just stored: callers read the value this hands back — the
     // record builds its rows from it — so handing back the server's array while
     // storing the projected one shows a caller a day it has an answer for as
@@ -833,6 +906,41 @@ export function rememberTagRule(tagId, rule) {
 }
 
 /**
+ * Sessions written on this device while a read of them was in the air.
+ *
+ * The same defect `wroteDuringRead` and `todosWroteDuringRead` exist for, in
+ * the two collections that never got the fix: a reply describes the server as
+ * it was when the request was *sent*, so a session checked into between the
+ * request and its reply is not in it — and once the queue has drained
+ * `overlayEntries` has nothing left to lay back over it. The session is safely
+ * stored and the running timer vanishes off the screen.
+ *
+ * **Global, and keyed on `client_id` alone — there is nothing range-shaped
+ * here, deliberately.** These two collections are cached by range, so a write
+ * made during a read may belong to a day the reply says nothing about, and the
+ * obvious worry is that folding it in puts a row into a window it does not
+ * belong to. It does not, because the store has no windows: this is one flat
+ * array, `loadedRange` is a claim about which days it is *complete* for rather
+ * than a filter, and `rememberEntry` has always added a session to it without
+ * consulting either. Every view that draws a window clips for itself — see
+ * `summaryRows`, `Record`'s `byDay`, `DayTimeline` — so the merge can only ever
+ * hand back a row this device just wrote, which is exactly the row the read
+ * would otherwise have dropped.
+ *
+ * Keying on the range instead would need somewhere to keep a write that falls
+ * outside it, and a write must never be dropped: that somewhere is a second
+ * container, which is the defect this is fixing one level up.
+ *
+ * **A delete is a `null` tombstone**, for the reason `forgetTodo` spells out:
+ * the reply still holds the row, so forgetting the key says only "no write is
+ * waiting under this name" and hands the session back on screen after the
+ * server has been told to destroy it. In the same map as the writes, because
+ * the map is emptied where a read begins and again where its reply lands — so a
+ * tombstone is cleared by construction.
+ */
+let entriesWroteDuringRead = new Map()
+
+/**
  * Load the sessions covering a range of local days.
  *
  * Widening the window refetches; narrowing it, or asking again for the same
@@ -857,15 +965,26 @@ export async function ensureTimeEntries({ start, end, force = false } = {}) {
     const query = {}
     if (wanted.start) query.start = wanted.start
     if (wanted.end) query.end = wanted.end
+    // Anything written from here until the reply lands outran this request and
+    // has to survive it — see `entriesWroteDuringRead`.
+    entriesWroteDuringRead = new Map()
     const fresh = await quietly(() => listTimeEntries({ query }))
     // Unreachable: keep what the device holds. The queue is still laid over it,
-    // because a session recorded here is not waiting on anybody.
+    // because a session recorded here is not waiting on anybody. The map is
+    // left alone: nothing replaced the baseline, so there is nothing for it to
+    // have survived, and the next read starts by emptying it anyway.
     if (!fresh) {
       const held = overlayEntries(get(timeEntries), get(queued))
       timeEntries.set(held)
       return held
     }
-    const loaded = overlayEntries(fresh, get(queued))
+    const mine = entriesWroteDuringRead
+    entriesWroteDuringRead = new Map()
+    // Projected from the merged baseline and never from `fresh`: the two are
+    // the same array except when a write or a delete outran this read, which is
+    // the one case the merge exists for and so the one case this must not undo.
+    const baseline = mergeDuringRead(fresh, mine, (row) => row.client_id)
+    const loaded = overlayEntries(baseline, get(queued))
     timeEntries.set(loaded)
     loadedRange = wanted
     fetched.add('time')
@@ -932,6 +1051,11 @@ export async function saveEntries(entries) {
     const days = saved.map((entry) => startingDay(entry)).sort()
     reachTrackedRange(days[0])
     reachTrackedRange(days.at(-1))
+    // An import is as capable of outrunning a read as a check-in is, and it
+    // bypasses `rememberEntry` on purpose — so it records what it stored here
+    // itself. Only what landed, as on screen: a refused write must not be
+    // resurrected by the merge either.
+    for (const entry of saved) entriesWroteDuringRead.set(entry.client_id, entry)
     timeEntries.update((all) => [...all, ...saved])
   }
   return stored
@@ -995,6 +1119,16 @@ export async function replaceEntry(entry, spans) {
 
   forgetSummaries()
   if (stored) {
+    // What survives a read this outran, in the order the parts were written and
+    // never further than `stored`: the store below is updated from the same two
+    // values, so the merge cannot put back a half of the gesture the screen
+    // does not have. Handed no spans there is no row to record and the identity
+    // needs a tombstone instead, which is the only way a session is deleted.
+    if (parts.length) {
+      for (const part of saved) entriesWroteDuringRead.set(part.client_id, part)
+    } else {
+      entriesWroteDuringRead.set(entry.client_id, null)
+    }
     timeEntries.update((all) => [
       ...all.filter((row) => row.client_id !== entry.client_id),
       ...saved,
@@ -1015,6 +1149,10 @@ export async function replaceEntry(entry, spans) {
 export function rememberEntry(entry) {
   forgetSummaries()
   reachTrackedRange(startingDay(entry))
+  // Folded into what survives a read this outran, keyed on the device's own
+  // identity. A row without one is a server row nothing here wrote, and the
+  // merge has no name to hold it under.
+  if (entry.client_id) entriesWroteDuringRead.set(entry.client_id, entry)
   // Matched on the device's own identity first: a session recorded here has no
   // server id until it syncs, so `id` cannot be what tells two rows apart.
   timeEntries.update((all) => [
@@ -1077,6 +1215,17 @@ export async function applyChanges(moved) {
     loads.push(ensurePomodoros({ ...pomodoroRange, force: true }))
   }
 
+  // Steps arrive nested inside their task, so there is no loader of their own
+  // to force: `todo_steps` moving means the tasks have to be re-read.
+  if (changed.has('todos') || changed.has('todo_steps')) {
+    loads.push(ensureTodos({ force: true }))
+    // Only when this device has looked at the archive. A cleanup moves rows
+    // there, and the timestamp it is ordered by is the server's — so the page
+    // held here is out of date whichever device did the archiving.
+    if (fetched.has('archive')) loads.push(ensureArchive({ force: true }))
+  }
+  if (changed.has('todo_lists')) loads.push(ensureTodoLists({ force: true }))
+
   if (changed.has('projects')) loads.push(ensureProjects({ force: true }))
   if (changed.has('tags')) loads.push(ensureTags({ force: true }))
   if (changed.has('rules')) loads.push(ensureTagRules({ force: true }))
@@ -1124,12 +1273,34 @@ export function resetStore() {
   trackedDays.set(null)
   timeEntries.set([])
   pomodoros.set([])
+  todos.set([])
+  todoLists.set(null)
+  archive.set([])
+  archiveNext.set(null)
+  todosWroteDuringRead = new Map()
+  entriesWroteDuringRead = new Map()
+  pomodorosWroteDuringRead = new Map()
   loadedRange = null
   pomodoroRange = null
   summaries.clear()
   persisted = null
   inFlight.clear()
 }
+
+/**
+ * Pomodoros written on this device while a read of them was in the air.
+ *
+ * `entriesWroteDuringRead` one collection along, and everything said there
+ * about the range applies here unchanged: the store is one flat array, and
+ * `Focus`, `Stats` and the landing card each filter it down to the days they
+ * draw. A pomodoro started during a read of another window is therefore kept
+ * rather than dropped, and no view is any the wiser.
+ *
+ * Deletes are `null` tombstones here too, and this is where one is most
+ * obviously needed: a pomodoro is the one row in this half that has a delete
+ * control at all.
+ */
+let pomodorosWroteDuringRead = new Map()
 
 /**
  * Load the pomodoros of a range of local days.
@@ -1158,15 +1329,24 @@ export async function ensurePomodoros({ start, end, force = false } = {}) {
     const query = {}
     if (wanted.start) query.start = wanted.start
     if (wanted.end) query.end = wanted.end
+    // Anything written from here until the reply lands outran this request and
+    // has to survive it — see `pomodorosWroteDuringRead`.
+    pomodorosWroteDuringRead = new Map()
     const fresh = await quietly(() => listPomodoros({ query }))
     // Unreachable: keep what the device holds, with the queue still laid over
-    // it. A pomodoro started here is not waiting on anybody.
+    // it. A pomodoro started here is not waiting on anybody. The map is left
+    // alone, as in `ensureTimeEntries`: nothing replaced the baseline.
     if (!fresh) {
       const held = overlayPomodoros(get(pomodoros), get(queued))
       pomodoros.set(held)
       return held
     }
-    const loaded = overlayPomodoros(fresh, get(queued))
+    const mine = pomodorosWroteDuringRead
+    pomodorosWroteDuringRead = new Map()
+    // From the merged baseline and never from `fresh`, for the reason
+    // `ensureTimeEntries` gives.
+    const baseline = mergeDuringRead(fresh, mine, (row) => row.client_id)
+    const loaded = overlayPomodoros(baseline, get(queued))
     pomodoros.set(loaded)
     pomodoroRange = wanted
     fetched.add('pomodoros')
@@ -1194,37 +1374,6 @@ export async function savePomodoro(pomodoro) {
 }
 
 /**
- * Write several pomodoros as one queue entry.
- *
- * Not a loop over `savePomodoro`, and not for speed: a `flush` started by the
- * first call is already in flight when the second is appended, and that drain
- * read the queue before the new intent was on it. The second write would then
- * sit until the next wake event — up to half a minute later. Starting the next
- * pomodoro during a break is exactly that shape, since it ends one and begins
- * another in the same breath.
- *
- * @param {Array<object>} list In the order they should reach the server.
- * @returns {Promise<Array<string>>} The identities they now have.
- */
-export async function savePomodoros(list) {
-  const stamped = list.map((pomodoro) => ({
-    ...pomodoro,
-    client_id: pomodoro.client_id ?? crypto.randomUUID(),
-  }))
-  const stored = await enqueueAll(
-    stamped.map(({ client_id, ...payload }) => ({
-      kind: 'pomodoro.upsert',
-      client_id,
-      payload,
-    }))
-  )
-  // Durable before it is visible, as everywhere else: only what actually landed
-  // on the device becomes visible.
-  for (const pomodoro of stamped.slice(0, stored)) rememberPomodoro(pomodoro)
-  return stamped.slice(0, stored).map((pomodoro) => pomodoro.client_id)
-}
-
-/**
  * Remove a pomodoro here, and tell the server when there is one.
  *
  * @param {string} client_id The pomodoro's own identity.
@@ -1240,6 +1389,9 @@ export async function removePomodoro(client_id) {
  * @param {object} pomodoro As the device holds it, or as the server returned it.
  */
 export function rememberPomodoro(pomodoro) {
+  // Folded into what survives a read this outran, keyed on the device's own
+  // identity — a row without one is a server row nothing here wrote.
+  if (pomodoro.client_id) pomodorosWroteDuringRead.set(pomodoro.client_id, pomodoro)
   pomodoros.update((all) => [
     ...all.filter((row) =>
       pomodoro.client_id ? row.client_id !== pomodoro.client_id : row.id !== pomodoro.id
@@ -1251,10 +1403,734 @@ export function rememberPomodoro(pomodoro) {
 /**
  * Drop a pomodoro from the cache.
  *
+ * **A tombstone, not a forgetting**, for the reason `forgetTodo` carries: a
+ * read in the air is answered by a reply that still holds the pomodoro, and by
+ * the time it lands the delete has drained, so nothing else is left to say the
+ * row is gone. A `null` takes it out of the baseline instead.
+ *
  * @param {string} client_id The pomodoro's own identity.
  */
 export function forgetPomodoro(client_id) {
+  pomodorosWroteDuringRead.set(client_id, null)
   pomodoros.update((all) => all.filter((row) => row.client_id !== client_id))
+}
+
+/**
+ * Tasks written on this device while a read of them was in the air.
+ *
+ * The same defect `wroteDuringRead` exists for one collection along, and the
+ * projection does not cover it: `ensureTodos` replaces its baseline with what
+ * came back, and a reply describes the server as it was when the request was
+ * *sent*. A task added between the request and its reply is therefore not in
+ * it — and if the queue has drained by then it is not in the projection either,
+ * so a perfectly well stored task disappears off the screen.
+ *
+ * Keyed by `client_id`, and it holds whole task rows rather than patches, so a
+ * step written or deleted during the read is carried by its parent. Cleared as
+ * soon as the read it outran has landed: overlaying every local write for ever
+ * would be the other bug, since an edit made on another device arrives precisely
+ * *by* a read replacing this one.
+ *
+ * **A delete is recorded here too, as a `null`.** A read can lose one exactly as
+ * it can lose a write, and one line worse: the reply still *holds* the row, so
+ * forgetting the key — which is what `forgetTodo` used to do — hands the task
+ * back on screen after the server has been told to destroy it. See
+ * `mergeDuringRead`, which is where the two are folded back in together.
+ */
+let todosWroteDuringRead = new Map()
+
+/**
+ * A task as this device writes one.
+ *
+ * The server's own shape minus the two things only the server knows, and with
+ * every optional column optional: the quick-add names three fields and
+ * `todoPayload` fills the rest. Spelled out rather than left as `object`, which
+ * type-checks as "a value with no properties" and so makes every field read off
+ * it an error the moment anything looks.
+ *
+ * @typedef {Partial<Omit<import('./generated/types.gen').TodoOut, 'id'>> &
+ *   {list_id: number, title: string, planned_on: string}} TodoDraft
+ */
+
+/**
+ * A step as this device writes one.
+ *
+ * @typedef {Partial<Omit<import('./generated/types.gen').TodoStepOut, 'id'>> &
+ *   {title: string}} StepDraft
+ */
+
+/**
+ * A task in the shape `todo.upsert` takes.
+ *
+ * Written out field by field rather than spread from the row: the row carries
+ * `id`, `steps` and `client_id`, none of which belongs in the payload — steps
+ * are their own intents, and the identity travels beside the payload, not
+ * inside it.
+ *
+ * `rank` is allowed to be null, which is what tells the server to append. Only
+ * writes that name no position use it — the client computes the key a drop
+ * lands on, because only the client knows where the card was released.
+ *
+ * `planned_at` is a wall clock, `HH:MM` or `HH:MM:SS`. The server takes either
+ * and gives back `HH:MM:SS`, so anything comparing a stored value with a
+ * written one has to normalise rather than assume.
+ *
+ * **Every optional column is named here, including the ones no gesture on the
+ * screen that queued this write can change.** An upsert is the whole row, so a
+ * payload that omits a field clears it — a tick, a drag, a cleanup and a
+ * calendar move all go through here with the whole task spread in, and each of
+ * them would otherwise take the colour, the icon or the estimate off on the way
+ * past. That is the cost `SyncTodoPayload`'s docstring names, paid once in one
+ * place.
+ *
+ * @param {TodoDraft} row A task as the device holds it.
+ * @returns {object} The payload, in the shape `SyncTodoPayload` takes.
+ */
+function todoPayload(row) {
+  return {
+    list_id: row.list_id,
+    title: row.title,
+    description: row.description ?? null,
+    planned_on: row.planned_on,
+    planned_at: row.planned_at ?? null,
+    due_on: row.due_on ?? null,
+    priority: row.priority ?? null,
+    duration_minutes: row.duration_minutes ?? null,
+    icon: row.icon ?? null,
+    colour: row.colour ?? null,
+    rank: row.rank ?? null,
+    done_at: row.done_at ?? null,
+    archived_at: row.archived_at ?? null,
+    active_since: row.active_since ?? null,
+    active_seconds: row.active_seconds ?? 0,
+  }
+}
+
+/**
+ * A step in the shape `step.upsert` takes, without its parent.
+ *
+ * @param {StepDraft} row A step as the device holds it.
+ * @returns {object} The payload, which the caller names a parent beside.
+ */
+function stepPayload(row) {
+  return {
+    title: row.title,
+    icon: row.icon ?? null,
+    rank: row.rank ?? null,
+    done_at: row.done_at ?? null,
+  }
+}
+
+/**
+ * Load every task outside the archive, unless they are already known.
+ *
+ * @param {{force?: boolean}} options
+ * @returns {Promise<Array<import('./generated/types.gen').TodoOut>>} The tasks,
+ *   with the queue laid over them.
+ */
+export async function ensureTodos({ force = false } = {}) {
+  await ready()
+  // On `fetched` alone, with no length check: an account with no tasks is an
+  // ordinary account, and a confirmed read of nothing is still a read.
+  if (!force && fetched.has('todos')) return get(todos)
+  return once('todos', async () => {
+    // Anything written from here until the reply lands outran this request and
+    // has to survive it — see `todosWroteDuringRead`.
+    todosWroteDuringRead = new Map()
+    const loaded = await quietly(() => listTodos())
+    // Unreachable: keep what the device holds, with the queue still laid over
+    // it. A task written here is not waiting on anybody.
+    if (!loaded) {
+      const held = overlayTodos(get(todos), get(queued))
+      todos.set(held)
+      return held
+    }
+    const mine = todosWroteDuringRead
+    todosWroteDuringRead = new Map()
+    // Projected from the merged baseline and never from `loaded`: the two are
+    // the same array except when a write or a delete outran this read, which is
+    // the one case the merge exists for and so the one case this must not undo.
+    const baseline = mergeDuringRead(loaded, mine, (row) => row.client_id)
+    const shown = overlayTodos(baseline, get(queued))
+    todos.set(shown)
+    fetched.add('todos')
+    return shown
+  })
+}
+
+/** Load the account's lists, unless they are already known. */
+export async function ensureTodoLists({ force = false } = {}) {
+  await ready()
+  if (!force && get(todoLists) && fetched.has('todo-lists')) return get(todoLists)
+  return once('todo-lists', async () => {
+    const loaded = await quietly(() => listTodoLists())
+    // Kept, not cleared: a device that cannot reach the server still has to be
+    // able to draw the board it was looking at, and a task can only be created
+    // in a list this device already knows the id of.
+    if (!loaded) return get(todoLists) ?? []
+    const before = get(todoLists)
+    todoLists.set(loaded)
+    fetched.add('todo-lists')
+    // A list held before and absent now has left this account — deleted on
+    // another device, or shared with it and no longer. Its tasks go with it,
+    // or the board would keep cards in a list nothing can draw a column for.
+    if (before) {
+      const kept = new Set(loaded.map((one) => one.id))
+      forgetTasksIn(new Set(before.filter((one) => !kept.has(one.id)).map((one) => one.id)))
+    }
+    return loaded
+  })
+}
+
+/**
+ * Take every task in the named lists off this device.
+ *
+ * Through `forgetTodo`, so each goes in as a tombstone and a read of the tasks
+ * already in the air cannot hand them back.
+ *
+ * @param {Set<number>} ids List ids.
+ */
+function forgetTasksIn(ids) {
+  if (!ids.size) return
+  for (const row of get(todos)) {
+    if (ids.has(row.list_id)) forgetTodo(row.client_id)
+  }
+}
+
+/**
+ * Change one held list in place.
+ *
+ * @param {number} id
+ * @param {(list: import('./generated/types.gen').TodoListOut) =>
+ *   import('./generated/types.gen').TodoListOut} change
+ */
+function updateTodoList(id, change) {
+  todoLists.update((held) => (held ?? []).map((one) => (one.id === id ? change(one) : one)))
+}
+
+/**
+ * Share a list this account owns with somebody, by username.
+ *
+ * **Online-only**, like everything else about a list, and applied to the held
+ * list from the reply rather than by re-reading and waiting: the page that
+ * pressed Add draws the new roster the moment the server has it.
+ *
+ * Idempotent on the server — sharing twice answers the membership already
+ * there — so the roster is de-duplicated here too.
+ *
+ * @param {import('./generated/types.gen').TodoListOut} list An ordinary list
+ *   this account owns.
+ * @param {string} username
+ * @returns {Promise<import('./generated/types.gen').TodoListMemberOut>}
+ * @throws {Error} With `status` 404 for a username no account has, and 409 for
+ *   this account's own name or a system list — the caller says which in words.
+ */
+export async function shareTodoList(list, username) {
+  const added = await unwrap(() =>
+    addTodoListMember({ path: { list_id: list.id }, body: { username } })
+  )
+  updateTodoList(list.id, (held) => ({
+    ...held,
+    shared: true,
+    members: [...(held.members ?? []).filter((one) => one !== added.username), added.username],
+  }))
+  return added
+}
+
+/**
+ * Stop sharing a list this account owns with one person.
+ *
+ * `TodoListOut.members` names people and the delete takes an account id, so the
+ * roster is read first. That costs a request on a gesture which already waits
+ * for one, and it is fresher than the held names: the roster it returns is what
+ * the list is left with.
+ *
+ * @param {import('./generated/types.gen').TodoListOut} list
+ * @param {string} username
+ * @returns {Promise<void>}
+ */
+export async function unshareTodoList(list, username) {
+  const roster = await unwrap(() => listTodoListMembers({ path: { list_id: list.id } }))
+  const member = roster.find((one) => one.username === username)
+  if (member) {
+    await unwrap(() =>
+      removeTodoListMember({ path: { list_id: list.id, member_id: member.user_id } })
+    )
+  }
+  const members = roster.map((one) => one.username).filter((one) => one !== username)
+  updateTodoList(list.id, (held) => ({ ...held, shared: members.length > 0, members }))
+}
+
+/**
+ * Leave a list somebody else shared with this account.
+ *
+ * The list and its tasks leave this device at once, on the server's word
+ * rather than on the next read: the tasks are still the list's, and they stay
+ * on every other member's board.
+ *
+ * @param {import('./generated/types.gen').TodoListOut} list
+ * @returns {Promise<void>}
+ */
+export async function leaveTodoList(list) {
+  const account = get(me) ?? (await ensureMe())
+  if (!account) throw new Error('Could not reach the server. Check your connection.')
+  await unwrap(() =>
+    removeTodoListMember({ path: { list_id: list.id, member_id: account.id } })
+  )
+  forgetTasksIn(new Set([list.id]))
+  todoLists.update((held) => (held ?? []).filter((one) => one.id !== list.id))
+}
+
+/**
+ * The two sentences the server refuses a write with once its target has gone.
+ *
+ * Both are also what a removed member's queued write collects, which is the
+ * case `whenRefused` below exists to put in words.
+ */
+const GONE = new Set(['That list no longer exists', 'That task no longer exists'])
+
+/**
+ * The list a refused intent was about, as this device last held it.
+ *
+ * For a task upsert both the list it names and the list the task is in are
+ * candidates, and the one somebody else owns wins: moving a shared task into a
+ * list of one's own is refused *because of* the shared list.
+ *
+ * @param {{kind: string, client_id?: string, payload?: object}} intent
+ * @returns {import('./generated/types.gen').TodoListOut|undefined}
+ */
+function listRefusedFor(intent) {
+  const lists = get(todoLists) ?? []
+  const tasks = get(todos)
+  const listOf = (task) => lists.find((one) => one.id === task?.list_id)
+  const byTask = (client_id) => listOf(tasks.find((one) => one.client_id === client_id))
+  switch (intent.kind) {
+    case 'todo.upsert': {
+      const candidates = [
+        byTask(intent.client_id),
+        lists.find((one) => one.id === intent.payload?.list_id),
+      ]
+      return candidates.find((one) => one?.members === null) ?? candidates.find(Boolean)
+    }
+    case 'todo.delete':
+      return byTask(intent.client_id)
+    case 'step.upsert':
+    case 'pomodoro.upsert':
+      return byTask(intent.payload?.todo_client_id)
+    case 'step.delete':
+      return listOf(
+        tasks.find((one) => (one.steps ?? []).some((step) => step.client_id === intent.client_id))
+      )
+    default:
+      return undefined
+  }
+}
+
+// A write refused because its list or task is gone, about a list somebody else
+// owns, is a member who has been removed. The server's sentence is true of the
+// server and means nothing beside a list still on the screen, so it is said in
+// the member's terms — and the lists and tasks are re-read at once, so the
+// screen agrees with the sentence rather than waiting for the next digest to
+// contradict it. Every other refusal is left to its own words.
+whenRefused(({ detail, intent }) => {
+  if (!intent || !GONE.has(detail)) return null
+  const list = listRefusedFor(intent)
+  if (!list || list.members !== null) return null
+  ensureTodoLists({ force: true })
+  ensureTodos({ force: true })
+  return `${list.name} is no longer shared with you`
+})
+
+/**
+ * Load a page of the archive.
+ *
+ * Never from the snapshot and never projected over the queue: the archive is
+ * read, not written to. A task *entering* it is an ordinary `todo.upsert` with
+ * the archive's `list_id` on it, which is why `rememberTodo` marks this stale
+ * rather than trying to move a row between two caches.
+ *
+ * @param {{before?: string|null, force?: boolean}} options `before` is the
+ *   marker from a previous page; a call with one **appends**, and a call
+ *   without one replaces what is held.
+ * @returns {Promise<Array<import('./generated/types.gen').TodoOut>>} Everything
+ *   loaded so far, newest arrival first.
+ */
+export async function ensureArchive({ before = null, force = false } = {}) {
+  await ready()
+  if (!force && !before && fetched.has('archive')) return get(archive)
+  return once(`archive:${before ?? ''}`, async () => {
+    const page = await quietly(() =>
+      listArchivedTodos({ query: before ? { before } : {} })
+    )
+    // Unreachable: whatever pages the device has read stay on screen.
+    if (!page) return get(archive)
+    archive.update((held) => (before ? [...held, ...page.items] : page.items))
+    archiveNext.set(page.next)
+    // Only a first page is a complete read of the newest end. A later page
+    // extends what is held and says nothing about whether the top is fresh.
+    if (!before) fetched.add('archive')
+    return get(archive)
+  })
+}
+
+/**
+ * Record a task — new or corrected — on the device, and queue it.
+ *
+ * One call for both, as `saveEntry` is: correcting a task is writing it again
+ * under the same `client_id`, which is also what lets a correction survive the
+ * row having been deleted somewhere else.
+ *
+ * @param {TodoDraft} todo Without a `client_id` for a new one.
+ * @returns {Promise<string>} The identity it now has.
+ */
+export async function saveTodo(todo) {
+  const client_id = todo.client_id ?? crypto.randomUUID()
+  const intent = todoIntent({ ...todo, client_id })
+  // Durable before it is visible — see `saveAnswer`.
+  await enqueue(intent)
+  // Filed where this account cannot read it: gone from here, as a delete is.
+  if (intent.away) forgetTodo(client_id)
+  else rememberTodo({ ...todoPayload(todo), client_id, steps: todo.steps ?? [] })
+  return client_id
+}
+
+/**
+ * The `todo.upsert` intent for a task, with the one decision a write carries.
+ *
+ * `away` is set when the write files the task in an archive this account
+ * cannot read — see `archivedAway`. Decided here, against the task as this
+ * device holds it *before* the write, because that is the only moment both the
+ * list it is leaving and the list it names are known; the projection obeys the
+ * mark afterwards rather than asking again. It never reaches the server:
+ * `sendChunk` sends the wire fields by name.
+ *
+ * @param {TodoDraft & {client_id: string}} todo
+ * @returns {{kind: string, client_id: string, payload: object, away?: true}}
+ */
+function todoIntent(todo) {
+  const held = get(todos).find((row) => row.client_id === todo.client_id)
+  const intent = { kind: 'todo.upsert', client_id: todo.client_id, payload: todoPayload(todo) }
+  return archivedAway(held, todo, get(todoLists) ?? []) ? { ...intent, away: true } : intent
+}
+
+/**
+ * Write several tasks as one queue entry.
+ *
+ * Not a loop over `saveTodo`, and not for speed: `enqueue` starts a flush, and
+ * a flush already in flight read the queue before the second intent was on it.
+ * The two gestures that need this are the ones the ordering design produced —
+ * cleanup, which archives every done task in a list, and a rebalance, which
+ * re-ranks a whole column — and both are one user action.
+ *
+ * Order inside the batch is immaterial here, unlike `replaceEntry`: tasks have
+ * no extent, so there is no overlap rule and nothing merges. What the batch
+ * buys is that the writes go together and the queue is read once.
+ *
+ * @param {Array<TodoDraft>} list Tasks as `saveTodo` takes them.
+ * @returns {Promise<Array<string>>} The identities of the ones that reached the
+ *   device. Short of what was asked for means the rest are not saved.
+ */
+export async function saveTodos(list) {
+  const stamped = list.map((todo) => ({
+    ...todo,
+    client_id: todo.client_id ?? crypto.randomUUID(),
+  }))
+  const intents = stamped.map(todoIntent)
+  const stored = await enqueueAll(intents)
+  // Durable before it is visible, as everywhere else: only what actually
+  // landed on the device becomes visible.
+  const saved = stamped.slice(0, stored)
+  saved.forEach((todo, at) => {
+    // A task filed where this account cannot read it leaves this device as a
+    // delete would, tombstone and all, which is what the queued mark says too.
+    if (intents[at].away) forgetTodo(todo.client_id)
+    else rememberTodo({ ...todoPayload(todo), client_id: todo.client_id, steps: todo.steps ?? [] })
+  })
+  return saved.map((todo) => todo.client_id)
+}
+
+/**
+ * Record a step — new or corrected — on the device, and queue it.
+ *
+ * The parent is named by *its* `client_id` and not by a key, because a step
+ * added in the modal of a task that is itself still in the outbox has no key to
+ * point at.
+ *
+ * @param {string} todo_client_id The task this step sits on.
+ * @param {StepDraft} step Without a `client_id` for a new one.
+ * @returns {Promise<string>} The identity it now has.
+ */
+export async function saveStep(todo_client_id, step) {
+  const client_id = step.client_id ?? crypto.randomUUID()
+  await enqueue({
+    kind: 'step.upsert',
+    client_id,
+    payload: { todo_client_id, ...stepPayload(step) },
+  })
+  rememberStep(todo_client_id, { ...stepPayload(step), client_id })
+  return client_id
+}
+
+/**
+ * Remove a task here, and tell the server when there is one.
+ *
+ * @param {string} client_id The task's own identity.
+ */
+export async function removeTodo(client_id) {
+  await enqueue({ kind: 'todo.delete', client_id })
+  forgetTodo(client_id)
+}
+
+/**
+ * Remove a step here, and tell the server when there is one.
+ *
+ * Named by its own identity with no parent beside it, which mirrors the wire: a
+ * step's `client_id` is enough to find it, because its owner is reached by
+ * joining the task.
+ *
+ * @param {string} client_id The step's own identity.
+ */
+export async function removeStep(client_id) {
+  await enqueue({ kind: 'step.delete', client_id })
+  forgetStep(client_id)
+}
+
+/**
+ * Apply a task locally, so every view reflects it without a refetch.
+ *
+ * @param {TodoDraft & {client_id: string}} todo As the device holds it, steps
+ *   included.
+ */
+export function rememberTodo(todo) {
+  todosWroteDuringRead.set(todo.client_id, todo)
+  // A task whose list is the archive has just left the board, and the archive
+  // page this device holds no longer describes the account. Marked stale rather
+  // than moved between the two caches: only the server knows `archived_at`,
+  // which is what the archive is ordered by.
+  if (todo.list_id === archiveListId()) fetched.delete('archive')
+  // Matched on the device's own identity: a task recorded here has no server id
+  // until it syncs, so `id` cannot be what tells two rows apart.
+  todos.update((all) => [...all.filter((row) => row.client_id !== todo.client_id), todo])
+}
+
+/**
+ * Drop a task from the cache.
+ *
+ * **A tombstone, not a forgetting.** This used to `delete` the task's key from
+ * `todosWroteDuringRead`, which says "no write is waiting under this name" —
+ * the opposite of what a delete has to say. A read in the air is answered by a
+ * reply that still holds the task, and by the time it lands the delete has
+ * drained and the queue no longer has it either, so the row came back on screen
+ * while being deleted on the server. A `null` value takes it out of the
+ * baseline instead, and being in the same map is what makes it cleared with it.
+ *
+ * @param {string} client_id The task's own identity.
+ */
+export function forgetTodo(client_id) {
+  todosWroteDuringRead.set(client_id, null)
+  todos.update((all) => all.filter((row) => row.client_id !== client_id))
+}
+
+/**
+ * The id of the account's archive list, or null before the lists are known.
+ *
+ * Read from `kind` and never from the name: both system lists are renameable,
+ * so anything matching on "Archive" is a bug waiting for somebody to rename it.
+ *
+ * @returns {number|null}
+ */
+export function archiveListId() {
+  return get(archiveList)?.id ?? null
+}
+
+/**
+ * Start a pomodoro now, ending whichever one is running, in one gesture.
+ *
+ * **One rule with two callers**, which is the whole reason it is here. The
+ * Focus page starts a pomodoro from a typed line; the task modal starts one for
+ * a task that already exists. Both have to end a running block the same way —
+ * and *ending* one is how a break is cut short, which is the only way out of a
+ * break there is — so two implementations would be two answers to "what happens
+ * to the one that was running". The todo half reaches inward for this and never
+ * across into `lib/pomodoro/`.
+ *
+ * Everything is **one queue entry**, and the order inside it is load-bearing in
+ * the same way `replaceEntry`'s is. `apply_pomodoro` resolves `todo_client_id`
+ * against the tasks the server holds and answers `conflict` for one it has never
+ * seen, so a task created in this gesture has to be sent *before* the pomodoro
+ * naming it. Queued separately it would be worse still: a flush already in
+ * flight read the queue before the second intent was on it.
+ *
+ * Which pomodoro is running is read from the store and never fetched. A write
+ * that waits on a read is the thing this codebase does not do, so a caller that
+ * might be starting one on top of another asks for today's pomodoros in its own
+ * loader — that is why both todo pages load them.
+ *
+ * @param {{task?: string|null, todo?: object|null}} options `task` is the text
+ *   stored on the pomodoro itself, kept even when there is a link because it is
+ *   what a pomodoro with no task in the store falls back to. `todo` is a whole
+ *   task row to write in the same breath — new from the focus page, existing
+ *   from the modal — which is set active as the pomodoro starts.
+ * @returns {Promise<string|null>} The pomodoro's identity, or null when nothing
+ *   reached the device.
+ */
+export async function startPomodoro({ task = null, todo = null } = {}) {
+  const started_at = nowUtc()
+  const mode = lengthsFor(preferenceSection(get(preferences), 'focus'))
+
+  // The activation is the pomodoro's own start and not `Date.now()` read a
+  // second time: the task's clock and the block's clock are the same clock, and
+  // `settleActive` matches an activation against the focus window it sits in.
+  const activated = todo
+    ? {
+        ...todo,
+        client_id: todo.client_id ?? crypto.randomUUID(),
+        active_since: started_at,
+      }
+    : null
+
+  const next = {
+    client_id: crypto.randomUUID(),
+    // Both, deliberately. The link is what makes the history read the task's
+    // *current* title; the text is what a pomodoro whose task this device has
+    // never loaded still says. Exactly one of the two is ever read for a row.
+    task: task ?? activated?.title ?? null,
+    todo_client_id: activated?.client_id ?? null,
+    started_at,
+    utc_offset: -new Date().getTimezoneOffset(),
+    focus_seconds: mode.focus,
+    break_seconds: mode.rest,
+    tainted: false,
+  }
+
+  const running = (get(pomodoros) ?? []).find(
+    (row) => pomodoroState(row, Date.parse(`${started_at}Z`)) === RUNNING
+  )
+
+  /**
+   * One intent, and what makes it visible once it is on disk.
+   *
+   * Paired rather than queued and then applied in a second loop, because
+   * "durable before it is visible" has to hold per intent: `enqueueAll` reports
+   * how many reached the device, and only those may be shown.
+   *
+   * @param {object} intent
+   * @param {() => void} apply
+   * @returns {[object, () => void]}
+   */
+  const step = (intent, apply) => [intent, apply]
+
+  const batch = []
+  if (activated) {
+    batch.push(
+      step(
+        { kind: 'todo.upsert', client_id: activated.client_id, payload: todoPayload(activated) },
+        () =>
+          rememberTodo({
+            ...todoPayload(activated),
+            client_id: activated.client_id,
+            steps: activated.steps ?? [],
+          })
+      )
+    )
+  }
+  if (running) {
+    // Starting during a break ends the one before it. That is the only way a
+    // break is ever cut short — there is no button for it — and the part that
+    // was used still counts as time spent.
+    const stopped = { ...running, ended_at: started_at }
+    const { client_id: stoppedId, ...stoppedPayload } = stopped
+    batch.push(
+      step({ kind: 'pomodoro.upsert', client_id: stoppedId, payload: stoppedPayload }, () =>
+        rememberPomodoro(stopped)
+      )
+    )
+  }
+  const { client_id: nextId, ...nextPayload } = next
+  batch.push(
+    step({ kind: 'pomodoro.upsert', client_id: nextId, payload: nextPayload }, () =>
+      rememberPomodoro(next)
+    )
+  )
+
+  const stored = await enqueueAll(batch.map(([intent]) => intent))
+  // Durable before it is visible, as everywhere else: only what actually landed
+  // on the device becomes visible.
+  for (const [, apply] of batch.slice(0, stored)) apply()
+  return stored === batch.length ? next.client_id : null
+}
+
+/**
+ * Stop the clock on every task whose pomodoro has finished.
+ *
+ * The sweep behind `settleActive`, whose docstring holds the reason: a pomodoro
+ * ends without anybody pressing anything, so a task it activated would still be
+ * counting up when the app is next opened. Run when a focus block ends on screen
+ * and on the load of every page that can see one — the focus page and both todo
+ * pages — because which of those is open when the block ends is not something
+ * to depend on.
+ *
+ * **One batch, and only when there is something in it.** An account with nothing
+ * to settle writes nothing at all; a load that queued an intent per visit would
+ * be a page that never stops syncing.
+ *
+ * @param {number} [nowMs] Epoch milliseconds, for the banking arithmetic.
+ * @returns {Promise<Array<string>>} The tasks that were written.
+ */
+export async function settleActiveTasks(nowMs = Date.now()) {
+  const held = get(pomodoros) ?? []
+  const settled = (get(todos) ?? [])
+    .map((row) => settleActive(row, held, nowMs))
+    .filter(Boolean)
+  if (!settled.length) return []
+  return saveTodos(settled)
+}
+
+/**
+ * Apply a step locally, inside the task that holds it.
+ *
+ * @param {string} todo_client_id The parent task.
+ * @param {StepDraft & {client_id: string}} step As the device holds it.
+ */
+function rememberStep(todo_client_id, step) {
+  todos.update((all) =>
+    all.map((row) => {
+      if (row.client_id !== todo_client_id) return row
+      const merged = {
+        ...row,
+        steps: [
+          ...(row.steps ?? []).filter((one) => one.client_id !== step.client_id),
+          step,
+        ],
+      }
+      // The parent, not the step: what survives a read it outran is a whole
+      // task row, so a step written during the read travels inside one.
+      todosWroteDuringRead.set(merged.client_id, merged)
+      return merged
+    })
+  )
+}
+
+/**
+ * Drop a step from whichever task holds it.
+ *
+ * No tombstone of its own, and it needs none: what survives a read it outran is
+ * a whole task row, so the parent *minus the step* is the record that the step
+ * is gone. That is why this writes to `todosWroteDuringRead` where `forgetTodo`
+ * writes a `null` — a step is not a row in that map, and a parent recorded
+ * without it says everything a tombstone would.
+ *
+ * @param {string} client_id The step's own identity.
+ */
+function forgetStep(client_id) {
+  todos.update((all) =>
+    all.map((row) => {
+      if (!(row.steps ?? []).some((one) => one.client_id === client_id)) return row
+      const merged = { ...row, steps: row.steps.filter((one) => one.client_id !== client_id) }
+      todosWroteDuringRead.set(merged.client_id, merged)
+      return merged
+    })
+  )
 }
 
 /**

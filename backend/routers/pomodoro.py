@@ -83,6 +83,10 @@ def pomodoro_out(pomodoro: Pomodoro, as_of: datetime) -> PomodoroOut:
         tainted=pomodoro.tainted,
         transferred_at=pomodoro.transferred_at,
         client_id=pomodoro.client_id,
+        todo_id=pomodoro.todo_id,
+        # Read off the eagerly loaded task rather than queried per row: the
+        # relationship is `selectin` for exactly this line.
+        todo_client_id=pomodoro.todo.client_id if pomodoro.todo is not None else None,
         state=pomodoro_state(pomodoro, as_of),
         elapsed_seconds=elapsed_seconds(pomodoro),
         focus_elapsed_seconds=focus,

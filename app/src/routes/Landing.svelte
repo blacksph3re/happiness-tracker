@@ -12,14 +12,18 @@ import { elapsed } from '../lib/time/duration.js'
     ensureMe,
     ensurePomodoros,
     ensureProjects,
+    archiveList,
     ensureTimeEntries,
+    ensureTodos,
     me as account,
     pomodoros as pomodoroStore,
     projects as projectStore,
     ready,
     timeEntries,
+    todos as todoStore,
   } from '../lib/store.js'
   import { today } from '../lib/day.js'
+  import { isOverdue } from '../lib/todos/fields.js'
   import {
     bestRun,
     habitStreak,
@@ -30,14 +34,16 @@ import { elapsed } from '../lib/time/duration.js'
   } from '../lib/habits.js'
 
   /**
-   * The one place the three halves meet.
+   * The one place the four halves meet.
    *
    * Not a menu: each card reports the state of its section before it is
    * touched, so the commonest actions of a day — answer today, stop a timer,
-   * start a pomodoro — are one tap from where you land.
+   * start a pomodoro, see what is overdue — are one tap from where you land.
    *
-   * Still the only bridge. None of the three links to another anywhere else,
-   * which is what keeps "Record" and "Patterns" unambiguous inside each.
+   * Still the only bridge. None of the four links to another anywhere else,
+   * which is what keeps "Record" and "Patterns" unambiguous inside each — and
+   * the todo half does not link to Focus even though a task can start a
+   * pomodoro.
    */
 
   // What the disk has been asked for, and what the network has finished
@@ -51,7 +57,7 @@ import { elapsed } from '../lib/time/duration.js'
   const day = today()
 
   /**
-   * The look of every card action, named once because there are six of them.
+   * The look of every card action, named once because there are eight of them.
    *
    * Centred rather than `self-start`: the pair is a two-column grid, so each
    * button already fills its half and a left-aligned label would leave the
@@ -61,10 +67,19 @@ import { elapsed } from '../lib/time/duration.js'
     'meta flex items-center justify-center rounded-md border border-white/20 ' +
     'px-3 py-2.5 text-center transition hover:border-white/40'
 
+  /**
+   * The cards' grid, named once because the habits below line up under it.
+   *
+   * Four across at the widest rather than three: a fourth card on a three-
+   * column row leaves one alone on a line of its own. Two at `sm` is what keeps
+   * a phone one column and a tablet two.
+   */
+  const CARDS = 'grid gap-4 sm:grid-cols-2 xl:grid-cols-4'
+
   // True only while there is genuinely nothing to show. A restored snapshot
   // brings the account back with everything else it holds, so `me` standing in
-  // for "the device knows this account" is what lets all three cards paint
-  // before a single request has answered.
+  // for "the device knows this account" is what lets every card paint before a
+  // single request has answered.
   const loading = $derived(!hydrated || (!$account && !settled))
 
   const questions = $derived(
@@ -131,6 +146,47 @@ import { elapsed } from '../lib/time/duration.js'
   )
   const focusTotals = $derived(dayTotals(todaysPomodoros, $now))
 
+  /**
+   * The tasks that are still somebody's to do.
+   *
+   * `GET /api/todos` already leaves the archive out, so the list id is only
+   * needed for a row *this* device archived a moment ago and has not re-read.
+   * Read from the store's own `archiveList` rather than loaded: the counts
+   * below are not worth a second request on the page a cold start paints
+   * first, and a landing page that waited on one would be the ellipsis this
+   * file exists to remove.
+   */
+  const open = $derived(
+    ($todoStore ?? []).filter(
+      (row) => !row.done_at && row.list_id !== ($archiveList?.id ?? null)
+    )
+  )
+
+  /**
+   * What the todo card reports, in the order it is worth saying.
+   *
+   * Overdue first because it is the number that changes what you do next; then
+   * what is due today, which is a deadline rather than a plan; then what was
+   * planned for today, which is the ordinary case; and last what is planned for
+   * a day that has gone, so "Nothing planned" is only said when it is true. One
+   * line and never three: a card is a reading, not a report.
+   *
+   * *Overdue* is `isOverdue`, the function the card's red due chip reads — a
+   * **due** day before today, on a task that is not done. It used to be a
+   * *planned* day before today, spelled here and on the card separately; a
+   * plan for a day that has gone is past rather than late, and one function is
+   * what stops the two readings of the word drifting apart again.
+   */
+  const todoCount = $derived.by(() => {
+    const overdue = open.filter((row) => isOverdue(row, day)).length
+    if (overdue) return { n: overdue, what: 'overdue' }
+    const due = open.filter((row) => row.due_on === day).length
+    if (due) return { n: due, what: 'due today' }
+    const planned = open.filter((row) => row.planned_on === day).length
+    if (planned) return { n: planned, what: 'planned today' }
+    return { n: open.filter((row) => row.planned_on < day).length, what: 'in the past' }
+  })
+
   // No reactive dependency: this runs once, on mount, and assigns nothing the
   // markup below feeds back into. Everything it loads is read from the store.
   $effect(() => {
@@ -160,6 +216,7 @@ import { elapsed } from '../lib/time/duration.js'
         ensureProjects(),
         ensureTimeEntries({ start: day, end: day }),
         ensurePomodoros({ start: day, end: day }),
+        ensureTodos(),
       ])
     } finally {
       settled = true
@@ -167,11 +224,16 @@ import { elapsed } from '../lib/time/duration.js'
   }
 </script>
 
-<section class="mx-auto w-full max-w-4xl px-5 py-10">
+<!-- `max-w-6xl`, not the `4xl` three cards had: four columns inside 56rem draw
+     each card narrower than any card here has ever been, and a card's width is
+     what decides whether "Check out" and "Patterns" sit side by side. 72rem
+     over four is within a hair of 56rem over three, so nothing but the count
+     changed. -->
+<section class="mx-auto w-full max-w-6xl px-5 py-10">
   <p class="meta">Today</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">What are you recording?</h1>
 
-  <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+  <div class={CARDS}>
     <!-- Each card is a section rather than a link now: it carries two of them,
          and an anchor inside an anchor is not something HTML has an answer for.
          The pair is a two-column grid with stretched items, which is what makes
@@ -296,9 +358,50 @@ import { elapsed } from '../lib/time/duration.js'
         <a href="/focus/patterns" use:link data-go="patterns" class={ACTION}>Patterns</a>
       </div>
     </section>
+
+    <section
+      data-card="todos"
+      class="section-todo flex min-h-52 flex-col justify-between rounded-xl border
+             border-white/10 bg-ink-soft p-6"
+    >
+      <div>
+        <p class="meta">Todos</p>
+        <!-- The count is over every list; Tasks opens on the ones the board
+             remembers. So it is labelled rather than narrowed — the house rule
+             about `67h 35m across tags`: the useful number, with what it counts
+             said beside it. "4 overdue" over a board showing three of them,
+             with nothing saying where the fourth was, is the reading this
+             removes. -->
+        <p class="mt-3 text-2xl font-semibold" data-todo-reading>
+          {#if loading}
+            …
+          {:else if todoCount.n === 0}
+            Nothing planned
+          {:else}
+            {todoCount.n} {todoCount.what}
+            <span class="text-sm font-normal text-haze">across your lists</span>
+          {/if}
+        </p>
+        <p class="mt-1 text-sm text-haze">
+          {todoCount.n === 0
+            ? 'A line typed is a task planned.'
+            : 'One list, or a week on a clock.'}
+        </p>
+      </div>
+      <!-- Calendar rather than Patterns, and it is not a renaming: this half
+           has no patterns page. The week is the second way of looking at the
+           same tasks, which is what the second action on every other card is
+           for. The attribute keeps the name the other three use, so the
+           six-link test became an eight-link one rather than eight and a
+           special case. -->
+      <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
+        <a href="/todos" use:link data-go="record" class={ACTION}>Tasks</a>
+        <a href="/todos/calendar" use:link data-go="patterns" class={ACTION}>Calendar</a>
+      </div>
+    </section>
   </div>
 
-  <!-- Below the three cards rather than inside one. Every chip is a link to the
+  <!-- Below the cards rather than inside one. Every chip is a link to the
        questionnaire, because a habit is an ordinary question and that is where
        it is answered — there is deliberately no tick here, which would be a
        second place to answer and could not offer a three-way choice anyway. -->
@@ -306,8 +409,10 @@ import { elapsed } from '../lib/time/duration.js'
     <section class="mt-10" data-habits>
       <p class="meta mb-3">Habits</p>
       <!-- The same grid as the cards above, so a habit lines up under a section
-           rather than sitting in a row of its own width. -->
-      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+           rather than sitting in a row of its own width. Literally the same
+           string: the cards gained a fourth column for the todo card, and a
+           habit row left on the old one would line up with nothing. -->
+      <div class={CARDS}>
         {#each habits as { habit, run, best, standing } (habit.key)}
           <!-- Straight to the streak view, not to the questionnaire. A habit
                chip is a reading, and the thing a reading invites is a longer

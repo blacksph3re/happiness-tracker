@@ -382,6 +382,27 @@ export async function makeHabit(account, habit) {
 let seeded = 0
 
 /**
+ * An identity no other test can have produced.
+ *
+ * A task's `client_id` is unique across the **whole database** since lists
+ * became shareable — two members must resolve one task to one row, so the
+ * index cannot be scoped per account. A worker's database outlives the
+ * accounts inside it, and `seeded` is a module counter that restarts with the
+ * worker *process*: so one real failure, which makes Playwright replace that
+ * worker, restarts the counter against rows that are still there and every
+ * later seed in that worker is refused as *that task no longer exists*. One
+ * failure became a crop of them, which is the shape of a flake and is not one.
+ *
+ * A uuid is what a real client sends, and it is exactly the 36 characters
+ * `SyncIntent.client_id` allows — so no prefix fits, and none is wanted.
+ *
+ * @returns {string} A fresh identity.
+ */
+function identity() {
+  return crypto.randomUUID()
+}
+
+/**
  * Record a finished session, the way the app does: through the sync queue.
  *
  * There is no other door. Seeding through one the app cannot use would be
@@ -509,4 +530,260 @@ export async function expectSettled(page, path, settled, { api = /\/api\//, limi
   expect(worst[1], `${path} refetched ${worst[0]} ${worst[1]} times`).toBeLessThan(limit)
   // A spinning effect starves the event loop long before it starves the network.
   expect(await page.evaluate(() => 1 + 1), `${path} stopped responding`).toBe(2)
+}
+
+/**
+ * Read the account's lists, inbox and archive included.
+ *
+ * @param {object} account The account fixture.
+ * @returns {Promise<Array<object>>} Every list, in column order.
+ */
+export async function todoLists(account) {
+  const response = await account.api.get('/api/todos/lists')
+  expect(response.ok(), await response.text()).toBeTruthy()
+  return response.json()
+}
+
+/** One of the account's two system lists, found by `kind` and never by name. */
+export async function systemList(account, kind) {
+  const found = (await todoLists(account)).find((one) => one.kind === kind)
+  expect(found, `the account has no ${kind}`).toBeTruthy()
+  return found
+}
+
+/**
+ * Record a task the way the app does: through the sync queue.
+ *
+ * There is no `POST /api/todos` to seed through, deliberately — writes to tasks
+ * go through `/api/sync` and nowhere else, which is what makes the offline path
+ * the only path. So this is the same door the browser uses.
+ *
+ * @param {object} account The account fixture.
+ * @param {object} fields Anything `SyncTodoPayload` takes. `list_id` defaults
+ *   to the inbox and `planned_on` to the pinned today.
+ * @returns {Promise<object>} The task as stored, with its `client_id`.
+ */
+export async function makeTodo(account, fields = {}) {
+  const [stored] = await makeTodos(account, [fields])
+  return stored
+}
+
+/**
+ * Record several tasks in one request.
+ *
+ * Chunked at the server's cap, which the seeding itself can reach: a test about
+ * the cap needs more than 500 tasks to exist before it starts.
+ *
+ * @param {object} account The account fixture.
+ * @param {Array<object>} rows One per task.
+ * @returns {Promise<Array<object>>} The tasks, in the order given.
+ */
+export async function makeTodos(account, rows) {
+  const inbox = rows.every((one) => one.list_id) ? null : await systemList(account, 'inbox')
+  const stamped = rows.map(({ client_id, ...fields }) => {
+    seeded += 1
+    return {
+      client_id: client_id ?? identity(),
+      seq: seeded,
+      // The identity travels beside the payload and never inside it, as it does
+      // on the wire.
+      payload: {
+        list_id: fields.list_id ?? inbox.id,
+        title: fields.title ?? 'Feed the cat',
+        planned_on: fields.planned_on ?? TODAY,
+        ...fields,
+      },
+    }
+  })
+
+  for (let at = 0; at < stamped.length; at += 400) {
+    const chunk = stamped.slice(at, at + 400)
+    const response = await account.api.post('/api/sync', {
+      data: {
+        intents: chunk.map((one) => ({
+          seq: one.seq,
+          kind: 'todo.upsert',
+          client_id: one.client_id,
+          client_updated_at: `2026-06-15T00:00:${String(one.seq % 60).padStart(2, '0')}`,
+          payload: one.payload,
+        })),
+      },
+    })
+    expect(response.status(), 'recording tasks').toBe(200)
+    const { results } = await response.json()
+    expect(
+      results.every((one) => one.outcome === 'applied'),
+      JSON.stringify(results.filter((one) => one.outcome !== 'applied'))
+    ).toBe(true)
+  }
+
+  return stamped.map((one) => ({ client_id: one.client_id, ...one.payload }))
+}
+
+/**
+ * Create an ordinary list for the signed-in account.
+ *
+ * Online-only CRUD, like a project: there is no sync intent for a list, so this
+ * is the same door the Lists page uses.
+ *
+ * @param {object} account The account fixture.
+ * @param {string} name
+ * @param {string} [colour] A `CHIP_COLOURS` token.
+ * @returns {Promise<object>} The list as stored.
+ */
+export async function makeTodoList(account, name, colour = 'iris') {
+  const response = await account.api.post('/api/todos/lists', { data: { name, colour } })
+  expect(response.status(), await response.text()).toBe(201)
+  return response.json()
+}
+
+/**
+ * Wait until the device has nothing left to send.
+ *
+ * `data-pending` and never `data-sync`: the badge's word spends its first
+ * second inside a grace period where it reads "synced" whatever is queued. Only
+ * ever called *after* something on screen has been asserted to have changed —
+ * writes queue before they reach the store, so a badge read any earlier is a
+ * badge reading zero about a queue that does not exist yet.
+ *
+ * @param {import('@playwright/test').Page} page
+ */
+export async function outboxEmpty(page) {
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0', {
+    timeout: 15_000,
+  })
+}
+
+/**
+ * The card drawing a task, by its title.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {string} title
+ */
+export function taskCard(page, title) {
+  return page.locator('article[data-client-id]').filter({ hasText: title })
+}
+
+/**
+ * Press a card, move the pointer somewhere, and let go.
+ *
+ * The first small move is what lifts the card: a press that never travels is a
+ * tap, which is how the tickbox and the title still work. Driven with
+ * `page.mouse`, which produces real pointer events — the reason the drag is
+ * built on those is that the HTML5 drag API does not fire from touch at all and
+ * is close to unautomatable from here.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {import('@playwright/test').Locator} from The card to carry.
+ * @param {{x: number, y: number}} to Where to release it.
+ */
+export async function carryCard(page, from, to) {
+  const box = await from.boundingBox()
+  const grip = { x: box.x + box.width - 12, y: box.y + box.height / 2 }
+  await page.mouse.move(grip.x, grip.y)
+  await page.mouse.down()
+  await page.mouse.move(grip.x, grip.y + 10)
+  await page.mouse.move(to.x, to.y, { steps: 8 })
+  await page.mouse.up()
+}
+
+/**
+ * A point inside a column, below every card it is drawing.
+ *
+ * The column's own box rather than its quick-add, because a read-only column
+ * has no quick-add and a drop onto one is still a real gesture — it is what
+ * *won't do* means in the `list` grouping.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {string} columnId
+ * @returns {Promise<{x: number, y: number}>}
+ */
+export async function intoColumn(page, columnId) {
+  const column = page.locator(`[data-column="${columnId}"]`)
+  // Scrolled into view before it is measured, and before the drag starts: a
+  // stacked board is taller than a window, and `page.mouse.move` to a point
+  // outside the viewport moves the pointer nowhere useful.
+  await column.scrollIntoViewIfNeeded()
+  const box = await column.boundingBox()
+  return { x: box.x + box.width / 2, y: box.y + box.height - 6 }
+}
+
+/**
+ * Put the board on a grouping and wait for its columns to be the ones drawn.
+ *
+ * Waited for rather than assumed: switching grouping re-derives every column,
+ * and a drag aimed at a column id that is still the old grouping's lands
+ * nowhere. A positive claim, so polling for it is the right tool.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {string} grouping A grouping id.
+ * @param {string} settled A column id the grouping is expected to draw. Matched
+ *   against the column *or* its pager tab, since below 48rem only one column of
+ *   a column layout is on screen and the rest are tabs.
+ */
+export async function groupBy(page, grouping, settled) {
+  // A pill and no longer a `<select>`: the grouping switches windows the way
+  // Time Patterns does, and `data-grouping` is the group the pills sit in.
+  await page.locator(`[data-grouping-option="${grouping}"]`).click()
+  // `.first()` because below 48rem the column on screen *and* its own tab both
+  // match, which is two elements and one claim.
+  await expect(
+    page.locator(`[data-column="${settled}"], [data-tab="${settled}"]`).first()
+  ).toBeVisible()
+}
+
+/** Every task the account holds outside the archive, in stored order. */
+export async function storedTodos(account) {
+  const response = await account.api.get('/api/todos')
+  expect(response.ok(), await response.text()).toBeTruthy()
+  return response.json()
+}
+
+/** One page of the account's archive, newest arrival first. */
+export async function storedArchive(account) {
+  const response = await account.api.get('/api/todos/archive')
+  expect(response.ok(), await response.text()).toBeTruthy()
+  return response.json()
+}
+
+/**
+ * Resolve colour tokens to the `rgb(...)` a browser computes for them.
+ *
+ * A custom property's own value is the literal text it was written as —
+ * `#d4638a` — where a computed colour is `rgb(212, 99, 138)`, so a test
+ * comparing a painted colour against a token has the browser convert it.
+ *
+ * Through a **fresh** element every time: appended, read, removed. One probe
+ * reused for several tokens reads wrong under reduced motion, because the
+ * reset in `app.css` gives every element a 0.01ms transition there —
+ * `transition-property` defaults to `all` — and a colour read straight after
+ * it was set is still the one set before it. A fresh element has no previous
+ * value to transition from.
+ *
+ * @param {import('@playwright/test').Page | import('@playwright/test').Locator} target
+ *   Whose computed style a `--token` is read off. A locator reads its own
+ *   element's, so a section rebinding a token is seen; a page reads the root's.
+ * @param {Record<string, string>} tokens What to resolve, by name: each a
+ *   `--custom-property` or a literal colour.
+ * @returns {Promise<Record<string, string>>} Each name's computed colour.
+ */
+export async function resolveColours(target, tokens) {
+  const element = typeof target.goto === 'function' ? target.locator(':root') : target
+  return element.evaluate((node, wanted) => {
+    const style = getComputedStyle(node)
+    return Object.fromEntries(
+      Object.entries(wanted).map(([name, value]) => {
+        const colour = value.startsWith('--') ? style.getPropertyValue(value).trim() : value
+        // An undefined token is an empty string, which a probe would silently
+        // paint in the inherited colour — and that can match by accident.
+        if (!colour) throw new Error(`${value} resolves to nothing here`)
+        const probe = document.createElement('span')
+        probe.style.color = colour
+        document.body.append(probe)
+        const computed = getComputedStyle(probe).color
+        probe.remove()
+        return [name, computed]
+      })
+    )
+  }, tokens)
 }

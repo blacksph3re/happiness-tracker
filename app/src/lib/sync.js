@@ -10,6 +10,7 @@ import {
   writeVerdicts,
 } from './local.js'
 import { getVersion, syncIntents } from './generated/sdk.gen'
+import { pushToast } from './toasts.js'
 
 /**
  * The queue of writes made here, and what became of them.
@@ -347,6 +348,22 @@ export async function settle() {
   return get(pending) === 0
 }
 
+/**
+ * Most intents one `/api/sync` request may carry.
+ *
+ * `SyncRequest.intents` is capped at 500 by the server, and a body over the cap
+ * is answered 422 — which retires nothing, and nothing retries a rejected
+ * drain. The queue would then be wedged for ever and not only for the feature
+ * that filled it: every answer and session behind it is stuck too, behind a
+ * badge saying some writes are waiting.
+ *
+ * The chunking lives here rather than in the gestures that can reach the cap —
+ * archiving a whole list of finished tasks, re-ranking a long column — because
+ * the next feature with a bulk gesture would otherwise have to remember this
+ * one.
+ */
+const CHUNK = 500
+
 async function drain() {
   const mine = tokenHolder()
   if (mine === null) return
@@ -362,10 +379,49 @@ async function drain() {
     return
   }
 
+  // Oldest first, one chunk at a time, each chunk retired and its verdicts
+  // applied before the next is sent. Ordering is the queue's own and it
+  // matters, so a later chunk must never be able to overtake an earlier one.
+  let landed = false
+  for (let at = 0; at < waiting.length; at += CHUNK) {
+    const sent = await sendChunk(waiting.slice(at, at + CHUNK))
+    landed = landed || sent
+    // Stopped on the first chunk the server did not answer, or answered with a
+    // rejection. What is left stays queued: retrying an intent the server will
+    // never accept would loop for ever, which is why the standing answer to a
+    // rejected drain is to stop rather than to try again.
+    if (!sent) break
+  }
+
+  if (!landed) return
+
+  // The server has just moved, and this device is the reason. Worth asking what
+  // it looks like now: the answer also refreshes the baseline the next check
+  // compares against, and without that these same writes would be reported as
+  // "changed" by whichever trigger fires next. So this moves the cost rather
+  // than adding it — see the note on `applyChanges` about re-reading a
+  // collection this device already has.
+  onReachable?.()
+}
+
+/**
+ * Send one chunk of the queue and apply whatever came back.
+ *
+ * Everything a single request decides is settled here: the connection state,
+ * the verdicts, what retires and what moves to the conflict list. The caller
+ * only has to know whether it may send the next chunk.
+ *
+ * @param {Array<{seq: number, kind: string, client_id?: string, payload?: object,
+ *   client_updated_at: string}>} chunk Intents, oldest first, at most `CHUNK`.
+ * @returns {Promise<boolean>} True when the server answered and the chunk has
+ *   been retired. False stops the drain and leaves everything from this chunk
+ *   on the queue.
+ */
+async function sendChunk(chunk) {
   const send = () =>
     syncIntents({
       body: {
-        intents: waiting.map(({ seq, kind, client_id, payload, client_updated_at }) => ({
+        intents: chunk.map(({ seq, kind, client_id, payload, client_updated_at }) => ({
           seq,
           kind,
           client_id,
@@ -391,18 +447,18 @@ async function drain() {
   // queued, and the next trigger tries again.
   if (!response) {
     connection.set('offline')
-    return
+    return false
   }
   if (response.status === 401 || response.status === 403) {
     // Still refused after a fresh access token: the refresh token itself is
     // the one that no longer means anything, and there is no third thing left
     // to try silently.
     connection.set('blocked')
-    return
+    return false
   }
   if (error || !data) {
     connection.set('online')
-    return
+    return false
   }
 
   connection.set('online')
@@ -421,33 +477,78 @@ async function drain() {
     }
   }
   if (decided.length) notices.update((all) => [...all, ...decided])
+  // Paired with the intent each one refused before anything is said, because
+  // the sentence may need to know what the write was about.
+  const refused = unsettled.map((result) => ({
+    ...result,
+    intent: chunk.find((intent) => intent.seq === result.seq),
+  }))
+  if (refused.length) announceRefusals(refused)
 
   // A conflict retires from the queue too, or every later flush would send it
   // again and collect the same refusal for ever. It moves to the list the badge
   // counts instead.
   await retireIntents([...settled, ...unsettled.map((result) => result.seq)])
-  if (unsettled.length) {
-    const named = waiting.filter((intent) =>
-      unsettled.some((result) => result.seq === intent.seq)
-    )
-    conflicts.update((all) => [
-      ...all,
-      ...unsettled.map((result) => ({
-        ...result,
-        intent: named.find((intent) => intent.seq === result.seq),
-      })),
-    ])
-  }
+  if (refused.length) conflicts.update((all) => [...all, ...refused])
+  // Per chunk, not once at the end: the badge's count and the projection both
+  // read this, and a device sending three chunks should watch the queue empty
+  // rather than sit on its opening figure until the last one lands.
   await loadQueue()
   if (decided.length || unsettled.length) remember()
+  return true
+}
 
-  // The server has just moved, and this device is the reason. Worth asking what
-  // it looks like now: the answer also refreshes the baseline the next check
-  // compares against, and without that these same writes would be reported as
-  // "changed" by whichever trigger fires next. So this moves the cost rather
-  // than adding it — see the note on `applyChanges` about re-reading a
-  // collection this device already has.
-  onReachable?.()
+/**
+ * Say out loud that the server refused something, not only in the badge.
+ *
+ * **A refusal used to be silent from where the gesture was made.** A conflict
+ * retires from the queue — it has to, or every later flush would collect the
+ * same refusal for ever — so the projection loses the write and whatever was on
+ * screen because of it simply goes. The only thing left saying so was a small
+ * count beside the cloud, behind a tap. That is how *adding in the Eisenhower
+ * matrix does not work* was reported as nothing happening at all: the intent
+ * was refused for a missing `planned_on`, and the sentence naming the field was
+ * a panel nobody had reason to open.
+ *
+ * One toast per drain rather than per intent, because a refusal is usually a
+ * shape the server will not accept and a gesture can carry six hundred of them
+ * — six hundred toasts is a wall, and the detail is the same sentence repeated.
+ * The panel still lists every one of them.
+ *
+ * **The server's sentence is the server's view**, and one refusal needs saying
+ * in the reader's terms instead: a member removed from a shared list is told
+ * *that list no longer exists* about a list still on their screen. Whatever
+ * `whenRefused` registered may put it in those terms; anything it does not
+ * recognise is said exactly as before.
+ *
+ * @param {Array<{detail?: string|null, intent?: object}>} refused The conflict
+ *   verdicts from one chunk, each beside the intent it refused.
+ */
+function announceRefusals(refused) {
+  const first =
+    explainRefusal?.(refused[0]) ??
+    refused[0]?.detail ??
+    'The server could not accept this change'
+  pushToast(refused.length > 1 ? `${refused.length} changes were refused. ${first}` : first)
+}
+
+/**
+ * How a refusal is put in the account's own terms, when it can be.
+ *
+ * Injected, as `onReachable` is: the words need the account's lists, which live
+ * in `store.js`, and that file already imports this one.
+ */
+let explainRefusal = null
+
+/**
+ * Register what turns a refusal into a sentence about this account's data.
+ *
+ * @param {(refused: {detail?: string|null, intent?: object}) => string|null}
+ *   handler Called with the first refusal of a drain. Returns the sentence to
+ *   show, or `null` to leave the server's own.
+ */
+export function whenRefused(handler) {
+  explainRefusal = handler
 }
 
 /** Forget the conflicts and decisions a person has read. */

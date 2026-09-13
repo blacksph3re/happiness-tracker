@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from config import Settings
 from models import User
 from security import hash_password
-from services import build_from_template
+from services import build_from_template, ensure_system_lists
 from templates import CATALOGUE_TEMPLATES, DEFAULT_TEMPLATE
 
 
@@ -13,7 +13,8 @@ def bootstrap(db: Session, settings: Settings) -> None:
 
     Idempotent: it creates only what is missing and never overwrites an existing
     account's password, so restarting with a changed ``ADMIN_PASSWORD`` leaves
-    the running credentials alone.
+    the running credentials alone. It also provisions the two system todo lists
+    for **every** account, for the same reason.
 
     Parameters
     ----------
@@ -53,5 +54,13 @@ def bootstrap(db: Session, settings: Settings) -> None:
             db, CATALOGUE_TEMPLATES[DEFAULT_TEMPLATE], admin.id
         )
         admin.default_catalogue_id = catalogue.id
+
+    # Every account, not only the one just created: an account made before the
+    # todo half existed gains its inbox and archive at the next startup, so the
+    # migration's inserts are a convenience rather than the only path. The
+    # partial unique index on `(user_id, kind)` is what makes running this at
+    # every boot free rather than merely harmless.
+    for user_id in db.execute(select(User.id)).scalars():
+        ensure_system_lists(db, user_id)
 
     db.commit()

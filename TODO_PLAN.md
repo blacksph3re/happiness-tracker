@@ -612,14 +612,14 @@ Every drop in the app, with `T` for today:
 
 | Grouping | Column | Legal set | Patch |
 | --- | --- | --- | --- |
-| date | overdue | `planned < T` | `planned = T − 1` |
+| date | past | `planned < T` | `planned = T − 1` |
 | date | today | `{T}` | `planned = T` |
 | date | tomorrow | `{T + 1}` | `planned = T + 1` |
 | date | later | `planned > T + 1` | `planned = T + 2` |
-| board | done | done ∧ `planned = T` | `done_at = now`, `planned = T` |
-| board | active | ¬done ∧ active ∧ `planned = T` | untick, `active_since = now`, `planned = T` |
+| board | done | done, any planned day | `done_at = now`, bank the clock; `planned` untouched |
+| board | active | ¬done ∧ active, any planned day | untick, `active_since = now`; a past `planned` moves to `T` |
 | board | planned | ¬done ∧ ¬active ∧ `planned = T` | untick, bank and clear `active_since`, `planned = T` |
-| board | backlog | ¬done ∧ `planned ≠ T` | untick; `planned = T + 1` when it was `T` |
+| board | backlog | ¬done ∧ ¬active ∧ `planned ≠ T` | untick, bank; `planned = T + 1` when it was `T` |
 | matrix | important | `priority ∈ important` | the *least* important priority still inside the split |
 | matrix | ¬important | `priority ∉ important` | the *most* important priority outside it |
 | matrix | urgent | `due ≤ T + window` | `due = T + window` |
@@ -932,6 +932,393 @@ visible consequence of a decision that otherwise looks internal. `[assumed: yes 
 the focus view shows the task's current title]`
 
 -- yes
+
+---
+
+## Fourth draft — decisions made while building
+
+*Added 2026-09-11 by the build run. The owner delegated UX judgement for this
+run; everything here is a decision, not a question, and each names its reason
+so it can be reversed on purpose rather than by accident.*
+
+### Mobile: a column is a page, not a squeeze
+
+The brief leaves the phone flow open. The rule adopted, one for every
+column-heavy picture:
+
+**Below 48rem, a grouping laid out in columns becomes a pager.** A tab strip
+across the top names every column with its count; exactly one column is on
+screen; a swipe (through the shared `swipe.js`) or a tap on a tab moves to the
+next. The column itself is the same markup as on a wide screen, so there is one
+card, one quick-add and one drop handler, not two. Quadrants are four tabs.
+Stacked layouts (`date`, `size`) are unchanged, since a stack already fits a
+phone.
+
+Moving a card between columns on a phone: lift it (a short press, the same
+threshold as on a desktop pointer), carry it to the **left or right edge** of
+the screen, and after a short dwell the pager turns to the neighbouring column
+with the card still in hand; drop it where it should go. The tab strip is also a
+drop target, so a card can be dropped on a tab to land at the end of that
+column. That is TickTick's model — swipe between columns, drop on a named
+target — and it keeps positional placement on the device where a two-column
+picture cannot fit. The modal remains the fallback that can change every field
+without a drag.
+
+**The calendar week is a strip and a day.** The seven-day strip — a chip per
+day with the count of tasks planned on it — is the header at every width. Wide,
+the body below it is seven hour-columns; narrow, it is the one day that is
+selected in the strip, and swiping the body moves the selection. Day view is
+the same component with a one-day body at every width. So the week header is
+identical on both, the body differs, and nothing on a phone is a column too
+narrow to read.
+
+### UX adopted beyond the brief
+
+| | Why |
+| --- | --- |
+| **Quick-add keeps focus after Enter** and clears itself | Typing five tasks in a row is the ordinary case; a box that blurs after one makes it five taps |
+| **Enter with the parser's preset visible** | The quick-add shows, beneath the box, what the coloured tokens will set — *tomorrow · 9:00 · !high* — so what Enter does is never a surprise |
+| **Done tasks keep their place**, struck through and dimmed | The order is the person's; a tick is reversible and must not shuffle the list under the thumb |
+| **Overdue is red on the card**, in the date chip | The one number that changes what you do next, the plan says; it should be the one thing that stands out |
+| **Delete in the modal**, behind a confirmation | `todo.delete` exists for a reason; a mistyped task should not have to be archived to disappear. Answers are never deleted; a task is not an answer |
+| **The toolbar is one row**: list chips, grouping, layout, cleanup with its count | Every control that changes what the board means is in one place, above it, which is the smoothing-slider lesson applied before it bites |
+| **Inbox is the default list**, and the selected list is remembered per account | The place a parsed task without `#list` lands should be the place you look first |
+| **Tab and column headers carry counts** | A count is what tells you a column off screen has something in it |
+| **`Escape` clears the quick-add**, `Escape` closes the modal without saving fields not yet blurred | One key means "never mind" everywhere |
+
+### The card's chips are also filters of attention, not controls
+
+A card shows only what is set. Nothing on it but the tickbox and the title is
+interactive — the plan's rule — so every chip is a `<span>`, never a button, and
+the e2e mobile test measures that the two hit targets do not shrink below 44px at
+320px width.
+
+### Phase 2 as built — four things that were not in the plan
+
+*Added by the phase-2 run. Each was found by a test rather than reasoned about,
+and the first three are not about todos at all — they belong in `CLAUDE.md` when
+this document is deleted.*
+
+- **A browser coalesces pointer moves onto animation frames, so a drop has to
+  re-aim at the release point.** The last `pointermove` of a quick gesture can
+  still be undelivered when `pointerup` arrives, and the drop is then placed
+  where the card was a frame ago. Measured: *a task dropped third from the top*
+  landed fourth every run, and passed with a 200ms pause before letting go —
+  which is the shape of a test that would have hidden it. `onUp` calls `aim`
+  before reading the index.
+- **Two `{#each}` items under one key silently kill the whole block.** The
+  insertion marker was pushed twice — the carried card does not advance the
+  index, so two rows in a row matched it — and Svelte's duplicate-key error left
+  that one column never updating again while every other column carried on.
+  It read as "the drag state is not reactive", which is the wrong diagnosis
+  entirely.
+- **`data-pending` reads `0` before a write is queued.** Waiting on it is only
+  sound *after* something on screen has been asserted to have changed: writes
+  queue before they reach the store, so the card appearing is the proof the
+  outbox is not empty. Two tests here passed against the bugs they were written
+  for until a UI assertion was put in front of the badge — one of them being the
+  501-intent chunking test, which passed against **no requests at all**.
+- **The insertion marker is an outline, not a border.** A 2px border takes 2px,
+  which moves the very cards the drop index is measured against, and the index
+  then flips between two values under a still pointer. An outline is painted
+  outside the box and costs no layout; with the flex gap cancelled the marker
+  takes exactly none, which `the marker says where the card will land, and costs
+  no layout` measures.
+
+Two smaller decisions, both reversible on purpose:
+
+| | |
+| --- | --- |
+| The archive is drawn from **two** sources | `ensureArchive`'s page plus any row in `todos` already carrying the archive's `list_id`, deduplicated on `client_id`. A cleanup made with no connection can then be looked at, and only the server knows `archived_at` |
+| A rebalance produces keys of **one width with a gap between every pair** | `spread(n)` picks the narrowest width that leaves room for another key of the same width between any two, because a column re-ranked with no gaps is one insert away from growing a character again |
+
+### Phase 3 as built — what a later phase needs to know
+
+*Added by the phase-3 run (modal, steps, parser and highlighter, icon picker,
+the two shared-zone moves). Each was found by a test rather than reasoned about,
+and the first three are not about todos at all — they belong in `CLAUDE.md` when
+this document is deleted.*
+
+- **A `$derived` read after its dependency is cleared is the parse of nothing.**
+  The quick-add's Enter handler cleared the box and *then* read `parsed.patch`;
+  `$derived` is lazy, so every recognised field was silently dropped and the task
+  was created with the column's preset alone. Read the derived into a local
+  before mutating what it reads. Caught by `#errands names a list that exists`,
+  which is the one assertion that could see the difference — the preset line and
+  the colouring were both already correct.
+- **`change` does not fire on a typed field until the focus leaves it.** A
+  Playwright `fill` sends `input`; the `change` this app was saving on arrived
+  only when the *next* field was touched, so an estimate typed as the last thing
+  before closing was never saved. The rule adopted: **anything typed goes
+  through the debounce** (title, notes, the estimate, a step's title) and
+  anything *picked* saves on `change` (date, time, selects), because a picker
+  commits a whole value at once. The debounce is also what makes the flush on
+  close cover it.
+- **The `/api/changes` digest cannot see two changes in one second.** It
+  fingerprints a collection as a count and `max(updated_at)`, and SQLite's own
+  `CURRENT_TIMESTAMP` is whole seconds — so an edit made in the same second as
+  the row's last change moves neither number. `a change made on another device
+  shows in the open modal` therefore sends the edit *with a new step*, because a
+  row that did not exist moves a count. Worth knowing before writing another
+  cross-device test, and worth weighing if anything ever needs sub-second
+  freshness.
+- **`hasText` cannot see an input's value.** A step's title is an `<input>`, so
+  filtering step rows on their text matches nothing however right the row is.
+  The step controls carry their titles in their accessible names — `Tick Buy
+  food`, `Move Wash the bowl up` — which is what the tests locate them by.
+- **`columnDate` is keyed on the grouping, in `fields.js`, and phase 4 should
+  probably move it.** A card does not draw a date its column heading already
+  says, which needs to know whether a column *is* one day; only the `date`
+  grouping's `today` and `tomorrow` are. That is arguably a property of a column
+  and would sit better as a `date` on what `columns()` returns — the route
+  decorates each column with it today, along with the column's own `preset`,
+  which is the shape the board and the quick-add read.
+
+Two smaller ones, both about the modal:
+
+| | |
+| --- | --- |
+| **44px of hit target for 32px of drawing** | The tickbox is a `size-11` button with `-m-1.5` around a `size-8` box, so the hit area is 44px and the *layout* is unchanged — the extra reaches into the card's own padding and the gap before the title. Measured at 320px in `mobile.spec.js`, because the drawing says nothing about the hit area |
+| **Closing commits, and two things make it true** | Escape, the backdrop and the button all flush the debounce; leaving a field also commits it on `blur`, which fires as the dialog closes under a focused input. Either alone passes the test and deleting both fails it. What may *not* be the thing that saves a keystroke is a pending timer: with both deleted the test still passed, because an orphaned `setTimeout` was writing from a destroyed component's closure. They are cleared on teardown now |
+
+### Phase 4 as built — what a later phase needs to know
+
+*Added by the phase-4 run (the remaining four groupings, the three layouts and
+the phone pager, the insertion gap, the keyboard path, the Lists page, the
+settings UI, one parser refinement and one modal tweak). Each was found by a
+test rather than reasoned about, and the first four are not about todos at all
+— they belong in `CLAUDE.md` when this document is deleted.*
+
+- **An effect that carries a preference section through is an effect that reads
+  what it writes.** `persistPreferences` replaces the named section, so the
+  board has to carry its `settings` through when it saves `list`, `grouping` and
+  `layout`. Read from `$preferences` *tracked*, that is the forbidden shape
+  exactly: the write lands after an await, so Svelte's depth counter has reset
+  by the time it arrives and the effect loops for ever **with no error at all**.
+  It cost every board test at once — thirty-eight failures, cards on screen and
+  a tickbox that did nothing, which reads as "the store is broken" and is really
+  a tab that has stopped painting. `untrack(() => …)` around the read is the
+  fix, and the shape to look for is a `$effect` that merges anything *back into*
+  the thing it is saving.
+- **A transformed ancestor becomes the `offsetParent` in Blink.** The insertion
+  gap displaces cards with a `transform`, and the drop index is measured from
+  layout precisely so that the picture of the index cannot move the index. But
+  `card.offsetTop` read in one go is *also* relative to the transformed wrapper,
+  so it came back as `0` the moment a card was displaced: the index froze under
+  a moving pointer and a card aimed at the second slot went to the third.
+  `columnGeometry` sums the `offsetParent` chain up to the list instead — each
+  step is still pure layout, so the sum is too — and `[data-cards]` carries
+  `position: relative` to be where the walk stops. A test measuring the same
+  thing has the same trap: read the row the transform is *on*, whose own
+  transform does not move its own `offsetTop`.
+- **A remembered id needs a fallback the moment the thing is deletable.** The
+  board remembers which list it was on, lists are deletable, and a second device
+  can delete one — so it arrived pointed at a list nothing matched, drawing four
+  empty columns and a chip row that did not include it. Caught by deleting a
+  list on the Lists page and walking back to the board. The same shape as
+  `groupingFor` falling back for a grouping that no longer exists, one level of
+  data along.
+- **`data-pending` reads `0` before a write is queued** — `CLAUDE.md` already
+  says so, and phase 4 walked into it twice anyway, in a shape worth naming: a
+  test that presses Enter and then waits on the badge is waiting on a queue that
+  does not exist yet. It failed once per full suite run and passed alone. The
+  fix is a UI assertion in front of it — the card appearing *is* the proof the
+  intent is on disk — except for the one quick-add case where the task **leaves
+  the screen** as it is created: `#errands` moves it out of the list being
+  looked at, so there is no card to assert on and the right tool is polling the
+  server for the thing the test came to see.
+- **A live region only speaks when its text changes.** Two cards moved into the
+  same position produce the same sentence, so a reader hears the first and not
+  the second. The announcement carries an alternating zero-width space; it draws
+  nothing, reads as nothing, and makes the string different. `toHaveText`
+  normalises that character away, so the test compares `textContent`.
+
+What phase 5 and 6 should know about the shapes that are now in place:
+
+| | |
+| --- | --- |
+| **`Column.svelte` is the unit, `Board.svelte` is the arrangement** | One column, four arrangements — stacked, a row, a 2×2 grid, and the pager. The calendar is the seventh view and genuinely different, but anything else column-shaped should be a grouping plus a layout rather than a component |
+| **A column carries its own `date`** | `columnDate(groupingId, …)` in `fields.js` is **gone**, as phase 3 predicted. `columns()` returns `date` on every column and the card reads it; the route no longer decorates anything but `preset` |
+| **`place(task, column, index)` is the only way a card moves** | A pointer drop, an arrow key and a drop on a pager tab all go through it, so "the keyboard does the same thing as a drag" is a fact about the code rather than two implementations that have to keep agreeing. Anything new that moves a card should go through it too |
+| **A read-only column refuses a reorder, never an arrival** | Dropping *onto* the archive is what *won't do* means, so `place` refuses only when the task is already in that column. `column.readonly` is now per column rather than per board, which is what let the archive be an ordinary column of the `list` grouping |
+| **A pager tab is a drop target that means *the end*** | `data-drop-end` on an element makes `aim` resolve it to a column with no place inside it; the caller clamps. That is the only honest answer a *name* can give, and it is the mechanism any later "drop it over there" target should use |
+| **`drag.onEdge` is settable, not an argument** | The thing that knows there is a neighbouring page is the board's layout; the thing that owns the drag is the route above it. A plain closure variable, so the effect that assigns it is not an effect that re-runs |
+| **`drag.justDropped` is how a swipe tells itself from a drop** | `pointerup` arrives before `touchend`, so carrying a card to the right-hand edge satisfies every condition a swipe has. Without it every drop near an edge also turned the page |
+| **The `todos` preference section holds `list`, `grouping`, `layout` and `settings`** (`list` became `lists` in the fifth draft below) | Two pages write it — the board writes the first three, Settings writes the last — and each carries the other's half through. There is a test for exactly that, because `persistPreferences` replaces the section it is given |
+| **`bucketHint` lives in `settings.js`** | It moved out of `groupings.js` when the settings page wanted the same sentence beside the fields that set it. Two spellings of *1h–4h → 2h* is how two numbers on one screen come to disagree, and this one is on two screens |
+| **`cleanSplit` and `cleanBuckets` are exported so an editor can *refuse*** | Every reader of these settings falls back to the defaults for a value it cannot use, which is right for a reader and wrong for a writer: a set saved in that state reads back as the default, and the control has silently done the opposite of what it was told. One definition of *usable*, read two ways |
+| **`IconPicker` takes `collapsed`** | The task modal folds the grid away; the catalogue's question form keeps it open, because that page is about one question and nothing is competing with it. A prop at the call site rather than a new behaviour everywhere |
+
+Three smaller decisions, all reversible on purpose:
+
+| | |
+| --- | --- |
+| A bucket's **upper** edge is the editable one | It moves the next bucket's floor with it, so a boundary is one number drawn twice and `from` is read-only. Two independently edited numbers that have to be equal is a rule nobody can satisfy one keystroke at a time |
+| The pager's visible column is **not** remembered | Which page you were looking at is a fact about one glance, not a preference. The grouping and the layout *are* remembered, because those are choices |
+| Cleanup is **per column** under the `list` grouping only | One button above the board could only be about one list, and that grouping draws them all. Everywhere else it stays where it was, on the selected list |
+
+---
+
+### Phase 5 as built — what a later phase needs to know
+
+*Added by the phase-5 run (the calendar's arithmetic and its two views, then a
+browser run over both). Each of the first three is not about todos at all and
+belongs in `CLAUDE.md` when this document is deleted.*
+
+- **An unlayered rule beats every layered one, so `.meta text-alarm` was dead
+  CSS.** `.meta` in `app.css` set `color` outside any layer; Tailwind's
+  utilities are all in `@layer utilities`, and layer order beats specificity
+  outright — so the class was emitted, matched, and lost. The overdue date chip
+  on a task card never turned red, `an overdue task says since when, in red`
+  passed anyway because it asserted `toHaveClass(/text-alarm/)`, and **forty-five
+  `text-*` utilities across the app sat beside a `.meta` with every one of them
+  losing**. Only the `color` declaration moved into `@layer base`; the font, the
+  case, the tracking and the size stay unlayered, so `text-sm` beside a `.meta`
+  still loses and the type treatment is not half-undoable by a utility. Twenty-
+  four of the forty-five named `haze` and changed nothing; the other twenty-one
+  are nine dead `hover:text-paper`, ten `text-paper` and two `text-ember`, all
+  now doing what they were written to do. The test that holds it reads the
+  chip's *computed* colour against the computed value of `--color-alarm`, and
+  asserts a future date chip is haze in the same read — a test naming `#d4574e`
+  would be restating the stylesheet.
+- **A preference section is replaced, so every page that writes one must carry
+  the whole of it through.** Phase 4 already knew this and carried `settings`
+  **by name**; the calendar then put `calendar_mode` and `calendar_due` in the
+  same section, and a walk from a day-mode calendar to the board and back
+  arrived on Week. Both pages now spread the section they read untracked —
+  `{ ...stored, ...view }` — because a list of keys to keep is a list somebody
+  has to extend and nobody did. The calendar also *read* it at write time rather
+  than snapshotting it at restore, which is the other half: a snapshot cannot
+  see a key the board wrote afterwards, and these two pages outlive each other.
+- **`toHaveText` cannot see a clipped line.** A block draws a title and a start
+  time and nothing else, and at `DEFAULT_MINUTES` — half an hour, which is most
+  blocks — the 24px box cut the time through the middle. The text was there, so
+  the assertion that the block reads `Groceries 17:00` passed against it; it was
+  found by *screenshot*. The fix is a `compact` flag out of `placeBlocks` — the
+  two lines go side by side below `STACKED_HEIGHT` — and not a taller floor,
+  because drawing a half-hour task as though it took longer is the app inventing
+  data to make its own layout work. The test measures the time span's box
+  against the block's.
+
+What the calendar is, for whatever touches it next:
+
+| | |
+| --- | --- |
+| **The strip *is* the week body's header row** | Wide and on Week it sits inside the grid, one chip per column offset by the hour gutter, each carrying weekday, day number, count and the `+`; the grid's own `MON, JUN 15 +` row is gone, because that was the same day named twice one row below itself. In day mode and on a phone the strip goes back to a standalone row and the single day keeps its own header with the only `+` there is. `striped` is the one flag that switches it, and it is `!single` named for what it decides |
+| **The count is a badge, not a third number** | `MON 15 5` reads as a day number nobody has. The wide header is what made it obvious — stacked, the count was already on its own line |
+| **The body is its own scroll box** | `max(24rem, 70vh)` with the header sticky at `top: 0` and the anytime row sticky at `top: HEAD`, so the gutter and the columns scroll together and a plan with no time stays on screen. `HEAD` is a **constant** rather than a measurement precisely because the anytime row's sticky offset has to be a number before layout, and it is also what makes the `+` a 44px target at 320 rather than the drawing deciding |
+| **It opens where the day is** | The now line a third of the way down when one of the days on screen is today, `OPENING_HOUR` flush under the sticky rows when none is. The effect depends on `scroller` and on **that boolean alone**: `minute` is read untracked, or the view would be dragged back under a reader once a minute. Stepping off today re-opens it, which is the only reason the second branch is reachable at all — and a test for it would otherwise be untestable through the page |
+| **`data-body-day`, not `data-day`** | The strip chip is `[data-day]` and the body column is `[data-body-day]`. They were both `data-day` in 5a, which is one attribute meaning two things and a locator that matches twice |
+| **A block is `z-10`, the anytime row `z-20`, the header `z-30`** | All three are in one positioned column so that one coordinate space holds the blocks, the due marks and the connectors. Once two of them are sticky the order has to be stated, and the sticky ones need an opaque `bg-ink` or the hours show through them |
+| **Every geometric test measures against the picture's own rows** | A block's `top` is asserted against the `[data-hour]` row's `top`, a clipped block's foot against the column's foot, a shared width against the column's width. A test naming 476px would be restating `ANYTIME + 9 * HOUR` back at the implementation |
+| **A drop is a day and a snapped minute** | Added by the drag run. `slotFromPointer` rounds to 15 minutes and clamps to `[0, 23:45]` — 24:00 would be `00:00` on the day after the one dropped on. The three targets are `[data-body-day]` (day and time), `[data-anytime-row]` (day, no time) and `[data-drop-day]` on a strip chip (day, time kept), and `[data-shadow]` with `data-shadow-time` is the promise in words, which is what a test can read: a transform sampled mid-drag is a number nobody claimed |
+| **Scroll it into the middle before tapping it** | `intoView` in `todos-calendar.spec.js`. The browser's own scroll-into-view knows nothing about a sticky overlay, so an hour row parked under the 96px of sticky rows counts as visible and the click lands on the header — which Playwright then retries there until it times out. Anything that taps inside a scrolling body with sticky rows needs this |
+
+---
+
+## Fifth draft — owner feedback
+
+*Added by the feedback run. Three items came back from use; each is a decision
+already taken, and what is still true afterwards is in `CLAUDE.md` rather than
+here.*
+
+### The Eisenhower quadrants could not create a task at all
+
+Reported as *adding in the matrix does not work — "planned_on field required"*,
+and the report understated it. `matrix` presets a priority and a due date,
+`size` a duration, `list` a list, and none of the three presets a **day** — so
+the intent was refused per-intent as a conflict, which retires from the queue,
+which loses the projection, which takes the card off the screen. Except that the
+card never drew: `dayLabel(undefined)` throws inside `TaskCard`'s render, so what
+the owner actually saw was Enter clearing the box and *nothing else happening*,
+with a small ember `1` beside the cloud.
+
+Four changes, and the second and third are the ones worth keeping:
+
+- **`newTaskFields` in `fields.js` is the one place a new task is composed**, and
+  the one place `planned_on` falls back to today. Not in each grouping's
+  `preset`, because a preset says what its column *means* and a quadrant means
+  nothing about when a task is planned — leaving it there is a rule every
+  grouping added later has to remember.
+- **The quick-add hands the composed object to the write.** The preset line
+  under the box and the task that is created are now one object rather than two
+  spellings of it, which is the same lesson as the transfer button: two numbers
+  on one screen must come from one place. The line reads `today · high · due
+  thu, jun 18` in a quadrant now, which is the default made visible.
+- **A refusal is a toast, one per drain.** The badge panel is where a person
+  goes looking *afterwards*; it is not what tells them the thing they just did
+  did not happen. Per drain rather than per intent because a cleanup can carry
+  six hundred of them.
+- A card also draws no planned date when it holds none, rather than throwing.
+  It cannot hold none any more — but a render error takes the whole board blank,
+  and that is not the failure mode a missing field deserves.
+
+### The list chips select several lists
+
+`lists: [ids]` in the `todos` preference section, replacing `list`, with the old
+key migrated on read and written back as `undefined` so it cannot linger and
+start answering. `storedLists` reads and migrates; `selectedLists` validates
+against the account's lists on **every read**, which is where the archive's
+exclusivity and the at-least-one rule live. The split is not tidiness: the board
+restores its view before the lists have necessarily arrived, and one function
+doing both would drop a stored selection to a race.
+
+| | |
+| --- | --- |
+| The **archive stays exclusive** | Selecting it shows the archive alone; selecting anything else lets it go. It is the read-only column and the paged one, so a mixed board could be neither added to nor dragged within |
+| **At least one list** | Tapping the last selected chip does nothing. The fallback to the inbox would hide that — which is why the test takes the board down to *Errands* first: what the guard alone decides is *which* list is left |
+| ***All*** | Every ordinary list, never the archive, and drawn only where there is more than one to gather |
+| The **quick-add** takes the first selected list in list order | It has to name one, and the first in that order is the inbox whenever the inbox is among them. Said under the box as `#Inbox` whenever there is more than one selected, on the same condition a card grows its list's colour dot |
+| **Cleanup** follows the selection | `tasks` is already the selection, so both the count and what it takes did — a button whose number disagreed with the cards under it is the defect this codebase has a rule about |
+| The **`list` grouping** still ignores the chips | Every list is a column there; the chips are not drawn at all |
+
+### The carried card follows the pointer
+
+The gap is unchanged — it is still the picture of the drop index, and still a
+transform so that layout cannot move under the measurement. What moved is the
+card: it is drawn `position: fixed` at the grip it was picked up by, its slot
+holds its exact height, and on release it FLIPs from the release point into
+wherever the store has just put it.
+
+The parts that were not obvious:
+
+- **The carried card is the *real* card, not a copy.** A copy would be a second
+  `data-client-id` for one task and a second place for a tap to stop working on
+  a phone. Keeping the original means keeping the element the press is attached
+  to — `setPointerCapture` and the non-passive `touchmove` guard both live on
+  it, and unmounting it mid-gesture takes them down.
+- **Which is why the pager stows a column instead of unmounting it.** The
+  carried card's column stays in the same keyed `{#each}` as the column on
+  screen, off to the side with `pointer-events: none`: Svelte moves an element
+  whose key it still sees and destroys one it does not. That is the whole of how
+  the card keeps following while the page turns under it.
+- **`transition-none` while carried.** A card's ordinary `transition` includes
+  `transform`; without this the card eases toward the pointer 150ms behind the
+  finger, which reads as lag rather than as a transition.
+- **`prefers-reduced-motion` needs no branch.** `app.css` already cuts every
+  transition duration to 0.01ms, so a settle that borrows the card's own
+  transition is a snap under it — one code path, and the suite (which runs
+  reduced) is therefore *not* the thing that tests the animation. One test runs
+  at `no-preference` and asserts a `transitionstart` on the card's own
+  `transform`: an event, because a geometry sample mid-flight is the
+  interpolated-value trap in its plainest form.
+- **The landing is stamped, not cleared.** A card that changed column is a new
+  element, so the settle starts from its mount; a reader that cleared the
+  landing would be an effect writing what it reads, and one mounting a minute
+  later for another reason must not slide in from wherever a pointer was.
+
+---
+
+### Build order as executed
+
+| | |
+| --- | --- |
+| 1 | Backend: schema, migration, provisioning, sync kinds, digest, read endpoints, lists CRUD, `pomodoros.todo_id` |
+| 2 | `flush` chunking; store, projection, snapshot, `applyChanges`; `rank.js`, `groupings.js` (date); routes, nav, accent; Board with `date` grouping stacked, quick-add, positional drag |
+| 3 | Modal, steps, parser and highlighter, icon picker; the two shared-zone moves |
+| 4 | Remaining groupings, columns and quadrant layouts, the mobile pager, insertion gap, keyboard path, Lists page, settings |
+| 5 | Calendar, day and week, strip-and-day on a phone |
+| 6 | Pomodoro handover, landing card, polish |
 
 ---
 

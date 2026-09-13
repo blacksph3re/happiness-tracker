@@ -12,9 +12,13 @@ from models import (
     Project,
     Tag,
     TimeEntry,
+    Todo,
+    TodoList,
+    TodoStep,
     User,
 )
 from schemas import Changes, Fingerprint
+from services import visible_list_ids
 
 router = APIRouter(tags=["Sync"])
 
@@ -64,9 +68,10 @@ def _fingerprint(db: Session, entity: type, where: ColumnElement[bool]) -> Finge
 def get_changes(user: CurrentUser, db: DbSession) -> Changes:
     """Report a fingerprint per collection for the authenticated user.
 
-    Cheap by design — eight aggregates over indexed foreign keys — because the
+    Cheap by design — eleven aggregates over indexed foreign keys — because the
     common answer is that nothing has moved, and that case has to cost less than
-    the re-read it saves.
+    the re-read it saves. Three of them narrow through the lists the caller can
+    see, which is a subquery over two indexed columns rather than a second read.
 
     Parameters
     ----------
@@ -95,6 +100,30 @@ def get_changes(user: CurrentUser, db: DbSession) -> Changes:
         ),
         pomodoros=_fingerprint(db, Pomodoro, Pomodoro.user_id == user.id),
         catalogues=_fingerprint(db, Catalogue, Catalogue.user_id == user.id),
+        # The three todo collections are scoped by **visibility** and not by
+        # `user_id`, because a list can be shared: a task edited by one member
+        # has to move every other member's fingerprint, or their second device
+        # keeps a stale board until somebody reloads the page — the same
+        # failure the habit target had. `visible_list_ids` is the one spelling
+        # of that set, shared with the reads, so the digest cannot come to
+        # disagree with what the board shows.
+        todos=_fingerprint(db, Todo, Todo.list_id.in_(visible_list_ids(user.id))),
+        # Steps hang off a task rather than a user, so they are reached through
+        # one — as a deduction band's is through its tag.
+        todo_steps=_fingerprint(
+            db,
+            TodoStep,
+            TodoStep.todo_id.in_(
+                select(Todo.id).where(Todo.list_id.in_(visible_list_ids(user.id)))
+            ),
+        ),
+        # Membership is counted here rather than fingerprinted on its own: a
+        # list shared with you *appearing* is a change you must see, and it
+        # shows up as a count. The owner's side of the same act moves no count
+        # at all, which is what `_touch_list` in `routers/todos.py` is for.
+        todo_lists=_fingerprint(
+            db, TodoList, TodoList.id.in_(visible_list_ids(user.id))
+        ),
         # Always exactly one row, so the count says nothing at all and the
         # timestamp carries the whole signal — which is what lets a default
         # catalogue changed on another device reach this one.

@@ -125,6 +125,14 @@ Two, both standing, both cheaper to honour from the first commit:
   applies at a time. A floor of 10s between checks, measured from when a check
   *finished*, is what stops a slow connection stacking them.
 
+  **The digest cannot see two changes in one second.** `max(updated_at)` is
+  SQLite's own `CURRENT_TIMESTAMP`, which is whole seconds, so an edit landing in
+  the same second as that row's previous one moves neither half of the pair. It
+  has never mattered in use — two edits a second apart are two gestures — but it
+  decides how a cross-device test must be written: make the second change one
+  that moves a **count**, such as adding a row, rather than a second edit to the
+  same one.
+
   A component must therefore **read its data from the store**, not snapshot it
   out of a loader. `x = await ensureX()` into local state cannot see a later
   update, which is the whole point — `await ensureX()` to start the load, and
@@ -140,21 +148,23 @@ label it — `67h 35m across tags` — rather than quietly changing it.
 
 ## Where code goes
 
-The app is three trackers sharing a login, and the code says so. Four zones, and
+The app is four trackers sharing a login, and the code says so. Five zones, and
 **imports only ever point inward at the shared one — never across**:
 
-| | Wellbeing | Time | Focus | Shared |
-| --- | --- | --- | --- | --- |
-| Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `pomodoro.py` | `auth.py`, `users.py`, `admin.py`, `changes.py`, `sync.py` |
-| Services | `services/wellbeing.py` | `services/timetrack.py` | `services/pomodoro.py` | `services/clock.py`; `services/__init__.py` re-exports all |
-| Routes | `routes/wellbeing/` | `routes/time/` | `routes/pomodoro/` | `routes/` — Landing, Login, Settings, Users |
-| Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `day.js`, `period.js`, `habits.js`, `Swimlanes.svelte`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js` |
+| | Wellbeing | Time | Focus | Todos | Shared |
+| --- | --- | --- | --- | --- | --- |
+| Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `pomodoro.py` | `todos.py` | `auth.py`, `users.py`, `admin.py`, `changes.py`, `sync.py` |
+| Services | `services/wellbeing.py` | `services/timetrack.py` | `services/pomodoro.py` | `services/todos.py` | `services/clock.py`; `services/__init__.py` re-exports all |
+| Routes | `routes/wellbeing/` | `routes/time/` | `routes/pomodoro/` | `routes/todos/` | `routes/` — Landing, Login, Settings, Users |
+| Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/todos/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `day.js`, `period.js`, `habits.js`, `Swimlanes.svelte`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js`, `palette.js`, `icons.js`, `IconPicker.svelte`, `focus-mode.js`, `todo-settings.js` |
 
-Focus is the newest and shows the rule working: it needs `saveEntry` and
-`projects`, both already exported from the shared `store.js`, so importing
-*those* points inward rather than across and the time zone is never touched.
-`local_day` moved to `services/clock.py` the moment a pomodoro also had to
-decide which local day a UTC instant lands in.
+Focus shows the rule working: it needs `saveEntry` and `projects`, both already
+exported from the shared `store.js`, so importing *those* points inward rather
+than across and the time zone is never touched. **Todos is reached from Focus
+the same way** — `saveTodo` and `startPomodoro`, both on `store.js` — and a
+typed task therefore becomes a real task without either zone importing the
+other. `local_day` moved to `services/clock.py` the moment a pomodoro also had
+to decide which local day a UTC instant lands in.
 
 The frontend has made the same move three times, and each was overdue rather
 than new. **`lib/clock.js`** holds the generic half of what was `lib/time/duration.js`
@@ -205,13 +215,44 @@ lanes there are.
 
 If both halves need something, move it to the shared zone — the move is the
 signal it was shared all along. `movingAverage` and the "only days where" facets
-both arrived that way. `models.py` stays one file because SQLAlchemy wants one
-registry, but keeps the groups visibly sectioned.
+both arrived that way; so did `lib/focus-mode.js`, which was
+`lib/pomodoro/mode.js` while the shared Settings page was already importing it
+across — and so, for the same reason and on the same page, did
+**`lib/todo-settings.js`**. The board's three settings are *edited* on Settings,
+which is shared, and *read* by the board, which is not; left in `lib/todos/` the
+shared page imported into a zone, which points outward and is worse than
+pointing across. The priority scale went with them, because `importantSplit` is
+defined over it and the settings page draws it, and `estimateLabel` went to
+`lib/clock.js` beside the `formatDuration` its own docstring contrasts it with,
+because the size-bucket hints render one. Nothing about a *task* left the zone,
+which is the test of whether a move like this is the rule working or the rule
+being used to hollow a zone out. `models.py` stays one file because SQLAlchemy wants one registry, but
+keeps the groups visibly sectioned.
 
-The three halves also do not link to each other in the UI. The landing page is
+**`store.js` is the one thing that reaches outward, and each reach is named.**
+It imports `time/duration.js`, `time/summary.js`, `pomodoro/derive.js` and
+`todos/active.js` — because the store is where a *write* is composed, and
+composing one means knowing the rule it obeys. One copy of "which pomodoro is
+running" or "where a focus ended" there beats a second spelling of either in
+the shared zone, and it is what lets the todo half start a pomodoro while
+importing nothing from `lib/pomodoro/`. A zone still may not reach sideways for
+any of it.
+
+**One foreign key crosses a section, and it is `pomodoros.todo_id`.** The
+comment above the Focus section of `models.py` used to say that nothing
+referenced a pomodoro and a pomodoro referenced nothing; it now says which one
+reference exists and why — a running pomodoro sets its task active, and the
+focus history reads the task's *current* title through the link. `ondelete="SET
+NULL"`, because deleting a task must not delete the hours spent on it.
+
+The four halves also do not link to each other in the UI. The landing page is
 the only bridge, which is what keeps "Record" and "Patterns" unambiguous inside
 each — and it is the rule that gets tested first by anything new. Focus writes a
-session into Time and still may not link there.
+session into Time and still may not link there. **Starting a pomodoro from a
+task is the one exception, at the owner's request**: the gesture takes you into
+the focus view, because the only thing anybody does after starting a timer is
+look at it. It is a navigation made by an action, never a link — nothing in the
+todo half is an `<a>` into another half, and nothing else crosses.
 
 ## Styling
 
@@ -276,6 +317,31 @@ already looked tidy at the suite's phone width; measured at 320 the two step
 buttons were 51px against the others' 35, which is a label on two lines. A
 layout test at one width would have passed against the thing it was written for.
 
+**A 44px target in a dense row comes from a negative margin, never from
+padding.** `-m-1.5 size-11` around a 32px box occupies its old 32px of layout
+and reaches six pixels past it; padding the same buttons to 44px took the step
+row's title field from 60px to **18px** at 320, which is a field nobody can
+read. The reach is larger than the gaps, so neighbours' hit areas overlap by a
+few pixels — accepted deliberately, because five 44px targets beside a readable
+title do not fit on a 320px row and the forgiveness lands in the space between
+drawn boxes rather than on another control's glyph. The *card* then needs
+padding equal to the reach, or `scrollWidth` exceeds `clientWidth` by exactly
+it.
+
+**A symmetric negative margin centres nothing; the row's alignment does.** The
+card's tickbox reaches its 44px through `-m-1.5` on every side, which moves the
+drawn box nowhere — so in an `items-start` row a 32px box sat at the top of any
+card taller than itself, 4px high beside a chip row and 54px high beside a
+seven-line title at 320. `items-center` on the row is the fix, and it keeps the
+hit area exactly as it was.
+
+**Do not add a bare `data-*` attribute whose name is already in use with a
+value.** `data-kind="archive"` is how three specs find the list chips, so a
+valueless `data-kind` on a modal header gave one name two meanings; renaming the
+newcomer to `data-task-kind` beat loosening the locators that were already
+right. The same lesson as a new `aria-label` making an old `getByLabel`
+ambiguous, one attribute along.
+
 Hover has one answer per kind of control, listed at the top of `app.css`: outlined
 → `border-white/40`, destructive → `border-ember`, filled → `bg-dusk-lift`, card →
 `border-white/30` with `bg-dusk/10`, tinted band → `brightness-125`. Do not reach for
@@ -334,11 +400,21 @@ make equal buttons — "Check out" and "Patterns" are different lengths, and
 `self-start` left them different widths. `e2e/mobile.spec.js` measures width,
 height and top edge at phone width.
 
-Six links across three sections is exactly the shape a copy-paste gets subtly
+Eight links across four sections is exactly the shape a copy-paste gets subtly
 wrong, so `every landing card routes to its own half, both ways in` asserts all
-six `href`s. A Patterns button pointing at the wrong half would look right.
+eight `href`s and counts them, because a missing card is a missing *pair*. A
+Patterns button pointing at the wrong half would look right. The todo card's
+second action is the **calendar**, there being no patterns page in that half,
+and it keeps the `data-go="patterns"` name rather than earning a special case.
 
-The landing page is still the only bridge. It knows all three halves because it
+Four cards want a four-column row at the widest — a fourth on a three-column
+grid leaves one alone on a line — and the container widened with them: four
+cards inside the width three had would each be narrower than any card here has
+ever been, and a card's width is what decides whether its two actions sit side
+by side. The habits strip below reads the same grid string, or it would line up
+with nothing.
+
+The landing page is still the only bridge. It knows all four halves because it
 is the chooser; nothing else may.
 
 ## An icon is chosen, never typed
@@ -447,9 +523,9 @@ before your second intent was on it** — `settle()`'s docstring has said so for
 while, but the consequence is easy to miss from the calling side.
 
 Anything that means *one* user action uses `enqueueAll` — `saveEntries`,
-`savePomodoros`, `replaceEntry`. Starting a pomodoro during a break is exactly
-this shape: it ends one and begins another, and queued separately the second
-silently did not reach the server. It passed alone and failed under a full
+`saveTodos`, `startPomodoro`, `replaceEntry`. Starting a pomodoro during a break
+is exactly this shape: it ends one and begins another, and queued separately the
+second silently did not reach the server. It passed alone and failed under a full
 parallel run, which is the only reason it was found.
 
 **Order inside the batch is a rule of its own, and it is the half a test can
@@ -459,6 +535,15 @@ the other way the two overlap on one project until the first lands, and
 `apply_entry` merges an overlap into its union rather than refusing it — so the
 split is silently undone by the server. Reversing the batch fails *deleting the
 middle day of a session splits it in two* by name.
+
+`startPomodoro` is the other one, and there the order is enforced by the server
+rather than merely mattering: one batch holds the **task**, then the block being
+ended, then the new block — and `apply_pomodoro` answers `conflict` for a
+`todo_client_id` it has never seen, so a pomodoro sent before the task it names
+is refused outright and the timer never reaches the server at all. Reversing the
+batch fails *a task typed into the timer becomes a task in the inbox* by name. A
+batch may hold more than one kind of intent; that is what lets one gesture
+create a task and start a timer for it.
 
 Be honest about which half a probe reaches. Breaking `replaceEntry` into two
 separate `enqueue` calls **does not** fail anything here, and that is not a gap
@@ -488,6 +573,34 @@ that gets a response the server rejects — a 500, or a 422 on an intent it will
 never accept — leaves everything queued and nothing retries it either. Retrying
 would loop for ever on the intent that cannot be accepted, which is why the
 current answer is to stop.
+
+## The write side of the offline path has no generated type
+
+`SyncIntent.payload` is `{[key: string]: unknown}` in the OpenAPI document, so
+**`SyncTodoPayload`, `SyncEntryPayload`, `SyncPomodoroPayload` and `AnswerIn`
+reach the client as nothing at all.** They are validated inside the handler and
+appear in `components.schemas` nowhere, which has two consequences worth knowing
+before they waste an afternoon:
+
+- **Adding a field to a sync payload changes nothing in `types.gen.ts`.** Only
+  the matching `*Out` field shows up. Anybody told to "check the new field
+  appears in the generated types" will find half of it and read the other half's
+  absence as a mistake. `TodoOut.colour` arrived; the payload half could not.
+- **It is the `{object}` trap one layer out.** Precision on the server
+  propagates outward for free everywhere else here; this one surface is where it
+  stops, and closing it would mean typing `payload` as a discriminated union on
+  `kind` — an API-surface change rather than a tidy-up.
+
+**An upsert is the whole row**, and that settles one hazard while creating
+another. There is no absent-versus-null distinction to get wrong, so clearing
+any optional field is simply sending null — the `model_fields_set` care a
+question's icon needs is not needed here, and `SyncTodoPayload`'s own docstring
+says why: the newest version of a task simply *is* the task. The price is that
+**an upsert which omits a field clears it**, so an older client that has never
+heard of a field wipes it on every write, and a partial payload built by a
+careless write path does the same. That cost is paid identically by `icon`,
+`priority`, `colour` and everything added after them, which is the real rule: a
+field whose loss would matter cannot live on this payload.
 
 ## A write that reads server state drains the queue first
 
@@ -679,6 +792,17 @@ questions: every row in this database has an owner, and **another account's
 anything answers 404** — not 403, because whether it exists is not that caller's
 business either.
 
+**A shared list is the one exception, and it is scoped by membership, not by
+owner.** `own_list` still means *owned by this caller* and guards what only an
+owner may do; `member_list` and `visible_list_ids` mean *owned by or shared
+with*, and every read and every task intent resolves through them — so the
+resolver rule below holds, one level along. Task identity is unique across the
+whole database for the same reason: two members must resolve one task to one
+row. A caller who can see neither the list nor the task still gets 404, and one
+who names a task id they cannot see is refused *per intent* — before
+`identity_is_taken` existed, that case inserted a colliding row and the
+integrity error failed the whole `/api/sync` request instead of one write.
+
 The one flag left is `is_admin`, for managing accounts. There is no permission
 for editing questions, because a catalogue belongs to whoever answers it and
 shaping your own tracker is not administration.
@@ -859,6 +983,616 @@ not save. The editor is online-only and shows a *Question saved* toast when the
 whole run has landed, which is what a test must wait for — waiting for the click
 fails deterministically, and looked like flakiness for exactly one run.
 
+## Todos
+
+A fourth tracker: lists of tasks, five groupings over three layouts, and a
+calendar. The design was written in `TODO_PLAN.md`, which is a working document
+and goes when the work has landed — so what is load-bearing and still true is
+here:
+
+- **A plan is a local date, not an instant.** `planned_on` is a `DATE` and
+  `planned_at` a `TIME` with no offset beside them, exactly as an answer carries
+  a client-local `day` — "feed the cat tomorrow at nine" means nine o'clock
+  wherever you are. Only the columns recording something that *happened* —
+  `done_at`, `archived_at`, `active_since` — are UTC instants.
+- **Order is a fractional rank string, and `between()` is total.** It always
+  returns a key strictly between its two neighbours, including between two equal
+  ones, and it **never ends in `a`** — which is what lets the inbox hold the
+  literal rank `a` and stay leftmost for ever without a special case. A drop
+  whose key has grown silly re-ranks its own column in one batch, so the
+  operation that would degrade is the one that repairs it.
+- **A grouping's `drop` returns `{}` for the column the task is already in**,
+  and the rank is decided separately by the index. Two halves that do not know
+  about each other is what makes *place it where it was dropped* one behaviour
+  in every grouping rather than a special case per view — and it is why
+  `place(task, column, index)` is the only way a card moves, whether a pointer,
+  an arrow key or a drop on a pager tab moved it.
+- **Below 48rem a column layout becomes a pager**, not a squeeze: a tab strip
+  with counts, one column on screen, swipe or tap to move. The column is the
+  same markup at both widths, so there is one card and one drop handler rather
+  than two. A tab is itself a drop target meaning *the end of that column*,
+  which is the only honest answer a name can give.
+- **Steps are their own table and their own intent.** Ticking one is one write
+  rather than a rewrite of its parent, so a `todo.upsert` payload carries no
+  steps at all and the projection keeps whatever steps a task already had. A
+  step names its parent by `client_id`, because a step added in the modal of a
+  task still sitting in the outbox has no key to point at.
+- **A read can lose a *delete*, not only a write.** `todosWroteDuringRead`
+  carries what outran `GET /api/todos`, and `forgetTodo` used to `delete` the
+  task's key from it — which says *no write is waiting under this name*, the
+  opposite of *the row is gone*. The reply still holds the task and the delete
+  has drained by the time it lands, so the card came back on screen while being
+  deleted on the server, and stayed until the next read. A delete records a
+  **tombstone** instead — a `null` under its own key, in the same map, because
+  being in that map is what makes it cleared with it; a set beside it would be a
+  second thing to clear, which is the mistake itself one level up. A step needs
+  none: what survives a read is a whole task row, so the parent *minus the step*
+  already says it. `mergeDuringRead` folds both back in, for the answers too.
+
+- **`archived_at` is the server's to write.** Being archived *is* being in the
+  archive list, and a client-supplied timestamp could disagree with the list it
+  is in. The archive is therefore ordered by something only the server knows,
+  which is why a locally archived task is drawn from `todos` alongside the page
+  `ensureArchive` read, deduplicated on `client_id`.
+- **The archive is never in the snapshot.** It is paged, it is read when it is
+  looked at, and it is the one collection the queue is not laid over — a task
+  *entering* it is an ordinary upsert with the archive's `list_id`. The foot of
+  the column grows *Show older* only while `archiveNext` holds a cursor, so the
+  end is said by the **absence of a marker** rather than by a page coming back
+  short — and a paged read is a *distinct* read from the first, which is why
+  `ensureArchive` appends for a `before` and marks the collection `fetched`
+  only without one. The control belongs to the **column** (`paged` on the
+  column contract) and not to the archive's own view: two screens draw the
+  archive, and one of them draws it beside every other list.
+- **The flush chunks at 500**, which is the server's cap on `intents`. Cleanup
+  can archive six hundred tasks as one gesture, so the chunking lives in `flush`
+  rather than in the gestures that can reach it, and a later chunk may never
+  overtake an earlier one.
+- **A task activated by a pomodoro banks to the block's derived end, never to
+  now.** `settleActive` in `lib/todos/active.js`: a focus block ends without
+  anybody pressing anything, so a phone closed at nine and opened at six must
+  bank twenty-five minutes and not nine hours. Abandoning banks to `ended_at`,
+  which is where the focus really stopped. A task activated *by hand* has no
+  linked pomodoro and is untouched — matched on the focus window containing
+  `active_since`, so a hand restart in the afternoon is not banked at half past
+  nine. The sweep runs on the phase leaving `focus` and on the load of the focus
+  page and both todo pages, and writes **only when something needs settling**,
+  or every visit would queue an intent per task.
+- **A typed task needs the account's lists, and Start does not wait for them.**
+  A task is created in the *inbox*, whose id a device knows from the snapshot or
+  from one request — and inside that one-request window on a first-ever visit,
+  Start puts the text on the pomodoro alone. That is the documented fallback
+  rather than a bug: awaiting the read would be a Start button that does nothing
+  while the network thinks about it, which is the defect this file opens with.
+  It cost a test one full parallel run before the test was made to open past the
+  window rather than the app made to wait.
+- **A choice made while the preferences read is outstanding is a real choice.**
+  Both todo pages restore their view after an await, and both used to assign
+  over whatever the reader had touched in between — a due-date toggle checked on
+  arrival was quietly unchecked again. Guarded per control, not per page, or
+  choosing a grouping would also cost the remembered list. It surfaced as a
+  flake in one calendar test, and delaying `GET /api/me/preferences` makes it
+  fail every run.
+- **An effect that carries a preference section through is an effect that reads
+  what it writes.** `persistPreferences` replaces the section it is given, so
+  every page writing one has to spread the whole of it — `{ ...stored, ...view }`
+  — and read it under `untrack`. Read tracked, it is the forbidden shape
+  exactly: the write lands after an await, so Svelte's depth counter has reset
+  and the effect loops for ever **with no error at all**. Measured as
+  thirty-eight board tests failing at once, with cards on screen and a tickbox
+  that did nothing.
+- **A transformed ancestor becomes the `offsetParent` in Blink.** The insertion
+  gap displaces cards with a `transform`, and `card.offsetTop` read in one go is
+  relative to *that* wrapper — so it came back `0` the moment a card moved and a
+  card aimed at the second slot went to the third. `columnGeometry` sums the
+  `offsetParent` chain up to the list instead, and `[data-cards]` carries
+  `position: relative` to be where the walk stops. A test measuring the same
+  thing has the same trap.
+- **`.meta` set `color` outside any layer, so `.meta text-alarm` was dead CSS.**
+  Layer order beats specificity outright, and Tailwind's utilities are all in
+  `@layer utilities` — the overdue chip never turned red and forty-five `text-*`
+  utilities across the app were losing silently. Only the `color` declaration
+  moved into `@layer base`; the font, the case, the tracking and the size stay
+  unlayered, so `text-sm` beside a `.meta` still loses. **Every `normal-case`
+  class sitting beside a `.meta` does nothing** for the same
+  reason — seventy-five of them, counted — and that is left alone on purpose:
+  undoing the case is a typographic decision, and which of them meant it is the
+  owner's call rather than a sweep's.
+- **A browser coalesces pointer moves onto animation frames**, so the last move
+  of a quick gesture can still be undelivered when the release arrives and the
+  drop is placed where the card was a frame ago. `onUp` aims again at the
+  release point. Measured: a drag to the third slot landed fourth every time,
+  and passed with a 200ms pause before letting go — which is the shape of a test
+  that would have hidden it.
+- **Two `{#each}` items under one key silently stop that block updating.** The
+  insertion marker was spliced in twice, because the carried card does not
+  advance the count, and Svelte's duplicate-key error left one column never
+  re-rendering while every other column carried on. It reads as "the drag state
+  is not reactive", which is the wrong diagnosis entirely. The gap is built as
+  one pass over the cards now, so there is nothing to splice.
+- **Typed saves on a debounce; picked saves on `change`.** `change` does not
+  fire on a text field until the focus leaves it, so an estimate typed as the
+  last thing before closing was never saved. Title, notes, estimate and a step's
+  title all go through the debounce — which is also what the flush on close
+  covers — while a date, a time or a select commits a whole value at once and
+  stays on `change`.
+- **A `$derived` read after its dependency is cleared is the parse of nothing.**
+  The quick-add's Enter cleared the box and *then* read `parsed.patch`;
+  `$derived` is lazy, so every recognised field was silently dropped and the task
+  was created with the column's preset alone. Read the derived into a local
+  before mutating what it reads.
+- **A remembered id needs a fallback the moment the thing is deletable.** The
+  board remembers its lists, lists are deletable, and a *second device* can
+  delete one — so it arrived pointed at nothing, drawing empty columns beside a
+  chip row that did not include it. The same shape as `groupingFor` falling back
+  for a grouping that no longer exists, one level of data along. `selectedLists`
+  is that rule for a set, applied on **every read** rather than at the restore:
+  the ids are stored unvalidated, because the view is restored before the lists
+  have necessarily arrived and checking them against a list that is not there
+  yet would drop a real choice.
+- **The board shows a *set* of lists, under `lists`.** A tap toggles one in and
+  out, a small *All* gathers every ordinary one, and at least one stays selected
+  — tapping the last is the one press that does nothing. Four consequences worth
+  keeping straight:
+  - **The archive stays exclusive, in both directions.** It is the read-only
+    collection and the paged one, so a board holding it beside an ordinary list
+    could neither be added to nor dragged within. A stored set holding both is
+    read as the ordinary ones.
+  - **A quick-add still needs one list**, so it takes the **first selected in
+    list order** — the inbox whenever the inbox is among them — and says so
+    under the box (`#Inbox`) whenever there is more than one to be wrong about.
+    A card grows its list's colour dot on the same condition.
+  - **The `list` grouping ignores all of it**, as it always has: there every
+    list is a column.
+  - **`storedLists` migrates the old single `list`**, and the save writes that
+    key back as `undefined` so `JSON.stringify` drops it. Two spellings of which
+    lists are showing is how a stale one comes to answer — the same reason the
+    transfer button was deleted rather than reconciled.
+- **The carried card travels with the pointer, and its slot holds its place.**
+  A dimmed card sitting in its own slot while a gap moved elsewhere is a drag
+  with nothing in your hand. The card is the **real** card — one element, one
+  set of handlers — drawn `position: fixed` at the grip it was picked up by, and
+  five details are load-bearing:
+  - **`pointer-events: none`**, or `elementFromPoint` finds the card rather than
+    the column beneath it and every drop lands where it started.
+  - **`transition-none` while carried.** A card's ordinary `transition` includes
+    `transform`, so without it the card eases toward the pointer 150ms behind
+    the finger.
+  - **The slot keeps the card's exact height.** The card is out of flow, so
+    without it the column closes up under the pointer and every card below moves
+    for a reason `columnGeometry` knows nothing about — which is the drop index
+    breaking, not just the picture.
+  - **The grip is taken at the lift, not at the press.** A mouse travels six
+    pixels first, and a grip measured from the press puts the card six pixels
+    off the finger for the rest of the gesture.
+  - **The pager keeps the carried card's column mounted**, stowed off-screen
+    with `pointer-events: none` and inside the *same* keyed `{#each}` as the
+    column on screen. Svelte moves an element whose key it still sees and
+    destroys one it does not, so the card is never re-created: a second copy
+    would be two `data-client-id`s for one task, and unmounting it mid-gesture
+    would take the pointer capture and the `touchmove` guard down with the node
+    they are attached to.
+- **The settle is a FLIP, and `prefers-reduced-motion` needs no branch.** On
+  release the drag records where the pointer let go; the card is measured in its
+  new place *after* the store has moved it, put back at the release point with
+  no transition, and let go of — the transition it already carries does the
+  animation, and `app.css` cutting every duration to 0.01ms under reduced motion
+  is what makes it a snap with no second code path to be wrong. The landing is
+  stamped with the clock and never cleared: a card that changed column is a new
+  element, and one mounting a minute later for any other reason must not slide
+  in from wherever a pointer happened to be.
+- **A new task's `planned_on` defaults to today, in one place.** `newTaskFields`
+  composes the column's preset, the parsed text and that default, and the
+  quick-add hands the *same object* to the write that it drew the preset line
+  from. Three of the five groupings preset no day at all — a quadrant means
+  nothing about when a task is planned — so the intent was refused with
+  *planned_on field required*, and it is not each `preset`'s job to remember a
+  column it has no opinion about.
+- **A refused intent says so out loud.** A conflict retires from the queue, so
+  the projection loses the write and whatever it drew simply goes; the count
+  beside the cloud was the only thing left saying so, behind a tap. That is how
+  *adding in the Eisenhower matrix does not work* was reported as **nothing
+  happening at all** — the card never even drew, because `dayLabel(undefined)`
+  threw inside the render and took the column with it. One toast per drain
+  rather than per intent: a gesture can carry six hundred refusals, and the
+  panel still lists every one.
+- **A live region only speaks when its text *changes*.** Two cards moved into
+  the same position produce the same sentence, so a reader hears the first and
+  not the second. The keyboard's announcement carries an alternating zero-width
+  space: it draws nothing, reads as nothing, and makes the string different.
+- **A calendar drop is `(day, time)`, and the time is snapped to a quarter
+  hour.** Three targets say the whole of what one can mean — an hour column
+  gives a day and a snapped minute, the anytime row gives a day and *no* time,
+  and a strip chip gives the day alone and keeps the time the task had, which is
+  the honest answer a name can give about a clock. All three go through one
+  `onmove` on the route, which owns the comparison that makes a drop back onto
+  its own slot write nothing. `calendar-drag.svelte.js` is the board's gesture
+  over a time grid rather than a list and keeps its conventions — threshold,
+  short press, `setPointerCapture`, captured `pointerup`, Escape — and adds the
+  two a scrolling box needs: the drop is re-read from the column's rect on every
+  move, and holding a block near the top or bottom **scrolls** it, clamped to
+  the *visible* part of the box because a `70vh` box of 1,200px of hours has its
+  own bottom edge below the fold. **A block is the button that opens its own
+  modal**, so a captured pointer reports the release as a click on it however
+  far it was carried: the same `justDropped` afterglow that stops the swipe from
+  reading a drop as a page turn is what stops the drop from opening the task it
+  just moved.
+
+- **Overdue means due before today, on a task not done — and nothing else.**
+  `isOverdue(task, today)` in `fields.js` is the one rule, and the card's alarm
+  chip and the landing card's count both call it. A task planned in the past sits
+  in **Past** and is never drawn red; a task due today is due, not overdue. The
+  word used to mean *planned* before today in three places with three copies of
+  the rule — the column, the card chip and the landing count — which is how a
+  renamed column could have gone on sitting over a red chip that contradicted it.
+- **The landing card says *Nothing planned* only when that is true.** Its one
+  reading falls through overdue, due today, planned today and, last, *in the
+  past*. Once Overdue became Past, a board holding three open tasks planned for
+  days that had gone read *Nothing planned* — the card claiming an empty board,
+  which is the app inventing data by leaving a number out.
+- **Kanban's Done holds every done task, on any day, and the four columns split
+  every task exactly once**: done, then active, then planned for today, then the
+  rest. It used to hold only tasks done *and* planned for today, a rule from the
+  original brief, so a task finished yesterday was in no column at all while
+  *Clean up 7 done* sat above a Done column showing three. Done is now exactly
+  the set cleanup archives, so the column and the button show one number. A drop
+  into Done ticks and banks the clock but never moves `planned_on`, because any
+  day is already a legal value there; and Done names no single day, so its cards
+  keep their date chip, which is what tells last week's from today's.
+- **A batch move writes the target column's own `drop`.** Past declares only
+  `sweep: 'later'`; the route takes the date from the same patch it writes, so
+  the confirmation ("planned for Tue, Jun 17") and the write cannot disagree —
+  and that date is today plus two, which skips tomorrow, which is exactly why the
+  question names it. Open tasks only, since a done task's plan is history; they
+  land at the end of the target in their old order, as one `saveTodos`.
+
+### The last slot of a column is reachable
+
+- **A column that scrolls its own cards holds the carried card's height open at
+  its end while a card is over it.** The insertion gap is a transform, and
+  transforms count toward scrollable overflow, so without that space the
+  column's maximum moved with the gap — 824 with the gap above the last card, 766
+  with it below — and the end slot could be neither shown nor dropped into: a
+  card held at the foot landed one short of last. The space is in the flow, so a
+  pushed-down last card ends exactly where it does, and the maximum no longer
+  depends on where the gap is.
+- **The spacer is not a slot.** It carries no `data-client-id`, so
+  `columnGeometry` never counts it. It exists only in the column the pointer is
+  over, and only when that column scrolls its own cards — in the stacked layout
+  and on the pager it would be a page jump with nothing to fix — and it needs
+  `shrink-0`, or a height-capped column squeezes it to nothing. The visible cost
+  is one card of empty space: entering a short column moves its quick-add down by
+  that much, and the drop fills exactly that space, so nothing jumps on release.
+- **A gap that reads the end is not proof of where the card lands.** The release
+  aims again, and under reduced motion the gap once showed the end slot while the
+  drop went one above it. The claim is the stored order, read through the API.
+
+### A tick is drawn only where it was made
+
+- **The animation belongs to the gesture, never to the card mounting.** A tick
+  draws in 180ms and then strikes the title through from the left, but only when
+  the card renders its done state within 2.5s of a stamp the gesture wrote —
+  clicking or pressing Space on a card, or ticking a step. A board opened on forty
+  finished tasks draws them finished; a card that remounts in another column
+  inside the window still draws; a tick arriving from another device does not,
+  because nobody made the gesture here. Unticking clears both marks at once. The
+  same shape as the settle's landing stamp, for the same reason.
+- **Reduced motion cuts durations, not delays.** `app.css` shortens every
+  duration under `prefers-reduced-motion` and leaves `animation-delay` alone, so a
+  strike sequenced with a delay sits invisible for the delay and then snaps. The
+  order of a sequence lives inside one keyframe instead, which is why the strike
+  holds for its first 35% rather than starting late.
+- **The strike is a growing background line with `box-decoration-break: clone`**,
+  not `line-through` and not one scaled line: a single line crosses the middle of
+  a wrapped title rather than each of its lines. A step's title is an `<input>`,
+  which cannot carry it, so a step keeps an instant `line-through`.
+- **A `$derived` over a non-reactive clock read is safe when a reactive value
+  gates it.** `done && justTicked(id)` recomputes only when `done` changes, so the
+  clock is read once per tick. The same read as a getter in markup would re-render
+  for ever.
+- **One place starts a pomodoro and goes to it**: `lib/todos/start-focus.js`
+  calls `startPomodoro` and then `navigate('/focus')`, after the write reaches the
+  device and never after the server, and imports nothing from `lib/pomodoro/`. A
+  failed local save stays put rather than open a timer with nothing running.
+
+### A shared list on the client
+
+- **A write that files a task where this account cannot read it is decided when
+  the write is built, and stored on the intent.** A member's cleanup sends tasks
+  into the *owner's* archive, which the member cannot see, so the task has to
+  leave this device rather than sit in the member's own archive until a read
+  contradicts it. The store decides that once, as `away: true` on the queued
+  intent — a field the server never receives — and the projection treats a
+  marked intent as a delete without asking again. It *cannot* ask again: after
+  an offline reload the snapshot no longer holds the task's old list, so there
+  is nothing left to evaluate. The test cleans up offline and reloads offline
+  for exactly that reason.
+- **Leaving says that it is final from the member's side.** The confirmation
+  reads *Leave Groceries? Its tasks leave your board, and only alice can share it
+  with you again.* A confirmation that leaves out the one consequence the member
+  cannot undo is asking a smaller question than the press answers. It is built as
+  one string, so the owner's name cannot lose the space beside it.
+- **`members: null` means the list is somebody else's, so the controls the
+  server would refuse are hidden, not disabled.** Nothing a member can do makes
+  rename, recolour, reorder, share or delete available, and a disabled control
+  advertises a state that does not exist.
+- **A list missing from a lists read takes its tasks off the device.** One rule
+  covers leaving, being removed by the owner, and the owner deleting the list on
+  another device.
+- **A refusal about a list somebody else owns is reworded and re-read at once.**
+  *That list no longer exists* becomes *Groceries is no longer shared with you*,
+  and lists and tasks are read immediately rather than at the next
+  revalidation, so the screen does not contradict the toast for ten seconds.
+  Every other refusal keeps the server's own sentence. The server gives one
+  sentence for a deleted list and a removed membership, so a member whose shared
+  list was deleted reads the same words — a known imprecision, not a guess.
+- **Leftovers of a list the board no longer knows are tested on a view that
+  counts every list.** With no chip or column left to draw them in, a test
+  looking at the board passes against a store that forgot nothing — the leave
+  test did exactly that until it read the landing card's count with
+  `/api/changes` blocked, so no revalidation could tidy up for it.
+
+### A read can lose a write it outran, and a range cache does not change that
+
+`ensureTimeEntries` and `ensurePomodoros` had no merge map at all, so a session
+checked into or a pomodoro started while a read was in the air was dropped the
+moment the queue drained: `overlayEntries` lays the *queue* over the reply, and
+a drained queue has nothing left to lay. Both go through the same
+`mergeDuringRead(loaded, mine, keyOf)` the answers and the tasks use, with
+`null` tombstones for the two deletes — `forgetPomodoro`, and `replaceEntry`
+handed no spans. Four collections, one mechanism.
+
+The map is **global and keyed on `client_id` alone**, though both collections
+are cached by range, and that is the part worth knowing: the store has no
+ranges. It is one flat array, `loadedRange` is a claim about which days it is
+*complete* for rather than a filter, `rememberEntry` has always added a row
+without consulting either, and every view that draws a window clips for itself.
+So a write whose day falls outside the reply is kept — which is exactly what the
+local write already did; the merge only stops the read from undoing it. Keying
+on the range would need somewhere to hold a write that falls outside it, and a
+write may never be dropped: that somewhere is a second container, which is the
+defect being fixed one level up.
+
+`replaceEntry` is the sharp one. The shortened original and the part after the
+gap are recorded in the order they were written and never further than `stored`,
+from the same two values the store update uses, so the merge cannot reorder or
+half-apply the pair. Recording only the identity the reply already held leaves
+the deleted day gone and the hours after it quietly missing — which fails *a
+session split while the sessions are being read is not put back together by the
+reply* on the **total** rather than on the day.
+
+**The two clears are only observable together.** Removing either one alone
+passes the whole of `sync.spec.js`, because these reads share a single `once`
+key: one is ever in flight, and whichever clear runs first empties the map
+before any reply consults it. Removing both fails *a pomodoro re-created after
+the read it was deleted during is read back*, which is the test that keeps the
+pair honest. The clear where a read *begins* is the load-bearing half, since
+without it the map would lay every local write over every later reply for ever —
+and another device's edit arrives precisely *by* a read replacing this one.
+
+One premise to keep in view if the range machinery is ever repaired: `wanted.start`
+is set only when `loadedRange?.start` and `start` are both truthy, and the first
+read stores both as `undefined`, so every later read is unbounded and shares one
+key. A genuinely bounded read would put two reads of one collection in flight,
+and then a read *starting* would clear a map holding writes the other still needs.
+
+### Every calendar block spans its day
+
+- **A block spans its whole day column unless it overlaps another as drawn.**
+  Untimed tasks were content-width pills — a task called `Gym` measured 40px of
+  a 150px column — which is what "short headlines make very small boxes" was. A
+  timed block that overlaps another *as drawn* shares the width in lanes,
+  because at full width one would cover the other and the calendar would be
+  hiding a task. "As drawn" is the part that matters: a five-minute task is
+  drawn half an hour tall, so it shares with one starting ten minutes later.
+- **The untimed row's height is derived from the counts, not fixed.** Three
+  tasks and then `+N more`, never `+1 more` — four are simply drawn, since that
+  row would take the same room — and in week view it takes the tallest day's, so
+  the columns stay aligned. Every grid coordinate is that height plus a top, and
+  the drag reads it through a function at each aim: a drag still reading the old
+  44px passed every existing test, which is why a drop onto a grown row has one
+  of its own now. Shown in full, the row stops sticking, or a list taller than
+  the scroll box would cover the hours for good.
+- **When a crowded block cannot hold both its title and its time, the title
+  wins.** The time is drawn on one line only if the title keeps at least 48px,
+  and on two only if the 28px time fits. The column's width is the one value
+  read back from layout here, and it decides only *which* text is drawn, never
+  where anything goes. Three blocks at 07:00 used to read `07:00 07:00 07:00`,
+  which is a picture of nothing.
+- **Day mode names a day and steps a day.** The label and the arrows follow the
+  mode, never the screen width, so a phone in week mode still steps a week.
+
+- **A mark belongs to the layer of the thing it describes.** An untimed task's
+  due mark is drawn in the sticky untimed row on its due day, because that row is
+  opaque and sticky: drawn in the hour grid, it sat underneath the row at the top
+  of the scroll and scrolled out of sight everywhere else, so switching on due
+  dates showed nothing for most tasks. Its line runs in a sticky layer at the
+  rows' own level, later in the page, joining slot centres, so it may run
+  diagonally; a line is drawn only when both of its ends are on screen.
+- **A due mark takes a slot after the day's tasks, and the cap counts it.**
+  `+N more` counts tasks and marks together and names neither, which is true
+  either way, while its accessible name spells out each kind. A task due on the
+  day it is planned outlines its own slot instead of taking a second one, and no
+  line is ever drawn to a mark hidden behind the count.
+
+### A block's height is its estimate, and its bottom edge is the control
+
+The resize grid is **30 minutes and deliberately not the move's 15**:
+`SNAP_MINUTES` and `RESIZE_SNAP_MINUTES` are two names because a drop says
+*where* a task starts and a resize says *how long* it is, so unifying them
+silently changes one of the two gestures. A resize is not a move — dragging
+above the block's own top cannot say anything about its start, so the size
+clamps at the 30-minute floor and `planned_at` is untouched. A drag back to the
+size it already had writes **nothing**, and the guard compares the *drawn* size
+rather than the stored one, or a block with no estimate released where it
+started would store a half hour nobody asked for. The live `1h 30m` label
+exists because a box growing under a finger does not say what it will store,
+and the live region says "resized to 1h" rather than a time, so a reader can
+tell the two gestures apart.
+
+**A control with one meaning lifts at once.** The movement threshold and the
+touch short press exist to tell a tap, a scroll and a carry apart on a *block*;
+a press on the resize handle can be nothing else, so it lifts immediately. The
+corollary is that the afterglow which stops a release being read as a click has
+to be stamped for **every** gesture rather than only the carry, because the
+handle sits inside the button that opens the task.
+
+### A colour on a task, and a menu on a press
+
+**A tint percentage is a contrast measurement, not a taste.** A task's own
+colour is a 3px edge bar at full strength plus a 12% tint mixed *into*
+`ink-soft` — into the card's surface rather than over transparency, because the
+card-against-page difference is what makes it read as a card. 12% and 16% were
+indistinguishable on screen, so the numbers decided: the due chip's
+`text-alarm` measures 3.18:1 against the card at 12% and 2.95:1 at 16%, worst
+case amber. **A card paints only a colour chosen for the task** and deliberately
+does not fall back to its list's, or every existing card would arrive tinted in
+a colour nobody picked; a calendar block does fall back, because it has always
+drawn the list's colour. `taskColour` holds that precedence once.
+
+**An upsert is the whole row, so `todoPayload` names `colour`** beside every
+other optional column — a payload that omits a field clears it, which is why a
+drag, a tick, a cleanup, a calendar move and a resize all have to carry it. Four
+tests fail when it is dropped, and none of them is about colour.
+
+The menu is where the interesting rules are:
+
+- **A long press for a menu must be longer than the lift *and* must not have
+  moved.** 600ms against the drag's 150ms, aborted past the same 6px threshold:
+  under the lift that distance is a scroll, over it a carry, and neither is a
+  request for a menu. Opening the menu **cancels the carry**, so the card
+  settles back exactly as Escape leaves it. A two-finger tap was the
+  alternative and is worse — nothing else here asks for two fingers and the
+  phone's own pinch claims the second.
+- **The release that ends a long press is reported as a click on what was
+  pressed**, so the menu carries a `justOpened` afterglow its readers consult,
+  exactly as they consult `drag.justDropped`.
+- **`lib/dismiss.svelte.js` owns the three global listeners now**, extracted
+  from `pointer-label.svelte.js` rather than copied: the label's hover half is
+  not what a menu wants, but the dismiss half is precisely what it wants. Two
+  things that only surfaced once it was shared: the captured `pointerdown` is
+  **observable only through a control that calls `stopPropagation`** — a card's
+  tickbox — so that is the test that keeps the capture honest, and the
+  pointer-label tests stay green without it; and **the scroll that opened an
+  overlay is not the scroll that closes it**, because the browser scrolls a
+  right-clicked control into view and delivers that event about 10ms later with
+  the page already moved, so a scroll within 150ms of opening is ignored.
+- **An auto-scroll stops on the room that is left, never on "the last step
+  moved nothing".** The insertion gap displaces cards with a transform,
+  transformed boxes count toward scrollable overflow, so a column's own maximum
+  *grows* with the gap and shrinks again when the gap reaches the last slot — a
+  clamp against a height a pending render is about to change satisfies the
+  weaker condition and the scroll stalls, 40px short, with the pointer held
+  still and nothing left to re-arm it. It reproduced two runs in five, which is
+  what a measured regression looks like before it is a flake. And the room is read at the **start** of a tick,
+  from the box as the previous render left it, never in the tick that re-aimed.
+  Before the column held
+  the carried card's height open at its end, the foot of a column running below
+  the fold had no stable point: re-aiming moved the gap between the last two
+  slots and the maximum with it, so a check made after re-aiming read no room in
+  a box the next render was about to grow, and stopped one card short — under
+  reduced motion only, where the gap does not ease in. Reading at the start of a
+  tick stays, but it is the stable maximum that makes the stop correct now.
+- **Hit testing respects `border-radius`.** A right-click two pixels inside a
+  rounded card's corner lands on the wrapper behind it.
+- A menu row is `min-h-11`, not padding arithmetic — `py-3` measured 42px. And
+  `data-task-colour` on the card rather than `data-colour`, which the picker's
+  swatches already use: one name, one meaning.
+
+### A region's width belongs to what it draws
+
+A board laid out in **columns** is sized by its grouping, not by the screen, so
+the page's reading width clipped a five-column grouping at 1280 *and* at 1920 —
+identically, 104px of overflow with 800px of unused page beside it. The width is
+one derived value shared by the heading and the board, and the heading has to
+share it: centred over a full-width board it sat 384px from the first column,
+which only a screenshot showed.
+
+Four more that came out of using the board rather than reading it:
+
+- **Restoring focus after a write means awaiting the write.** `await tick()`
+  finds the element still in its old column, does nothing because focus is
+  already there, and loses it a microtask later when the projection lands — so
+  a keyboard move worked exactly once and then went silent. `place` returns its
+  write for that one caller.
+- **An auto-scroll zone is measured against the visible part of the box**, on
+  the board as in the calendar — and the *test* needs a window short enough that
+  the box runs past the fold by more than the zone, or the probe on the clamp
+  comes back green against a real bug.
+- **A control that takes several rows away asks the same question one does.**
+  Cleanup archived six on a single press while Delete asked about one.
+- **Below 48rem a control group is one scrolling row, not a wrapping block —
+  and fixing one group hands the saving straight to the next.** Fixing the list
+  chips alone bought 8 pixels of 46, because five grouping pills then wrapped
+  into the space it freed. A pager tab and its column heading are **one name**:
+  the count lives on the tab, and the hint, which a tab has no room for, stays
+  on the column.
+
+**A `<select>` in a row of pills is the tell that a toolbar was bolted on.** The
+grouping control was the only one in four toolbars, where the time patterns page
+switches five windows with five pills.
+
+And a third instance of *rebuild before running the e2e suite*: **restoring
+source without rebuilding is the same mistake wearing different clothes.** A
+probe runner restored a tarball and skipped the build, so a whole mobile spec
+"failed" against a bundle that still carried the mutation, and the page snapshot
+naming a `combobox` was the only thing that said so.
+
+### A seeded identity belongs to the test that seeded it
+
+A task's `client_id` is unique across the whole database now that a list can be
+shared — two members must resolve one task to one row, so the index cannot be
+scoped per account. A worker's database outlives the accounts inside it, and a
+module-level counter restarts with the worker *process*: so one real failure,
+which makes Playwright replace that worker, restarts the counter against rows
+that are still there and **every later seed in that worker is refused**. One
+failure becomes a crop of them, which looks exactly like flakiness. Two rules
+follow, and the second is about reading a run rather than writing one:
+
+- `makeTodos` names an unseeded task with `crypto.randomUUID()` — what a real
+  client sends, and exactly the 36 characters `SyncIntent.client_id` allows, so
+  no prefix fits and none is wanted. A test passing a *literal* identity is
+  fine only where the collection is still scoped per account, which today means
+  steps (unique per task) and pomodoros.
+- **Read the first failure in a worker, not the crop.** The rest may be its
+  wreckage rather than four more defects.
+
+And one small trap: **a test that reads "the block's last `<span>`" breaks the
+day the block grows a control.** The half-hour clipping test read `.at(-1)` and
+found the resize handle; it excludes `[data-resize]` now.
+
+### What a control may say, and how a row is named
+
+Five rules that came out of reviewing the task modal by using it:
+
+- **A live second count has one spelling** — `formatRunning` in `lib/clock.js`,
+  `0h 00m 02s`. Not the countdown's `M:SS`: that counts *down* to a boundary,
+  where a clock face is right, while this reports an elapsed duration that grows
+  past an hour. The modal shipped `0h 00m:02`, which is the colon of one form
+  with the units of the other. `time/ProjectCard.svelte` still writes the two
+  halves into two boxes with a gap and is the one place left to converge.
+- **A native date or time input renders in the browser's UI language**, which
+  nobody in this app chose — `09/12/2026` and `05:00 PM` beside cards reading
+  `SAT, SEP 12` and `17:00`. It is still the right control on a phone, so the
+  answer is never to replace it: each field restates its own value beneath
+  itself through `dayLabel`, *the function the cards use*, so one value has two
+  readings from one source.
+- **Quote a row's own title inside its `aria-label`.** `Step ${title}` read
+  "Step Step 1: chop onions" and `Move ${title} up` read "Move Step 10: wash up
+  up". The quotes also stop one label being a prefix of another's — `Delete
+  wash` names two buttons where `Delete “wash”` names one, which is the
+  `getByLabel` substring trap one row deeper.
+- **A gesture that moves a row out of the list you are looking at owes a toast
+  naming where it went.** Won't-do had none, where starting a pomodoro — before it took you to the
+  timer it starts — had one. Named from the list row and never
+  from the word "Archive", because both system lists are renameable.
+- **A control may not claim what its zone cannot see.** The modal's pomodoro
+  button says what the press *does* — "Starting one ends a pomodoro already
+  running" — unconditionally, rather than hiding or disabling itself, because
+  which pomodoro is running is `lib/pomodoro/derive.js`'s rule and the todo zone
+  may neither import it nor re-spell it. Said rather than prevented, like the
+  note under the List select.
+
 ## Days, instants and offsets
 
 The two halves record time differently, on purpose:
@@ -943,6 +1677,14 @@ SELECT name, rootpage FROM sqlite_master WHERE type = 'table';
 Run it either side of `alembic upgrade`. Identical means in place; changed means
 the table was rebuilt. Confirm the check itself against a table you know was only
 added to, or a coincidence reads as proof.
+
+**The cheapest control is the migration's own `downgrade`.** A table you know
+was only added to proves the check does not fire spuriously; the opposite
+control — a table you know was *rebuilt* — proves it can fire at all, and a
+revision that adds a column already ships one, because `drop_column` takes the
+rebuild path. One extra `alembic downgrade -1` against the copy moved `todos`
+from rootpage 23 to 112 where the upgrade had left it at 23 either side. That is
+what makes "unmoved" a result rather than a check that cannot fail.
 
 ### Writing a data migration
 
@@ -1099,6 +1841,114 @@ the test name, and do not move on until you can make it fail on demand.
   a different series, which read `0`. Two polls, or a poll and a later read, can
   each be satisfied by a *different* render. Read every positive claim out of
   one option object and poll that.
+- **Two runs of the suite from two checkouts killed each other.** `global-setup.js`
+  kept its worker databases and its registry of backends in
+  `os.tmpdir()/happiness-e2e` — one fixed name, whatever directory the repo was
+  checked out in. It opens by deleting that directory and by SIGTERMing every
+  pid the registry names, so a second run started from a copy of the repository
+  wiped the first run's databases and killed its live servers. In the *other*
+  run that reads as a crop of `login as … failed`, or as a 30s timeout in
+  whatever test was mid-flight — which is to say it reads exactly like an app
+  flake, and two were written off as load before the cause was found. A
+  different `BASE_PORT` does not help: the collision is the directory, not the
+  port. `RUN_DIR` is now exported from `playwright.config.js` and keyed on the
+  hash of that file's own directory, so every checkout gets its own and setup
+  and teardown still agree on one answer from one place. `TMPDIR=<somewhere
+  private>` is the same fix from outside, and is what to reach for against a
+  checkout that predates this.
+- **`context.setOffline(false)` does not fire the page's `online` event.** The
+  app treats that event as the hint to go and look — `wake` probes, and a probe
+  with writes waiting is a `flush` — so a test that only lifts the offline flag
+  leaves the page waiting for the 30s `PROBE_EVERY` tick, which is the fallback
+  for reconnects no event reports. Six specs dispatch `new Event('online')` by
+  hand straight after it, and that is the convention. A hands-on review measured
+  the badge staying *offline* for 25 to 35 seconds after reconnecting and
+  reported it as a defect; it was the script missing that one line, which is
+  exactly the caveat the review raised about itself.
+- **A one-request test proves one queue entry only against sequential writes.**
+  `Promise.all(moved.map(saveTodo))` still arrives as a single `/api/sync`
+  request, because saves made in the same tick merge into one drain — so the test
+  counting requests passes against the very mistake it exists to catch. The
+  honest probe awaits each save in turn, and that one fails by name. The same
+  trap `replaceEntry`'s probe met, one gesture along.
+- **Text beside an `{#if}` in markup loses its whitespace.** Svelte trims the
+  space at a block boundary, so a confirmation read "Later?They will be…" and
+  three tests caught it. A sentence with a condition inside it is built as one
+  string.
+- **A mutation probe must refuse to start on a file that already carries one of
+  its mutations.** Two probe runs over one checkout — or one script reached
+  under two names — can back up a file the other run has already mutated and
+  restore *that* as the original, which saves a probe as the fix:
+  `if (false && cluster.length …)` turned up in `calendar.js` exactly that way,
+  midway through a run. Give a probe script and its log a name nothing else will
+  reuse, check for the mutation strings before taking any backup, and read the
+  final diff for them afterwards.
+- **A box on the page is not proof that anyone can see it.** The calendar's
+  due-mark tests measured each mark's position and size, and passed while every
+  mark for an untimed task was drawn underneath the sticky untimed row — an
+  opaque layer two z-indexes above it — so switching on due dates showed nothing
+  for most tasks. A claim that something is *visible* asks what is on top:
+  `document.elementFromPoint` at the element's centre must return the element or
+  something inside it. It cannot be answered off screen, where it returns `null`,
+  so bring the element into the viewport first: the first measurement here,
+  taken with the calendar opened at the current hour, found nothing at all,
+  because the mark was 211px above the top.
+- **A lookup that stops at the first match cannot see a thing drawn twice.** A
+  `columnOf`-style helper returns the first column holding a task, so a done task
+  drawn in Backlog *as well as* Done passed every existing test. A claim that each
+  task sits in exactly one column has to count every column.
+- **Prove a press does not wait on the server with the connection held open, not
+  cut.** Offline a flush fails at once, so an offline test passes against a
+  version that awaits the flush before navigating. Holding `/api/sync` open while
+  online is the case that fails by name.
+- **`page.unroute` settles the routes it was holding**, so a later
+  `route.continue()` throws *already handled*. Release a held route with a flag
+  the handler checks.
+- **A task title is capped at 200 characters**, so a test that needs a title to
+  wrap at 1280 has about 160 to work with.
+- **`elementFromPoint` never returns a `pointer-events: none` element, and it
+  hit-tests an SVG stroke dash by dash.** A "what is on top" test switches pointer
+  events on and the dash pattern off for its one read. Without that, a correctly
+  layered dashed line reads as covered, because its midpoint landed in a gap —
+  which is exactly what it did, 4.4px in.
+- **The config's `reducedMotion` never reached a page, so every run until it
+  moved had motion on.** In Playwright 1.62.1, `use: { reducedMotion: 'reduce' }`
+  resolves to `'reduce'` and is not applied: `matchMedia('(prefers-reduced-motion:
+  reduce)')` read false in the built-in page fixture, and `test.use({
+  reducedMotion })` failed the same way, while `browser.newContext({
+  reducedMotion })`, `page.emulateMedia` and `contextOptions: { reducedMotion }`
+  all read true. The config passes it through `contextOptions` now. A tick
+  animation test is what noticed, by running its full 180ms under a config that
+  promised otherwise, and the check that settled it carried a positive control,
+  because a probe that can only read false proves nothing. A test that needs
+  motion calls `page.emulateMedia` and asserts `matchMedia` before relying on it.
+- **`expect.poll` gives up on a callback that throws.** It retries a *value*
+  that does not match, not an error: a callback throwing *not yet* on its first
+  call ended the poll on that very call. A helper that may run before the page
+  has drawn returns `null` rather than throwing, so the poll can try again.
+- **The reduced-motion reset gives every element a transition, including the
+  ones that had none.** `app.css` sets `transition-duration: 0.01ms !important`
+  on `*` under `prefers-reduced-motion`, and `transition-property` defaults to
+  `all` — so under reduced motion every property change on every element runs
+  through a real, if invisible, transition, and a synchronous `getComputedStyle`
+  straight after a change returns the value from *before* it. A test that
+  resolved four colour tokens through one reused probe element read every token
+  after the first as the *first* colour, and passed until now only because the
+  config's reduced motion had never been applied. Resolve a token through a
+  **fresh** element, which has no previous value to transition from:
+  `resolveColours` in `fixtures.js` does exactly that, and throws on an undefined
+  token rather than quietly returning the inherited colour.
+- **Test a behaviour that reads layout mid-render in both motion states, and
+  prove the second one earns its place.** Reduced motion is a separate code path
+  for anything that measures while something eases. The busy-column test runs
+  once under the config's reduced motion and once after
+  `page.emulateMedia({ reducedMotion: 'no-preference' })`, asserting `matchMedia`
+  first; restoring the old stop rule fails only the reduced-motion case, which is
+  the evidence that a single-state test passed against the defect.
+- **A negative stability check samples the state that can cycle, not a value
+  still easing.** The drop index is read ten times at the foot of the column and
+  must be one value; `scrollTop` would not do, because with motion on it is still
+  settling by a pixel or two when the index already agrees.
 - **One backend per worker.** `--workers=8` on a suite whose `global-setup.js`
   started seven sends the extra worker at a port with nothing on it, and every
   test there fails with `login as … failed`. That is the harness, not the app —
@@ -1155,7 +2005,13 @@ the test name, and do not move on until you can make it fail on demand.
   means it still reads `synced` for the whole second after a write is queued. A
   test helper that waited on it therefore read the server *before the write was
   sent*. `data-pending` carries the raw count, set the moment the intent is on
-  disk, and is what "the queue is empty" should be read from.
+  disk, and is what "the queue is empty" should be read from. **It reads `0`
+  before the write is queued, too**, so waiting on it is only sound *after*
+  something on screen has been asserted to have changed: a write reaches the
+  outbox before it reaches the store, which makes the card, the tick or the
+  count the proof that there is a queue at all. Two todo tests passed against
+  the defects they were written for until a UI assertion was put in front of the
+  badge — one of them by observing **no requests whatsoever**.
 - **A count cannot see an edit.** The same helper polled until the server held
   one pomodoro with an id — which was already true before the edit under test,
   so tainting one was satisfied by the untainted row. A poll has to assert the
@@ -1201,6 +2057,15 @@ the test name, and do not move on until you can make it fail on demand.
   the bug it was written for — the same substring trap as `getByLabel`, one
   matcher along. `toHaveText` compares the whole (whitespace-normalised) string
   and catches it in both directions.
+- **`hasText` cannot see an input's value.** A step's title is an `<input>`, so
+  filtering rows on their text matches nothing however right the row is. Locate
+  by the accessible names of the controls beside it — `Tick Buy food` — which is
+  the one place the title is really text.
+- **Scroll it into the middle before tapping inside a sticky scroll box.** The
+  browser's own scroll-into-view knows nothing about a sticky overlay, so a row
+  parked under 96px of sticky header counts as visible, the click lands on the
+  header, and Playwright retries there until it times out. `intoView` in
+  `todos-calendar.spec.js`.
 - **Screenshot the element, not the page,** when judging a detail. A full-page
   capture scaled to fit is too coarse to tell which button is highlighted — twice
   I reported a bug that was not there. Crop, or read `aria-pressed`.
@@ -1248,8 +2113,16 @@ Do not re-open these without being asked to; each was decided deliberately.
 | Habits | An enum question with a target, in both directions. **No tap-to-answer on the landing chip** — a habit is answered in the questionnaire like the ordinary question it is, and a tick could not offer a three-way choice anyway |
 | Habit periods | `day`, `week`, `month`. No quarter or year: nothing anybody keeps four times a year needs an app, and each one is another grid that would draw two cells |
 | Habit icons | An emoji on `questions.icon`, on **every** question rather than only habits, and outside the habit constraints. Only habits render it today; tying it to them would be a constraint to relax the first time an ordinary question wants one |
+| Inbox and Archive | Ordinary **rows**, provisioned per account, renameable and recolourable, never deletable. Matched on `kind` and never on the name, or a rename is a bug |
+| A planned date | **Mandatory.** A task with no date is a task nothing can draw, and *someday* is a list rather than a missing column |
+| The archive's order | By arrival, `archived_at`, which the server writes. Editing an archived task does not move it |
+| Size drops | To the bucket's **centre**, always — a stated exception to the smallest-distance rule, because the buckets are coarse guesses and the centre is the more useful number |
+| Todo → Pomodoro | **Named by the link, never by a copy.** A typed line becomes a real task and the pomodoro carries `todo_client_id`; retitling the task retitles the hours, and a linked block's task box is read-only here. `task` stays beside it as the fallback for a block whose task this device does not hold |
+| Shared lists | One **owner** and any number of **members**, invited by username. Members see and edit every task; only the owner renames, recolours, reorders, shares or deletes. Inbox and Archive are never shared. A shared list's done tasks clean up into the **owner's** archive, decided by the server from the task's list, and a task has **one** active clock across everyone. A member may also **move** a task out of a shared list into one of their own, taking it off everyone else's board: deleting it is already theirs to do, and a move is less than a delete — the owner's three answers |
+| Past, not overdue | The date grouping's first column is **Past**: a task planned before today is not overdue unless it is *due* before today. A planned date is never drawn red; a due date is red once it has passed, so a task due today is due rather than overdue — the owner's call |
+| Kanban Done | **Every done task** in the selected lists, whatever its planned date — the same set cleanup archives, so the column and the button show one number. A drop into it ticks and never moves the date. The owner's call, replacing the brief's *ticked and planned for today* |
 | The streak view | Ignores the day filters, and carries its own span in periods — **12 or 26, never 52**: a year of weekly cells gave every lane its own sideways scroll, which is a control that makes the page worse at the width most of it is read at. Reaching further back is Previous and Next, stepped a whole window at a time, which costs no width. A streak over "only Saturdays" is not a streak — the target says *per week*, and narrowing the days silently changes what that means |
-| Navigation | The landing page is the only bridge between the halves; neither links to the other |
+| Navigation | The landing page is the only bridge between the halves; none of the four *links* to another, not even where one writes into the next. **One gesture navigates across, at the owner's request**: starting a pomodoro from a task opens the focus view. A navigation made by an action, not a link, and the only one |
 | Beartype | Test-time only. The image is built `--no-dev` and a running server never imports it |
 | Ruff | Backend only, via pre-commit. Lint rules, plus the numpy docstrings below |
 

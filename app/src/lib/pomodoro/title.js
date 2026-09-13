@@ -1,7 +1,8 @@
 import { get } from 'svelte/store'
 
-import { pomodoros } from '../store.js'
+import { pomodoros, todos } from '../store.js'
 import { progress, pomodoroState, RUNNING } from './derive.js'
+import { taskTitle } from './task.js'
 
 /**
  * The browser tab counts down while a pomodoro runs.
@@ -13,7 +14,9 @@ import { progress, pomodoroState, RUNNING } from './derive.js'
  * Started once for the life of the tab, from `App.svelte`, so the countdown
  * survives moving around inside the app. It **reads** the pomodoro store and
  * never loads it: a page that has not asked for today's pomodoros gets the
- * plain title rather than a request it did not ask for.
+ * plain title rather than a request it did not ask for. The same goes for the
+ * tasks it names a block by — a linked block on a page that holds no tasks
+ * falls back to the text on the pomodoro, which is what `taskTitle` is for.
  */
 
 /** What the tab is called when nothing is running. */
@@ -51,7 +54,7 @@ export function watchTitle() {
     const bar = progress(running, now)
     // Which phase, because "5:00 left" means opposite things across the two and
     // the tab has no room to explain itself.
-    const what = bar.phase === 'break' ? 'break' : running.task || 'focus'
+    const what = bar.phase === 'break' ? 'break' : taskTitle(running, get(todos)) || 'focus'
     document.title = `${countdown(bar.remaining)} · ${what}`
   }
 

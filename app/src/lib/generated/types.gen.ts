@@ -122,6 +122,9 @@ export type Changes = {
     rules: Fingerprint;
     pomodoros: Fingerprint;
     catalogues: Fingerprint;
+    todos: Fingerprint;
+    todo_steps: Fingerprint;
+    todo_lists: Fingerprint;
     me: Fingerprint;
 };
 
@@ -465,6 +468,14 @@ export type PomodoroOut = {
      * Client Id
      */
     client_id: string | null;
+    /**
+     * Todo Id
+     */
+    todo_id: number | null;
+    /**
+     * Todo Client Id
+     */
+    todo_client_id: string | null;
     /**
      * State
      */
@@ -1030,7 +1041,7 @@ export type SyncIntent = {
     /**
      * Kind
      */
-    kind: 'answer.put' | 'entry.upsert' | 'entry.delete' | 'pomodoro.upsert' | 'pomodoro.delete';
+    kind: 'answer.put' | 'entry.upsert' | 'entry.delete' | 'pomodoro.upsert' | 'pomodoro.delete' | 'todo.upsert' | 'todo.delete' | 'step.upsert' | 'step.delete';
     /**
      * Client Updated At
      */
@@ -1256,6 +1267,262 @@ export type TimeEntryOut = {
      * Source
      */
     source: 'pomodoro' | null;
+};
+
+/**
+ * TodoListCreate
+ *
+ * Payload for making a list.
+ */
+export type TodoListCreate = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Colour
+     */
+    colour?: string;
+    /**
+     * Rank
+     */
+    rank?: string | null;
+};
+
+/**
+ * TodoListMemberCreate
+ *
+ * Payload for sharing a list with somebody.
+ *
+ * By **username**, which tells the owner whether a username exists — a small
+ * leak the app otherwise makes only to an admin, and the price of the simplest
+ * interface. An unknown name answers 404, so it reads exactly as an unowned
+ * list does.
+ */
+export type TodoListMemberCreate = {
+    /**
+     * Username
+     */
+    username: string;
+};
+
+/**
+ * TodoListMemberOut
+ *
+ * One account a list has been shared with.
+ */
+export type TodoListMemberOut = {
+    /**
+     * User Id
+     */
+    user_id: number;
+    /**
+     * Username
+     */
+    username: string;
+    /**
+     * Added By
+     */
+    added_by: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * TodoListOut
+ *
+ * A list of tasks as exposed by the API, with who else can see it.
+ *
+ * Built by hand rather than read off the row, because the last field depends
+ * on **who is asking**: a roster is the owner's to see.
+ */
+export type TodoListOut = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Kind
+     */
+    kind: 'ordinary' | 'inbox' | 'archive';
+    /**
+     * Colour
+     */
+    colour: string;
+    /**
+     * Rank
+     */
+    rank: string;
+    /**
+     * Owner
+     */
+    owner: string;
+    /**
+     * Shared
+     */
+    shared: boolean;
+    /**
+     * Members
+     */
+    members: Array<string> | null;
+};
+
+/**
+ * TodoListUpdate
+ *
+ * Payload for editing a list. Omitted fields are left alone.
+ */
+export type TodoListUpdate = {
+    /**
+     * Name
+     */
+    name?: string | null;
+    /**
+     * Colour
+     */
+    colour?: string | null;
+    /**
+     * Rank
+     */
+    rank?: string | null;
+    /**
+     * Kind
+     */
+    kind?: 'ordinary' | 'inbox' | 'archive' | null;
+};
+
+/**
+ * TodoOut
+ *
+ * One task as exposed by the API, with its steps nested.
+ */
+export type TodoOut = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Client Id
+     */
+    client_id: string | null;
+    /**
+     * List Id
+     */
+    list_id: number;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Description
+     */
+    description: string | null;
+    /**
+     * Planned On
+     */
+    planned_on: string;
+    /**
+     * Planned At
+     */
+    planned_at: string | null;
+    /**
+     * Due On
+     */
+    due_on: string | null;
+    /**
+     * Priority
+     */
+    priority: 'very_high' | 'high' | 'medium' | 'low' | 'very_low' | null;
+    /**
+     * Duration Minutes
+     */
+    duration_minutes: number | null;
+    /**
+     * Icon
+     */
+    icon: string | null;
+    /**
+     * Colour
+     */
+    colour: string | null;
+    /**
+     * Rank
+     */
+    rank: string;
+    /**
+     * Done At
+     */
+    done_at: string | null;
+    /**
+     * Archived At
+     */
+    archived_at: string | null;
+    /**
+     * Active Since
+     */
+    active_since: string | null;
+    /**
+     * Active Seconds
+     */
+    active_seconds: number;
+    /**
+     * Steps
+     */
+    steps?: Array<TodoStepOut>;
+};
+
+/**
+ * TodoPage
+ *
+ * One page of the archive, with the marker for the page after it.
+ */
+export type TodoPage = {
+    /**
+     * Items
+     */
+    items: Array<TodoOut>;
+    /**
+     * Next
+     */
+    next: string | null;
+};
+
+/**
+ * TodoStepOut
+ *
+ * One subtask as exposed by the API, nested inside its task.
+ */
+export type TodoStepOut = {
+    /**
+     * Id
+     */
+    id: number;
+    /**
+     * Client Id
+     */
+    client_id: string | null;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Icon
+     */
+    icon: string | null;
+    /**
+     * Rank
+     */
+    rank: string;
+    /**
+     * Done At
+     */
+    done_at: string | null;
 };
 
 /**
@@ -2874,6 +3141,261 @@ export type TransferPomodorosResponses = {
 };
 
 export type TransferPomodorosResponse = TransferPomodorosResponses[keyof TransferPomodorosResponses];
+
+export type ListTodosData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/todos';
+};
+
+export type ListTodosResponses = {
+    /**
+     * Response Listtodos
+     *
+     * Successful Response
+     */
+    200: Array<TodoOut>;
+};
+
+export type ListTodosResponse = ListTodosResponses[keyof ListTodosResponses];
+
+export type ListArchivedTodosData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Before
+         */
+        before?: string | null;
+    };
+    url: '/api/todos/archive';
+};
+
+export type ListArchivedTodosErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListArchivedTodosError = ListArchivedTodosErrors[keyof ListArchivedTodosErrors];
+
+export type ListArchivedTodosResponses = {
+    /**
+     * Successful Response
+     */
+    200: TodoPage;
+};
+
+export type ListArchivedTodosResponse = ListArchivedTodosResponses[keyof ListArchivedTodosResponses];
+
+export type ListTodoListsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/todos/lists';
+};
+
+export type ListTodoListsResponses = {
+    /**
+     * Response Listtodolists
+     *
+     * Successful Response
+     */
+    200: Array<TodoListOut>;
+};
+
+export type ListTodoListsResponse = ListTodoListsResponses[keyof ListTodoListsResponses];
+
+export type CreateTodoListData = {
+    body: TodoListCreate;
+    path?: never;
+    query?: never;
+    url: '/api/todos/lists';
+};
+
+export type CreateTodoListErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateTodoListError = CreateTodoListErrors[keyof CreateTodoListErrors];
+
+export type CreateTodoListResponses = {
+    /**
+     * Successful Response
+     */
+    201: TodoListOut;
+};
+
+export type CreateTodoListResponse = CreateTodoListResponses[keyof CreateTodoListResponses];
+
+export type DeleteTodoListData = {
+    body?: never;
+    path: {
+        /**
+         * List Id
+         */
+        list_id: number;
+    };
+    query?: never;
+    url: '/api/todos/lists/{list_id}';
+};
+
+export type DeleteTodoListErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteTodoListError = DeleteTodoListErrors[keyof DeleteTodoListErrors];
+
+export type DeleteTodoListResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteTodoListResponse = DeleteTodoListResponses[keyof DeleteTodoListResponses];
+
+export type UpdateTodoListData = {
+    body: TodoListUpdate;
+    path: {
+        /**
+         * List Id
+         */
+        list_id: number;
+    };
+    query?: never;
+    url: '/api/todos/lists/{list_id}';
+};
+
+export type UpdateTodoListErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateTodoListError = UpdateTodoListErrors[keyof UpdateTodoListErrors];
+
+export type UpdateTodoListResponses = {
+    /**
+     * Successful Response
+     */
+    200: TodoListOut;
+};
+
+export type UpdateTodoListResponse = UpdateTodoListResponses[keyof UpdateTodoListResponses];
+
+export type ListTodoListMembersData = {
+    body?: never;
+    path: {
+        /**
+         * List Id
+         */
+        list_id: number;
+    };
+    query?: never;
+    url: '/api/todos/lists/{list_id}/members';
+};
+
+export type ListTodoListMembersErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListTodoListMembersError = ListTodoListMembersErrors[keyof ListTodoListMembersErrors];
+
+export type ListTodoListMembersResponses = {
+    /**
+     * Response Listtodolistmembers
+     *
+     * Successful Response
+     */
+    200: Array<TodoListMemberOut>;
+};
+
+export type ListTodoListMembersResponse = ListTodoListMembersResponses[keyof ListTodoListMembersResponses];
+
+export type AddTodoListMemberData = {
+    body: TodoListMemberCreate;
+    path: {
+        /**
+         * List Id
+         */
+        list_id: number;
+    };
+    query?: never;
+    url: '/api/todos/lists/{list_id}/members';
+};
+
+export type AddTodoListMemberErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type AddTodoListMemberError = AddTodoListMemberErrors[keyof AddTodoListMemberErrors];
+
+export type AddTodoListMemberResponses = {
+    /**
+     * Already a member; nothing was created.
+     */
+    200: TodoListMemberOut;
+    /**
+     * Successful Response
+     */
+    201: TodoListMemberOut;
+};
+
+export type AddTodoListMemberResponse = AddTodoListMemberResponses[keyof AddTodoListMemberResponses];
+
+export type RemoveTodoListMemberData = {
+    body?: never;
+    path: {
+        /**
+         * List Id
+         */
+        list_id: number;
+        /**
+         * Member Id
+         */
+        member_id: number;
+    };
+    query?: never;
+    url: '/api/todos/lists/{list_id}/members/{member_id}';
+};
+
+export type RemoveTodoListMemberErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RemoveTodoListMemberError = RemoveTodoListMemberErrors[keyof RemoveTodoListMemberErrors];
+
+export type RemoveTodoListMemberResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type RemoveTodoListMemberResponse = RemoveTodoListMemberResponses[keyof RemoveTodoListMemberResponses];
 
 export type GetPushKeyData = {
     body?: never;

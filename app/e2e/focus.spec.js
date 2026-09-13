@@ -2,8 +2,11 @@ import {
   expect,
   expectSettled,
   makeProject,
+  makeTodo,
   recordSession,
   savesView,
+  storedTodos,
+  systemList,
   test,
   TODAY,
 } from './fixtures.js'
@@ -294,8 +297,12 @@ test('a pomodoro is corrected in the row, not in a prompt', async ({ page, accou
     dialog.dismiss()
   })
 
+  // Started unnamed, and that is what makes the name editable here at all: a
+  // block started *with* a line is linked to the task that line became, and a
+  // linked block is named by its task rather than by this box. Naming one that
+  // has no task is the path this row still owns.
   await page.goto('/focus')
-  await start(page, 'Wrong name')
+  await start(page)
   await page.clock.fastForward('31:00')
 
   await page.getByLabel('Edit pomodoro').click()
@@ -610,7 +617,9 @@ test('a pomodoro copied to a project can still be corrected and deleted', async 
 }) => {
   await makeProject(account, 'The rewrite')
   await page.goto('/focus')
-  await start(page, 'Already copied')
+  // Unnamed, so the task box is this row's to write: a block with a line typed
+  // into it is linked to a task and named by that instead.
+  await start(page)
   await page.clock.fastForward('31:00')
 
   await page.locator('[data-open-transfer]').click()
@@ -778,4 +787,276 @@ test('a running pomodoro is in the list and climbs the totals', async ({ page })
   await expect(row.locator('[data-mark]')).toHaveAttribute('data-mark', 'tick')
   await expect(row.getByLabel('Edit pomodoro')).toHaveCount(1)
   await expect(page.locator('[data-pending-note]')).toHaveCount(0)
+})
+
+/**
+ * Write a task from somewhere that is not this browser.
+ *
+ * The same door the app uses — `/api/sync` is the only way a task is written —
+ * with a `client_updated_at` later than anything this page can have stamped,
+ * since the page's clock is pinned at noon.
+ */
+/**
+ * Open the focus page with the account's lists already on the device.
+ *
+ * A typed task becomes a real task in the **inbox**, and a task cannot be
+ * created in a list whose id this device does not know. On a first-ever visit
+ * there is therefore a window, one request wide, in which Start writes the text
+ * onto the pomodoro alone — the documented fallback, and deliberately not fixed
+ * by awaiting the read: a write that waits on a request is a Start button that
+ * does nothing while the network thinks about it, which is the measured defect
+ * `CLAUDE.md` opens with. A test about the *link* has to open past that window.
+ *
+ * Found by a full parallel run, where the lists request is slow enough for the
+ * window to be wide: the test passed alone and created no task under load.
+ *
+ * @param {import('@playwright/test').Page} page
+ */
+async function focusPage(page) {
+  const lists = page.waitForResponse(
+    (response) => response.url().includes('/api/todos/lists') && response.ok()
+  )
+  await page.goto('/focus')
+  await lists
+}
+
+/**
+ * The one task this account holds, once the queue has caught up.
+ *
+ * Polled for the same reason `synced` is: the screen paints from the queue the
+ * instant the button is pressed, so a straight read races the drain behind it.
+ *
+ * @param {object} account
+ * @param {(row: object) => boolean} [where] What must be true of it.
+ */
+async function storedTask(account, where = () => true) {
+  let rows = []
+  await expect(async () => {
+    rows = await storedTodos(account)
+    expect(rows).toHaveLength(1)
+    expect(where(rows[0]), 'the task the test was waiting for').toBe(true)
+  }).toPass({ timeout: 15_000 })
+  return rows[0]
+}
+
+async function fromAnotherDevice(account, intents) {
+  const response = await account.api.post('/api/sync', {
+    data: {
+      intents: intents.map((intent, at) => ({
+        seq: 8100 + at,
+        client_updated_at: '2026-06-15T23:00:00',
+        ...intent,
+      })),
+    },
+  })
+  expect(response.status(), await response.text()).toBe(200)
+  const { results } = await response.json()
+  expect(
+    results.every((one) => one.outcome === 'applied'),
+    JSON.stringify(results)
+  ).toBe(true)
+}
+
+test('a task typed into the timer becomes a task in the inbox', async ({
+  page,
+  account,
+}) => {
+  // What was typed is a task, not a label. It used to be a string on the
+  // pomodoro and nothing else, so an hour of work existed in a history no list
+  // knew about — which is the same hour somebody would have written down.
+  const inbox = await systemList(account, 'inbox')
+
+  await focusPage(page)
+  await start(page, 'Feed the cat')
+
+  const task = await storedTask(account)
+
+  expect(task.title).toBe('Feed the cat')
+  expect(task.list_id).toBe(inbox.id)
+  expect(task.planned_on).toBe(TODAY)
+  // Active from the moment the clock runs, and from the block's own start:
+  // the task's clock and the pomodoro's are the same clock.
+  expect(task.active_since).not.toBeNull()
+
+  // And the pomodoro names it, which is what makes the two one thing rather
+  // than a coincidence of wording. Both are in the batch, task first, because
+  // the server refuses a pomodoro naming a task it has never seen.
+  const [row] = await synced(page, account, 1, (rows) => Boolean(rows[0].todo_client_id))
+  expect(row.todo_client_id).toBe(task.client_id)
+  // The text stays beside the link, which is what a block whose task has been
+  // deleted still reads.
+  expect(row.task).toBe('Feed the cat')
+  expect(task.active_since).toBe(row.started_at)
+})
+
+test('an empty box creates no task at all', async ({ page, account }) => {
+  // An unnamed pomodoro is an ordinary thing. Inventing *New task* for one
+  // would be the app inventing data to fill in its own new feature.
+  await page.goto('/focus')
+  await start(page)
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0', {
+    timeout: 15_000,
+  })
+
+  await synced(page, account, 1)
+  expect(await storedTodos(account)).toHaveLength(0)
+})
+
+test('the running block is named by its task, and follows a retitle', async ({
+  page,
+  account,
+}) => {
+  // The whole reason the link exists. The pomodoro keeps its own words as a
+  // fallback, so a card still reading *Feed the cat* after the task has been
+  // renamed is a card reading the copy instead of the task.
+  await focusPage(page)
+  await start(page, 'Feed the cat')
+  await expect(page.locator('[data-running]')).toContainText('Feed the cat')
+
+  const task = await storedTask(account)
+
+  // **The edit travels with a step.** The digest fingerprints a collection as a
+  // row count and `max(updated_at)`, and SQLite's `CURRENT_TIMESTAMP` is whole
+  // seconds — so a retitle made in the same second as the write it follows
+  // moves neither number. A step is a row that did not exist.
+  await fromAnotherDevice(account, [
+    {
+      kind: 'todo.upsert',
+      client_id: task.client_id,
+      payload: {
+        list_id: task.list_id,
+        title: 'Feed the cats',
+        planned_on: task.planned_on,
+        active_since: task.active_since,
+      },
+    },
+    {
+      kind: 'step.upsert',
+      client_id: 'focus-retitle-step',
+      payload: { todo_client_id: task.client_id, title: 'Buy food', rank: 'n' },
+    },
+  ])
+
+  // Past the floor between two freshness checks, then the event a tab being
+  // looked at again fires. Dispatched, because a headless page never
+  // backgrounds itself.
+  await page.clock.fastForward('00:15')
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+
+  await expect(page.locator('[data-running]')).toContainText('Feed the cats')
+  // The history row and the tab title read the same name from the same place.
+  await page.clock.fastForward('31:00')
+  await expect(page.locator('[data-pomodoro]').first()).toContainText('Feed the cats')
+})
+
+test('a linked block is named by its task rather than edited here', async ({ page }) => {
+  // Two names for one thing is the shape of a bug this codebase has met, so the
+  // box shows the task's title and refuses to be a second copy of it. An
+  // unlinked pomodoro is still corrected in the row as it always was.
+  await focusPage(page)
+  await start(page, 'Feed the cat')
+  await page.clock.fastForward('31:00')
+
+  await page.locator('[aria-label="Edit pomodoro"]').first().click()
+  const box = page.locator('[data-editing] input').first()
+  await expect(box).toHaveValue('Feed the cat')
+  await expect(box).toHaveAttribute('readonly', '')
+  await expect(page.locator('[data-editing]')).toContainText('named by its task')
+})
+
+test('an unlinked pomodoro still has its task edited in the row', async ({
+  page,
+  account,
+}) => {
+  // The other side of the same rule, and it is what stops the read-only field
+  // from being a regression: a block started before tasks existed, or on a
+  // device that has never seen its own inbox, is still correctable.
+  await page.route('**/api/todos/lists', (route) => route.fulfill({ json: [] }))
+  await page.goto('/focus')
+  await start(page, 'Mistyped')
+  await page.clock.fastForward('31:00')
+
+  await page.locator('[aria-label="Edit pomodoro"]').first().click()
+  const box = page.locator('[data-editing] input').first()
+  await expect(box).not.toHaveAttribute('readonly', '')
+  await box.fill('Corrected')
+  await page.locator('[data-save-edit]').click()
+
+  const [row] = await synced(page, account, 1, (rows) => rows[0].task === 'Corrected')
+  expect(row.todo_client_id).toBeNull()
+  // No inbox to put it in, so nothing was created — the fallback, stated.
+  expect(await storedTodos(account)).toHaveLength(0)
+})
+
+test('abandoning banks the task’s seconds up to the abandon', async ({ page, account }) => {
+  // A task activated by a pomodoro is stopped by that pomodoro ending, and
+  // abandoning *is* the end of the focus. Seven minutes of work, not the
+  // twenty-five that were planned.
+  await focusPage(page)
+  await start(page, 'Feed the cat')
+
+  await page.clock.fastForward('07:00')
+  await page.locator('[data-abandon]').click()
+  await expect(page.locator('[data-mark]')).toHaveAttribute('data-mark', 'pause')
+
+  const task = await storedTask(account, (row) => row.active_since === null)
+  expect(task.active_seconds).toBeGreaterThanOrEqual(7 * 60 - 2)
+  expect(task.active_seconds).toBeLessThanOrEqual(7 * 60 + 2)
+})
+
+test('a task started by hand is not touched by the focus page', async ({ page, account }) => {
+  // `settleActive` runs on every load of this page, so the guard that keeps a
+  // hand-activated task out of it is load-bearing: there is no pomodoro to say
+  // when that clock should have stopped, and the app does not invent one.
+  const seeded = await makeTodo(account, {
+    title: 'Reading',
+    active_since: `${TODAY}T11:00:00`,
+  })
+
+  await page.goto('/focus')
+  await start(page, 'Feed the cat')
+  await page.clock.fastForward('31:00')
+  await expect(page.locator('[data-pomodoro]')).toHaveCount(1)
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0', {
+    timeout: 15_000,
+  })
+
+  const held = (await storedTodos(account)).find((row) => row.client_id === seeded.client_id)
+  expect(held.active_since).toBe(`${TODAY}T11:00:00`)
+  expect(held.active_seconds).toBe(0)
+})
+
+test('the focus strip names a linked block by its task, not by the stored copy', async ({
+  page,
+  account,
+}) => {
+  // The patterns strip is focus *history*, so it reads the task's current title
+  // like the timer and the tab do. A name drawn from the link on one screen and
+  // from the stored copy on another is two names for one thing, which is the
+  // failure the link exists to avoid.
+  const seeded = await makeTodo(account, { title: 'Feed the cats' })
+  await fromAnotherDevice(account, [
+    {
+      kind: 'pomodoro.upsert',
+      client_id: 'linked-strip-pom',
+      payload: {
+        // The text it was started with, which is now out of date. The task is
+        // what the strip has to read.
+        task: 'Feed the cat',
+        todo_client_id: seeded.client_id,
+        started_at: `${TODAY}T09:00:00`,
+        utc_offset: 0,
+        focus_seconds: 25 * 60,
+        break_seconds: 5 * 60,
+      },
+    },
+  ])
+
+  await page.goto('/focus/patterns')
+  const strip = page.locator('[data-focus-strip]')
+  await expect(strip).toBeVisible()
+  await strip.locator('[data-span]').first().hover()
+  await expect(page.locator('[data-span-tip]')).toContainText('Feed the cats')
 })

@@ -1,4 +1,7 @@
+import crypto from 'node:crypto'
 import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { defineConfig, devices } from '@playwright/test'
 
@@ -29,6 +32,30 @@ export const TIMEZONE = 'Europe/Berlin'
 export const WORKERS = Math.max(
   1,
   Number(process.env.PW_WORKERS) || Math.max(1, Math.floor(os.cpus().length / 2))
+)
+
+/**
+ * Where a run keeps its worker databases and the registry of backends it started.
+ *
+ * Keyed on **this checkout's own path**, not a fixed name, and that is the whole
+ * point. `global-setup.js` opens by deleting this directory and SIGTERMing every
+ * pid the registry names — so with one shared name, a second run started from a
+ * different copy of the repository wipes the first run's databases and kills its
+ * live servers. The symptom is a crop of `login as … failed` or 30s timeouts in
+ * the *other* run, which reads exactly like an app flake and is not one. A
+ * different `BASE_PORT` does not help: the collision is the directory, not the
+ * port.
+ *
+ * Exported so setup and teardown compute one answer from one place, as they
+ * already do for the ports and the backend environment.
+ */
+export const RUN_DIR = path.join(
+  os.tmpdir(),
+  `happiness-e2e-${crypto
+    .createHash('sha1')
+    .update(path.dirname(fileURLToPath(import.meta.url)))
+    .digest('hex')
+    .slice(0, 10)}`
 )
 
 export const BASE_PORT = 8123
@@ -88,8 +115,14 @@ export default defineConfig({
   use: {
     timezoneId: TIMEZONE,
     // The app collapses its transitions under this, so assertions do not race
-    // the 140 ms question change.
-    reducedMotion: 'reduce',
+    // the 140 ms question change. Passed through `contextOptions`, because in
+    // Playwright 1.62.1 the top-level `reducedMotion` option resolves to
+    // 'reduce' and is never applied to a page: `matchMedia('(prefers-reduced-
+    // motion: reduce)')` read false in every page fixture, and `test.use({
+    // reducedMotion })` fails the same way, so every run before this change had
+    // motion on. A test that needs motion calls `page.emulateMedia` and asserts
+    // `matchMedia` before relying on it.
+    contextOptions: { reducedMotion: 'reduce' },
     trace: 'retain-on-failure',
     video: 'retain-on-failure',
   },

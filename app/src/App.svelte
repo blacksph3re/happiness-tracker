@@ -12,6 +12,9 @@
   import Patterns from './routes/time/Patterns.svelte'
   import Projects from './routes/time/Projects.svelte'
   import Focus from './routes/pomodoro/Focus.svelte'
+  import Tasks from './routes/todos/Tasks.svelte'
+  import TodoCalendar from './routes/todos/Calendar.svelte'
+  import TodoLists from './routes/todos/Lists.svelte'
   import FocusStats from './routes/pomodoro/Stats.svelte'
   import Settings from './routes/Settings.svelte'
   import Users from './routes/Users.svelte'
@@ -38,6 +41,9 @@
     '/time/projects': Projects,
     '/focus': Focus,
     '/focus/patterns': FocusStats,
+    '/todos': Tasks,
+    '/todos/calendar': TodoCalendar,
+    '/todos/lists': TodoLists,
     '/settings': Settings,
     '/people': Users,
     '/login': Login,
@@ -91,11 +97,13 @@
       ? 'Time'
       : section === 'focus'
         ? 'Focus'
-        : section === 'wellbeing'
-          ? 'Wellbeing'
-          : $route === '/'
-            ? null
-            : 'Settings'
+        : section === 'todos'
+          ? 'Todos'
+          : section === 'wellbeing'
+            ? 'Wellbeing'
+            : $route === '/'
+              ? null
+              : 'Settings'
   )
 
   // The two halves are separate places: inside one, the nav is only about that
@@ -110,9 +118,11 @@
       ? 'time'
       : $route.startsWith('/focus')
         ? 'focus'
-        : ACCOUNT_PATHS.includes($route)
-          ? null
-          : 'wellbeing'
+        : $route.startsWith('/todos')
+          ? 'todos'
+          : ACCOUNT_PATHS.includes($route)
+            ? null
+            : 'wellbeing'
   )
 
   // Questions is offered to everyone: a catalogue belongs to the account that
@@ -131,14 +141,20 @@
             ['/focus', 'Timer'],
             ['/focus/patterns', 'Patterns'],
           ]
-        : section === 'wellbeing'
+        : section === 'todos'
           ? [
-              ['/answer', 'Answer'],
-              ['/table', 'Record'],
-              ['/stats', 'Patterns'],
-              ['/questions', 'Questions'],
+              ['/todos', 'Tasks'],
+              ['/todos/calendar', 'Calendar'],
+              ['/todos/lists', 'Lists'],
             ]
-          : []
+          : section === 'wellbeing'
+            ? [
+                ['/answer', 'Answer'],
+                ['/table', 'Record'],
+                ['/stats', 'Patterns'],
+                ['/questions', 'Questions'],
+              ]
+            : []
   )
 
   const ACCOUNT = $derived([
@@ -173,6 +189,7 @@
     class="min-h-screen"
     class:section-time={section === 'time'}
     class:section-focus={section === 'focus'}
+    class:section-todo={section === 'todos'}
   >
     <header class="border-b border-white/8">
       <nav class="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-5 py-4">

@@ -30,7 +30,7 @@
   import IconPencil from '../../lib/IconPencil.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
   import ImportSessions from '../../lib/time/ImportSessions.svelte'
-  import { nextColour, PROJECT_COLOURS as COLOURS } from '../../lib/time/palette.js'
+  import { nextColour, CHIP_COLOURS as COLOURS } from '../../lib/palette.js'
   import { pushToast } from '../../lib/toasts.js'
 
   /**

@@ -6,11 +6,19 @@
  * — the drawing is easy — and two copies would be two places for a tap to stop
  * working on a phone and nowhere else.
  *
+ * Its dismiss half — the captured `pointerdown` and the captured `scroll` —
+ * moved to `lib/dismiss.svelte.js` when the task menu wanted the same two
+ * listeners with none of the hovering. What is left here is the part that is
+ * genuinely about a *label following a pointer*: follow, drift, release, and
+ * the pin a finger needs because it has no hover.
+ *
  * A `title` attribute is what this replaces, and it fails three ways: the
  * browser waits about a second, puts it where it likes, and on a touch device
  * never shows it at all. The charts on the same pages answer instantly through
  * their own tooltips, so this is the same answer in the same shape.
  */
+
+import { dismissOn } from './dismiss.svelte.js'
 
 /**
  * Make one label's state and the handlers that drive it.
@@ -44,33 +52,10 @@ export function pointerLabel({ within }) {
     shown = null
   }
 
-  // `globalThis`, not `window`: Swimlanes takes a prop named `window` — the
-  // stretch of day its axis covers — and reaching for `addEventListener` on
-  // that one throws where the whole timeline renders.
-  //
-  // Captured, so it runs before a target's own handler can re-pin: a tap that
-  // lands on another target should move the label rather than close it.
-  $effect(() => {
-    const dismiss = (event) => {
-      if (!pinned) return
-      // The label itself counts as elsewhere: tapping it is how it is put away.
-      if (event.target?.closest?.(within)) return
-      put()
-    }
-    // A pinned label is positioned against the viewport, so scrolling would
-    // otherwise carry it down the page over things it no longer describes —
-    // stuck to the screen with no way left to be rid of it. Scrolling is a
-    // clear enough "moved on", so it goes.
-    const leave = () => {
-      if (pinned) put()
-    }
-    globalThis.addEventListener('pointerdown', dismiss, true)
-    globalThis.addEventListener('scroll', leave, { capture: true, passive: true })
-    return () => {
-      globalThis.removeEventListener('pointerdown', dismiss, true)
-      globalThis.removeEventListener('scroll', leave, { capture: true })
-    }
-  })
+  // Only a *pinned* label is dismissible: an unpinned one is following a mouse
+  // and is put away by the mouse leaving. Escape is deliberately not asked for,
+  // which is what this label has always done.
+  dismissOn({ within, active: () => pinned, dismiss: put })
 
   return {
     get shown() {

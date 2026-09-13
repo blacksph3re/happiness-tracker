@@ -9,7 +9,7 @@
   import { formatShort, localDay, nowUtc, utcOffset } from '../../lib/clock.js'
 import { elapsed } from '../../lib/time/duration.js'
   import { today } from '../../lib/day.js'
-  import { nextColour } from '../../lib/time/palette.js'
+  import { nextColour } from '../../lib/palette.js'
   import { resource } from '../../lib/resource.svelte.js'
   import { now } from '../../lib/time/tick.js'
   import {

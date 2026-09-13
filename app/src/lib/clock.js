@@ -17,9 +17,10 @@
  * Format a duration the way it is always shown: hours and whole minutes.
  *
  * Seconds are not part of this: everywhere a duration is *read* — the record,
- * the totals, the export — a minute is as precise as the answer gets. The one
- * place they appear is a running card on the track page, through
- * `secondsPart`, where their whole job is to move.
+ * the totals, the export — a minute is as precise as the answer gets. They
+ * appear only where a duration is *watched* rather than read, through
+ * `secondsPart` and `formatRunning` below, and there their whole job is to
+ * move.
  *
  * @param {number} seconds
  * @returns {string} e.g. `2h 14m`, or `0h 00m` for nothing.
@@ -28,6 +29,27 @@ export function formatDuration(seconds) {
   const total = Math.max(0, Math.floor(seconds / 60))
   const minutes = total % 60
   return `${Math.floor(total / 60)}h ${String(minutes).padStart(2, '0')}m`
+}
+
+/**
+ * Render a duration estimate compactly.
+ *
+ * Not `formatDuration` above, which writes `0h 45m` because it is reporting
+ * measured time and a column of those has to line up. This is an estimate
+ * somebody typed, in minutes rather than seconds, and it reads as they typed
+ * it. Here rather than beside the task fields it started next to, because the
+ * shared size-bucket hints render one and a zone is not somewhere shared code
+ * may reach.
+ *
+ * @param {number|null|undefined} minutes
+ * @returns {string|null} e.g. `45m`, `2h`, `1h 30m`, or null for no estimate.
+ */
+export function estimateLabel(minutes) {
+  if (!minutes) return null
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  if (!hours) return `${rest}m`
+  return rest ? `${hours}h ${rest}m` : `${hours}h`
 }
 
 /**
@@ -42,6 +64,33 @@ export function formatDuration(seconds) {
  */
 export function secondsPart(seconds) {
   return String(Math.max(0, Math.floor(seconds)) % 60).padStart(2, '0')
+}
+
+/**
+ * Format a duration that is still running, seconds and all.
+ *
+ * **The one spelling of a live elapsed count**, and it exists because there
+ * were three. The task modal printed `formatDuration` and `secondsPart` with a
+ * colon between them — `0h 00m:02`, which borrows the colon from `00:00:02`
+ * and the units from `0h 00m 02s` and is neither. A running project card sets
+ * the same two values in two boxes with a gap, which reads `0h 00m 02` and
+ * leaves the last number unlabelled.
+ *
+ * So: `formatDuration` plus the seconds, in the units every other duration in
+ * this app is written in. A reader who can read `2h 14m` anywhere else can
+ * read this without learning a second convention, and the number that is
+ * moving says what it is.
+ *
+ * Deliberately *not* the focus countdown's `M:SS`. That one counts **down** to
+ * a boundary, where a clock face is the right picture and the leading unit is
+ * always minutes; this one reports how long something has taken, which is a
+ * duration and grows past an hour.
+ *
+ * @param {number} seconds
+ * @returns {string} e.g. `0h 01m 07s`, `2h 14m 03s`.
+ */
+export function formatRunning(seconds) {
+  return `${formatDuration(seconds)} ${secondsPart(seconds)}s`
 }
 
 /**

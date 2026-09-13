@@ -2,6 +2,8 @@ import {
   catalogueOf,
   expect,
   makeProject,
+  makeTodo,
+  makeTodos,
   realQuestions,
   recordSession,
   seedAnswers,
@@ -212,4 +214,151 @@ test('one day reads as a day, not as days', async ({ page, account }) => {
   await expect(page.locator('[data-habit="tracking"] [data-streak]')).toHaveText(
     '🔥 1 day'
   )
+})
+
+test('the todo card counts what is overdue, and overdue wins', async ({ page, account }) => {
+  // The order is the claim, not the arithmetic: overdue is the number that
+  // changes what you do next, so a day with both an overdue task and a plan
+  // reports the lateness. Everything here is planned for today as well, which
+  // is what makes it a test of the *order* rather than of two disjoint sets.
+  await makeTodos(account, [
+    { title: 'late already', planned_on: TODAY, due_on: '2026-06-10' },
+    { title: 'late as well', planned_on: TODAY, due_on: '2026-06-11' },
+    { title: 'for today', planned_on: TODAY },
+  ])
+
+  await page.goto('/')
+  await expect(page.locator('[data-card="todos"]')).toContainText('2 overdue')
+})
+
+test('the todo card falls back through due today to planned today', async ({
+  page,
+  account,
+}) => {
+  // Nothing overdue, one thing due: a deadline outranks a plan. Both tasks are
+  // planned for today, so a card reading "2 planned today" would be a card
+  // reading the last branch.
+  await makeTodos(account, [
+    { title: 'the deadline', planned_on: TODAY, due_on: TODAY },
+    { title: 'the plan', planned_on: TODAY },
+  ])
+
+  await page.goto('/')
+  await expect(page.locator('[data-card="todos"]')).toContainText('1 due today')
+})
+
+test('a done task is neither overdue nor planned', async ({ page, account }) => {
+  // A task that was done stopped mattering when it was planned for, which is
+  // the same rule the card chip follows. Ticked yesterday and dated last week,
+  // it must not be reported as two days late.
+  await makeTodo(account, {
+    title: 'already fed the cat',
+    planned_on: '2026-06-10',
+    due_on: '2026-06-10',
+    done_at: '2026-06-14T09:00:00',
+  })
+
+  await page.goto('/')
+  await expect(page.locator('[data-card="todos"]')).toContainText('Nothing planned')
+})
+
+test('the tasks are counted before the server answers', async ({ page, account }) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, null)
+  await makeTodo(account, { title: 'late already', planned_on: TODAY, due_on: '2026-06-10' })
+  await warmUp(page)
+  await expect(page.locator('[data-card="todos"]')).toContainText('1 overdue')
+
+  const release = await stall(page, '**/api/**')
+  await page.reload()
+
+  // From the snapshot, like every other card here: tasks are in it, so the
+  // count is on screen before a request has answered.
+  await expect(page.locator('[data-card="todos"]')).toContainText('1 overdue', {
+    timeout: 4000,
+  })
+  release()
+})
+
+test('the todo half links to nothing outside itself', async ({ page, account }) => {
+  // The landing page is the only bridge, and phase 6 is where that gets
+  // tested hardest: a task can now start a pomodoro, so the temptation to put
+  // "go and watch it" beside the button is real. Every page of the half, not
+  // only the modal — the modal has its own assertion in `todos-modal.spec.js`.
+  await makeTodo(account, { title: 'Feed the cat' })
+
+  for (const where of ['/todos', '/todos/calendar', '/todos/lists']) {
+    await page.goto(where)
+    await expect(page.locator('main')).toBeVisible()
+    const out = page.locator(
+      'main a[href^="/focus"], main a[href^="/time"], main a[href^="/answer"], main a[href^="/stats"]'
+    )
+    await expect(out, `${where} reaches out of its half`).toHaveCount(0)
+  }
+})
+
+test('the todo card says the count is across every list', async ({ page, account }) => {
+  // The card counts every list; Tasks opens on one. It said "4 overdue" and
+  // the board landed on the Inbox showing "Overdue 3", with nothing on either
+  // screen saying where the fourth was. Labelled rather than narrowed, which
+  // is the house rule about `67h 35m across tags`: the number is the useful
+  // one, and what it counts is said beside it.
+  const errands = await (await account.api.post('/api/todos/lists', {
+    data: { name: 'Errands', colour: 'iris' },
+  })).json()
+  await makeTodos(account, [
+    { title: 'late in the inbox', planned_on: '2026-06-10', due_on: '2026-06-10' },
+    { title: 'late in errands', planned_on: '2026-06-11', due_on: '2026-06-11', list_id: errands.id },
+  ])
+
+  await page.goto('/')
+  // `toHaveText` rather than `toContainText`: "2 overdue" is a substring of
+  // "2 overdue across your lists", so the assertion written to pin the label
+  // would pass against the card that has none.
+  await expect(page.locator('[data-todo-reading]')).toHaveText('2 overdue across your lists')
+})
+
+test('the todo card says what is in the past before it says nothing is planned', async ({
+  page,
+  account,
+}) => {
+  const yesterday = new Date(Date.parse(`${TODAY}T00:00:00Z`) - 86_400_000)
+    .toISOString()
+    .slice(0, 10)
+  await makeTodos(account, [
+    { title: 'Ring the bank', planned_on: yesterday },
+    { title: 'Already done', planned_on: yesterday, done_at: `${yesterday}T09:00:00` },
+  ])
+  await page.goto('/')
+  // One open task planned for a day that has gone, nothing due and nothing
+  // planned today: "Nothing planned" would be untrue. The done task must not be
+  // counted either — it was done, whenever it was planned for.
+  await expect(page.locator('[data-todo-reading]')).toHaveText(/^1 in the past\b/)
+})
+
+test('overdue on the landing card means due in the past, never planned in the past', async ({
+  page,
+  account,
+}) => {
+  // The word means the same thing here as on the board, where only a due date
+  // that has gone is drawn red. A plan for a day that has gone is *past*, not
+  // late — so of these two, one is overdue. Both are *planned* in the past,
+  // which is what makes the old rule read two here rather than agreeing with
+  // the new one by accident.
+  await makeTodos(account, [
+    { title: 'planned last week, nothing due', planned_on: '2026-06-10' },
+    { title: 'due last week', planned_on: '2026-06-10', due_on: '2026-06-11' },
+  ])
+
+  await page.goto('/')
+  await expect(page.locator('[data-todo-reading]')).toHaveText('1 overdue across your lists')
+})
+
+test('a card with nothing to report says nothing about lists', async ({ page, account }) => {
+  // The label exists to explain a number. With no number there is nothing to
+  // explain, and "Nothing planned across your lists" would be a sentence
+  // saying less than the two words it is built from.
+  await makeTodo(account, { title: 'later', planned_on: '2026-06-20' })
+  await page.goto('/')
+  await expect(page.locator('[data-todo-reading]')).toHaveText('Nothing planned')
 })

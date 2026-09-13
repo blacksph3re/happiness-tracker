@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, BeginTotpEnrolmentData, BeginTotpEnrolmentResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, ClearUserTotpData, ClearUserTotpErrors, ClearUserTotpResponses, ConfirmTotpEnrolmentData, ConfirmTotpEnrolmentErrors, ConfirmTotpEnrolmentResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, DisableTotpData, DisableTotpErrors, DisableTotpResponses, ForgetPushSubscriptionData, ForgetPushSubscriptionErrors, ForgetPushSubscriptionResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetChangesData, GetChangesResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetPushKeyData, GetPushKeyResponses, GetServerMetricsData, GetServerMetricsResponses, GetTagRuleData, GetTagRuleErrors, GetTagRuleResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListCataloguesData, ListCataloguesResponses, ListCatalogueTemplatesData, ListCatalogueTemplatesResponses, ListPomodorosData, ListPomodorosErrors, ListPomodorosResponses, ListProjectsData, ListProjectsResponses, ListPushSubscriptionsData, ListPushSubscriptionsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, LoginTotpData, LoginTotpErrors, LoginTotpResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RegisterPushSubscriptionData, RegisterPushSubscriptionErrors, RegisterPushSubscriptionResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, SetTagRuleData, SetTagRuleErrors, SetTagRuleResponses, SyncIntentsData, SyncIntentsErrors, SyncIntentsResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, TrackedRangeData, TrackedRangeResponses, TransferPomodorosData, TransferPomodorosErrors, TransferPomodorosResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionOptionData, UpdateQuestionOptionErrors, UpdateQuestionOptionResponses, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
+import type { AddQuestionOptionData, AddQuestionOptionErrors, AddQuestionOptionResponses, AddTodoListMemberData, AddTodoListMemberErrors, AddTodoListMemberResponses, BeginTotpEnrolmentData, BeginTotpEnrolmentResponses, ChangeMyPasswordData, ChangeMyPasswordErrors, ChangeMyPasswordResponses, ClearUserTotpData, ClearUserTotpErrors, ClearUserTotpResponses, ConfirmTotpEnrolmentData, ConfirmTotpEnrolmentErrors, ConfirmTotpEnrolmentResponses, CreateCatalogueData, CreateCatalogueErrors, CreateCatalogueResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateQuestionData, CreateQuestionErrors, CreateQuestionResponses, CreateScoreData, CreateScoreErrors, CreateScoreResponses, CreateTagData, CreateTagErrors, CreateTagResponses, CreateTodoListData, CreateTodoListErrors, CreateTodoListResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteCatalogueData, DeleteCatalogueErrors, DeleteCatalogueResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteQuestionOptionData, DeleteQuestionOptionErrors, DeleteQuestionOptionResponses, DeleteScoreData, DeleteScoreErrors, DeleteScoreResponses, DeleteTagData, DeleteTagErrors, DeleteTagResponses, DeleteTodoListData, DeleteTodoListErrors, DeleteTodoListResponses, DeleteUserData, DeleteUserErrors, DeleteUserResponses, DisableTotpData, DisableTotpErrors, DisableTotpResponses, ForgetPushSubscriptionData, ForgetPushSubscriptionErrors, ForgetPushSubscriptionResponses, GetCatalogueData, GetCatalogueErrors, GetCatalogueResponses, GetChangesData, GetChangesResponses, GetCurrentUserData, GetCurrentUserResponses, GetMyPreferencesData, GetMyPreferencesResponses, GetPushKeyData, GetPushKeyResponses, GetServerMetricsData, GetServerMetricsResponses, GetTagRuleData, GetTagRuleErrors, GetTagRuleResponses, GetVersionData, GetVersionResponses, ListAnswersData, ListAnswersErrors, ListAnswersResponses, ListArchivedTodosData, ListArchivedTodosErrors, ListArchivedTodosResponses, ListCataloguesData, ListCataloguesResponses, ListCatalogueTemplatesData, ListCatalogueTemplatesResponses, ListPomodorosData, ListPomodorosErrors, ListPomodorosResponses, ListProjectsData, ListProjectsResponses, ListPushSubscriptionsData, ListPushSubscriptionsResponses, ListStatsVariablesData, ListStatsVariablesResponses, ListTagsData, ListTagsResponses, ListTimeEntriesData, ListTimeEntriesErrors, ListTimeEntriesResponses, ListTodoListMembersData, ListTodoListMembersErrors, ListTodoListMembersResponses, ListTodoListsData, ListTodoListsResponses, ListTodosData, ListTodosResponses, ListUsersData, ListUsersResponses, LoginData, LoginErrors, LoginResponses, LoginTotpData, LoginTotpErrors, LoginTotpResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RegisterPushSubscriptionData, RegisterPushSubscriptionErrors, RegisterPushSubscriptionResponses, RemoveTodoListMemberData, RemoveTodoListMemberErrors, RemoveTodoListMemberResponses, RenameCatalogueData, RenameCatalogueErrors, RenameCatalogueResponses, ResetUserPasswordData, ResetUserPasswordErrors, ResetUserPasswordResponses, SetMyDefaultCatalogueData, SetMyDefaultCatalogueErrors, SetMyDefaultCatalogueResponses, SetMyPreferencesData, SetMyPreferencesErrors, SetMyPreferencesResponses, SetTagRuleData, SetTagRuleErrors, SetTagRuleResponses, SyncIntentsData, SyncIntentsErrors, SyncIntentsResponses, TimeSummaryData, TimeSummaryErrors, TimeSummaryResponses, TrackedRangeData, TrackedRangeResponses, TransferPomodorosData, TransferPomodorosErrors, TransferPomodorosResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateQuestionData, UpdateQuestionErrors, UpdateQuestionOptionData, UpdateQuestionOptionErrors, UpdateQuestionOptionResponses, UpdateQuestionResponses, UpdateScoreData, UpdateScoreErrors, UpdateScoreResponses, UpdateTagData, UpdateTagErrors, UpdateTagResponses, UpdateTodoListData, UpdateTodoListErrors, UpdateTodoListResponses, UpdateUserData, UpdateUserErrors, UpdateUserResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -648,6 +648,117 @@ export const transferPomodoros = <ThrowOnError extends boolean = false>(options:
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Read every task outside the archive
+ *
+ * Every task in every list the caller can see — their own and the ones shared with them — except the archived ones, with the subtasks nested inside each. There is no range and no window: an open task from March is as relevant as one from today, so the collection is read whole and cached as a whole.
+ */
+export const listTodos = <ThrowOnError extends boolean = false>(options?: Options<ListTodosData, ThrowOnError>): RequestResult<ListTodosResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListTodosResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/todos',
+    ...options
+});
+
+/**
+ * Read a page of the archive
+ *
+ * Archived tasks, newest arrival first, capped at 500. Send the `next` marker back as `before` for the page after. The archive never enters the device snapshot, which is what keeps the offline footprint bounded however long the account lives. **The caller's own archive and nothing else**: an archive cannot be shared, and a cleanup on a shared list writes into the archive of whoever owns the list.
+ */
+export const listArchivedTodos = <ThrowOnError extends boolean = false>(options?: Options<ListArchivedTodosData, ThrowOnError>): RequestResult<ListArchivedTodosResponses, ListArchivedTodosErrors, ThrowOnError> => (options?.client ?? client).get<ListArchivedTodosResponses, ListArchivedTodosErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/todos/archive',
+    ...options
+});
+
+/**
+ * Read the lists the caller can see
+ *
+ * Every list the caller owns and every list shared with them, in column order: their own inbox first, their own archive last, and the ordinary lists between them by rank — a shared list among them, by the rank its owner gave it. Branch on `kind` and never on the name: both system lists can be renamed. `owner` names the account a list belongs to and `members` is present only in the owner's own view.
+ */
+export const listTodoLists = <ThrowOnError extends boolean = false>(options?: Options<ListTodoListsData, ThrowOnError>): RequestResult<ListTodoListsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListTodoListsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/todos/lists',
+    ...options
+});
+
+/**
+ * Make a list
+ *
+ * Create an ordinary list. With no rank it is appended after the last list but **before** the archive, which is drawn at the far right of the move-between-lists view.
+ */
+export const createTodoList = <ThrowOnError extends boolean = false>(options: Options<CreateTodoListData, ThrowOnError>): RequestResult<CreateTodoListResponses, CreateTodoListErrors, ThrowOnError> => (options.client ?? client).post<CreateTodoListResponses, CreateTodoListErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/todos/lists',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete a list and everything in it
+ *
+ * Takes the list's tasks and their subtasks with it, and the membership rows: everybody it was shared with loses it. Archived work is untouched, because an archived task is in the *archive* list and not in this one. The inbox and the archive answer `409`, and so does anybody but the owner asking — with a `404`.
+ */
+export const deleteTodoList = <ThrowOnError extends boolean = false>(options: Options<DeleteTodoListData, ThrowOnError>): RequestResult<DeleteTodoListResponses, DeleteTodoListErrors, ThrowOnError> => (options.client ?? client).delete<DeleteTodoListResponses, DeleteTodoListErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/todos/lists/{list_id}',
+    ...options
+});
+
+/**
+ * Rename, recolour or reorder a list
+ *
+ * Allowed on the two system lists as on any other — the code branches on `kind` and never reads the name. What may not change is `kind` itself, which answers `409`.
+ */
+export const updateTodoList = <ThrowOnError extends boolean = false>(options: Options<UpdateTodoListData, ThrowOnError>): RequestResult<UpdateTodoListResponses, UpdateTodoListErrors, ThrowOnError> => (options.client ?? client).put<UpdateTodoListResponses, UpdateTodoListErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/todos/lists/{list_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read who a list is shared with
+ *
+ * The owner and every member may read the roster. The **owner is not in it**: they are `owner` on the list itself, and a row saying somebody shares a list with themselves is a row this schema cannot hold.
+ */
+export const listTodoListMembers = <ThrowOnError extends boolean = false>(options: Options<ListTodoListMembersData, ThrowOnError>): RequestResult<ListTodoListMembersResponses, ListTodoListMembersErrors, ThrowOnError> => (options.client ?? client).get<ListTodoListMembersResponses, ListTodoListMembersErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/todos/lists/{list_id}/members',
+    ...options
+});
+
+/**
+ * Share a list with somebody
+ *
+ * Owner only; anybody else gets `404`. **Idempotent**: sharing with the same person twice answers `200` and the row that was already there, because the owner's intent is already satisfied and a `409` would make a client handle an error that means success. An unknown username answers `404`, sharing with yourself `409`, and a system list `409` — every account has exactly one inbox, and sharing one would make a member's parsed `#inbox` ambiguous.
+ */
+export const addTodoListMember = <ThrowOnError extends boolean = false>(options: Options<AddTodoListMemberData, ThrowOnError>): RequestResult<AddTodoListMemberResponses, AddTodoListMemberErrors, ThrowOnError> => (options.client ?? client).post<AddTodoListMemberResponses, AddTodoListMemberErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/todos/lists/{list_id}/members',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Stop sharing a list, or leave one
+ *
+ * The owner removes anybody; a member removes only themselves, which is *Leave*. Anything else answers `404`, the owner included — they are not a member row, so there is nothing to remove them from. The tasks stay in the list: they belong to the list and not to whoever typed them.
+ */
+export const removeTodoListMember = <ThrowOnError extends boolean = false>(options: Options<RemoveTodoListMemberData, ThrowOnError>): RequestResult<RemoveTodoListMemberResponses, RemoveTodoListMemberErrors, ThrowOnError> => (options.client ?? client).delete<RemoveTodoListMemberResponses, RemoveTodoListMemberErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/todos/lists/{list_id}/members/{member_id}',
+    ...options
 });
 
 /**

@@ -1,15 +1,10 @@
 <script>
+  import IconPicker from '../IconPicker.svelte'
   import { targetLabel } from '../habits.js'
-  import { findIcons } from './icons.js'
 
   // Matches the server's own limit; the questionnaire's layout is built
   // around it, so the form says so rather than letting a save fail.
   const PROMPT_MAX_LENGTH = 80
-
-  /** What has been typed into the icon search. Never the stored value. */
-  let iconSearch = $state('')
-
-  const matches = $derived(findIcons(iconSearch))
 
   /**
    * The one form used both to add a question and to edit an existing one, so
@@ -158,73 +153,13 @@
         <!-- The search and the choice are two different things, and the form
              used to make them one field: you typed into the preview, so
              anything you typed *was* the icon and a habit could be labelled
-             "AAAA". Now the box takes words, the row takes the choice, and
-             there is no free-text path to the stored value at all — which is
-             the validation, rather than something to reject afterwards. -->
-        <div class="mt-4 flex flex-wrap items-end gap-3">
-          <div class="flex flex-col gap-1.5">
-            <span class="meta">Icon</span>
-            <span
-              data-icon-preview
-              class="flex size-12 items-center justify-center rounded-lg border
-                     border-white/15 bg-ink text-2xl"
-            >
-              {#if draft.icon}
-                {draft.icon}
-              {:else}
-                <span class="meta text-haze">none</span>
-              {/if}
-            </span>
-          </div>
-          <label class="flex min-w-48 flex-1 flex-col gap-1.5">
-            <span class="meta">Find one</span>
-            <input
-              bind:value={iconSearch}
-              placeholder="run, water, sleep…"
-              aria-label="Find an icon"
-              class="rounded-lg border border-white/15 bg-ink px-4 py-3"
-            />
-          </label>
-          {#if draft.icon}
-            <button
-              type="button"
-              class="meta rounded-md border border-white/15 px-3 py-3
-                     hover:border-ember"
-              onclick={() => (draft.icon = '')}
-            >
-              Clear
-            </button>
-          {/if}
-        </div>
-
-        <!-- Scrolls itself rather than the page: the whole set is fifty icons,
-             and a search that matches most of them would otherwise push the
-             target and the options below out of sight. -->
-        <div
-          data-icon-choices
-          class="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto rounded-lg
-                 border border-white/10 p-2"
-        >
-          {#each matches as match (match.icon)}
-            <button
-              type="button"
-              aria-label={`Use ${match.terms.split(' ')[0]}`}
-              aria-pressed={draft.icon === match.icon}
-              data-icon={match.icon}
-              class="rounded-md border px-2 py-1 text-lg transition
-                     {draft.icon === match.icon
-                       ? 'border-sage bg-sage/15'
-                       : 'border-white/15 hover:border-white/40'}"
-              onclick={() => (draft.icon = match.icon)}
-            >
-              {match.icon}
-            </button>
-          {:else}
-            <span class="meta px-1 py-1 normal-case text-haze">
-              Nothing matches “{iconSearch}”. Try what the habit is about — run,
-              water, sleep.
-            </span>
-          {/each}
+             "AAAA". The shared picker is that separation — the box takes words,
+             the row takes the choice, and there is no free-text path to the
+             stored value at all. Cleared as `''` rather than `null`, because
+             `model_fields_set` is what tells "no icon" from "leave alone" and
+             the draft has to send the field either way. -->
+        <div class="mt-4">
+          <IconPicker value={draft.icon} onchange={(icon) => (draft.icon = icon ?? '')} />
         </div>
 
         <div class="mt-3 flex flex-wrap items-end gap-3">

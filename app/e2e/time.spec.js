@@ -1764,10 +1764,14 @@ test('the landing page reports both halves and routes into them', async ({
 })
 
 test('every landing card routes to its own half, both ways in', async ({ page }) => {
-  // Six links and three sections, so the pairs are exactly the sort of thing a
+  // Eight links and four sections, so the pairs are exactly the sort of thing a
   // copy-paste gets subtly wrong — a Patterns button pointing at the wrong half
   // would look right and be wrong, and neither is the landing page linking the
-  // halves to each other: this is the one page allowed to know all three.
+  // halves to each other: this is the one page allowed to know all four.
+  //
+  // The todo half has no patterns page, so its second action is the calendar —
+  // the other way of looking at the same tasks. The attribute keeps the name
+  // the other three use rather than earning a special case here.
   const routes = [
     ['wellbeing', 'record', '/answer'],
     ['wellbeing', 'patterns', '/stats'],
@@ -1775,9 +1779,15 @@ test('every landing card routes to its own half, both ways in', async ({ page })
     ['time', 'patterns', '/time/patterns'],
     ['focus', 'record', '/focus'],
     ['focus', 'patterns', '/focus/patterns'],
+    ['todos', 'record', '/todos'],
+    ['todos', 'patterns', '/todos/calendar'],
   ]
 
   await page.goto('/')
+  // Counted as well as read, because a missing card is a missing *pair* and
+  // eight `toHaveAttribute` calls over seven links would fail on the one that
+  // is not there rather than on the card that went.
+  await expect(page.locator('[data-card] a[data-go]')).toHaveCount(routes.length)
   for (const [card, action, href] of routes) {
     await expect(
       page.locator(`[data-card=${card}] [data-go=${action}]`),

@@ -24,6 +24,7 @@ from routers import (
     stats,
     sync,
     time,
+    todos,
     users,
 )
 from services.announcer import announce_forever
@@ -145,6 +146,7 @@ app.include_router(stats.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(time.router, prefix="/api")
 app.include_router(pomodoro.router, prefix="/api")
+app.include_router(todos.router, prefix="/api")
 app.include_router(push.router, prefix="/api")
 app.include_router(sync.router, prefix="/api")
 app.include_router(changes.router, prefix="/api")

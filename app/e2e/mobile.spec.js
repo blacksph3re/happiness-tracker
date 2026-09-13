@@ -3,6 +3,7 @@ import {
   makeEnumCatalogue,
   makeHabit,
   makeProject,
+  makeTodo,
   privateCatalogue,
   realQuestions,
   recentDays,
@@ -84,6 +85,9 @@ test.describe('at phone width', () => {
       '/time/record',
       '/time/patterns',
       '/time/projects',
+      '/todos',
+      '/todos/calendar',
+      '/todos/lists',
     ]) {
       await page.goto(path)
       await expect(page.locator('main')).toBeVisible()
@@ -127,9 +131,9 @@ test.describe('at phone width', () => {
     // and this measures the result rather than trusting the classes.
     await page.goto('/')
     const cards = page.locator('[data-card]')
-    await expect(cards).toHaveCount(3)
+    await expect(cards).toHaveCount(4)
 
-    for (const name of ['wellbeing', 'time', 'focus']) {
+    for (const name of ['wellbeing', 'time', 'focus', 'todos']) {
       const card = page.locator(`[data-card="${name}"]`)
       const actions = card.locator('a[data-go]')
       await expect(actions).toHaveCount(2)
@@ -355,5 +359,34 @@ test.describe('at phone width', () => {
     await expect(page.getByRole('button', { name: 'Totals' })).toBeVisible()
     await page.getByText(/^Show ·/).click()
     expect(await worstOverflow(page), '/stats Totals scrolls sideways').toBeLessThanOrEqual(1)
+  })
+
+  test('a task card keeps two separate targets a thumb can hit', async ({ page, account }) => {
+    // A card carries exactly two actions — the tickbox ticks, the title opens
+    // the modal — and both have to survive the narrowest screen. The tickbox is
+    // the one at risk: it draws a 32px box, which is under the 44px anybody
+    // designing for a finger aims at, so the *button* is 44px with a negative
+    // margin that gives the extra room back to the layout. Measured, because
+    // the drawing says nothing about the hit area.
+    await page.setViewportSize({ width: NARROW, height: PHONE.height })
+    await makeTodo(account, { title: 'Feed the cat' })
+    await page.goto('/todos')
+
+    const card = page.locator('article[data-client-id]').first()
+    await expect(card).toBeVisible()
+    const boxes = await card.evaluate((node) => {
+      const read = (selector) => {
+        const box = node.querySelector(selector).getBoundingClientRect()
+        return { left: box.left, right: box.right, width: box.width, height: box.height }
+      }
+      return { tick: read('[data-tick]'), title: read('[data-title]') }
+    })
+
+    expect(Math.round(boxes.tick.width), 'the tickbox is too narrow to tap').toBeGreaterThanOrEqual(44)
+    expect(Math.round(boxes.tick.height), 'the tickbox is too short to tap').toBeGreaterThanOrEqual(44)
+    // Separate, not merely present: a tap meant for one must not land on the
+    // other, which an overlapping hit area is exactly how you get.
+    expect(boxes.title.left, 'the two targets overlap').toBeGreaterThanOrEqual(boxes.tick.right)
+    expect(boxes.title.width, 'the title has no room left').toBeGreaterThan(44)
   })
 })

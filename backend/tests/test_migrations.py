@@ -93,6 +93,35 @@ def test_migrating_a_populated_database_keeps_its_rows(migrated):
             db.commit()
             watched += ["projects", "time_entries"]
 
+        # The todo lists arrive with two rows per account rather than one, so
+        # they cannot join `watched` above - but the data step that inserts
+        # them is exactly the kind that can half-succeed, so it is checked from
+        # the revision it lands on onwards.
+        if _has_table(db, "todo_lists"):
+            assert db.execute(
+                "SELECT user_id, count(*) FROM todo_lists WHERE kind <> 'ordinary'"
+                " GROUP BY user_id ORDER BY user_id"
+            ).fetchall() == [(1, 2)], f"{revision} lost a system list"
+
+            # A task and a step, from the revision that can hold them onwards.
+            # The identity index on `todos` is swapped further down the chain,
+            # and an index swap is exactly the operation that can take the
+            # table with it - so there has to be a row in there to lose.
+            if "todos" not in watched:
+                db.execute(
+                    "INSERT INTO todos (id, user_id, list_id, client_id, title,"
+                    " planned_on, rank, active_seconds)"
+                    " SELECT 1, 1, l.id, 'kept-task', 'Feed the cat',"
+                    " '2026-06-01', 'n', 0 FROM todo_lists l"
+                    " WHERE l.user_id = 1 AND l.kind = 'inbox'"
+                )
+                db.execute(
+                    "INSERT INTO todo_steps (id, todo_id, client_id, title, rank)"
+                    " VALUES (1, 1, 'kept-step', 'Open the tin', 'n')"
+                )
+                db.commit()
+                watched += ["todos", "todo_steps"]
+
         counts = {
             table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
             for table in watched
@@ -331,3 +360,284 @@ def test_the_migration_refuses_rather_than_lose_an_hour(migrated):
 
     # And it refused before deleting anything.
     assert db.execute("SELECT count(*) FROM answers").fetchone()[0] == 1
+
+
+TODOS = "e5b90c2a71d4"
+"""The revision that adds the todo tables and provisions the two system lists."""
+
+
+def test_every_existing_account_is_given_an_inbox_and_an_archive(migrated):
+    """The data step, on the shape it exists for: accounts that predate it.
+
+    Insert-only and the safest kind there is, which is precisely why it is easy
+    to get half right - a loop that inserts for the first account and stops, or
+    one that gives everybody the same list twice.
+    """
+    chain = revisions()
+    upgrade(chain[chain.index(TODOS) - 1])
+
+    db = sqlite3.connect(migrated)
+    db.executescript(
+        """
+        INSERT INTO users (id, username, password_hash, is_admin)
+             VALUES (1, 'alice', 'h', 1), (2, 'bob', 'h', 0);
+        """
+    )
+    db.commit()
+
+    upgrade(TODOS)
+
+    assert db.execute(
+        "SELECT user_id, kind, name FROM todo_lists ORDER BY user_id, rank"
+    ).fetchall() == [
+        (1, "inbox", "Inbox"),
+        (1, "archive", "Archive"),
+        (2, "inbox", "Inbox"),
+        (2, "archive", "Archive"),
+    ]
+    # The inbox sorts first and the archive last, which is what the ranks are
+    # for: `todo_lists` is ordered by rank and nothing else.
+    ranks = db.execute("SELECT rank FROM todo_lists WHERE user_id = 1").fetchall()
+    assert len({rank for (rank,) in ranks}) == 2
+    assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_the_pomodoro_link_is_added_without_rebuilding_the_table(migrated):
+    """`pomodoros.todo_id` is a nullable column with no server default.
+
+    Which means SQLite adds it **in place**: `sqlite_master.rootpage` for
+    `pomodoros` is unmoved either side. Measured rather than reasoned about,
+    because "adding a column is safe" is the wrong rule and a migration
+    docstring in this repository asserted it for a while.
+    """
+    chain = revisions()
+    upgrade(chain[chain.index(TODOS) - 1])
+
+    db = sqlite3.connect(migrated)
+    db.execute(
+        "INSERT INTO users (id, username, password_hash, is_admin)"
+        " VALUES (1, 'alice', 'h', 1)"
+    )
+    db.execute(
+        "INSERT INTO pomodoros"
+        " (id, user_id, started_at, utc_offset, focus_seconds, break_seconds,"
+        "  tainted)"
+        " VALUES (1, 1, '2026-06-10 09:00:00', 0, 1500, 300, 0)"
+    )
+    db.commit()
+
+    def rootpages():
+        return dict(
+            db.execute(
+                "SELECT name, rootpage FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        )
+
+    before = rootpages()
+    upgrade(TODOS)
+    after = rootpages()
+
+    assert after["pomodoros"] == before["pomodoros"], (
+        "the pomodoros table was rebuilt: copy, DROP, rename is the operation "
+        "that has emptied tables in this database before"
+    )
+    # The control, and the reason the check above is not a coincidence: a table
+    # this revision creates has no rootpage beforehand at all.
+    assert "todos" not in before
+    assert db.execute("SELECT count(*) FROM pomodoros").fetchone()[0] == 1
+    # And the column really carries the reference, which is what makes deleting
+    # a task leave its pomodoros behind rather than take them.
+    assert "todo_id" in {
+        row[1] for row in db.execute("PRAGMA table_info(pomodoros)").fetchall()
+    }
+    assert any(
+        row[2] == "todos"
+        for row in db.execute("PRAGMA foreign_key_list(pomodoros)").fetchall()
+    ), "todo_id was added without its foreign key"
+
+
+SHARED_LISTS = "a7c2f81d4e60"
+"""The revision that adds `todo_list_members` and re-keys a task's identity."""
+
+
+def _seed_two_accounts_with_lists(db):
+    """Give two accounts the inbox and archive this revision expects.
+
+    Inserted by hand rather than left to the revision that provisions them:
+    that data step runs over the accounts it *finds*, and these are created
+    after it has already been applied.
+    """
+    db.executescript(
+        """
+        INSERT INTO users (id, username, password_hash, is_admin)
+             VALUES (1, 'alice', 'h', 1), (2, 'bob', 'h', 0);
+        INSERT INTO todo_lists (user_id, name, kind, colour, rank)
+             VALUES (1, 'Inbox', 'inbox', 'tide', 'a'),
+                    (1, 'Archive', 'archive', 'haze', 'z'),
+                    (2, 'Inbox', 'inbox', 'tide', 'a'),
+                    (2, 'Archive', 'archive', 'haze', 'z');
+        """
+    )
+    db.commit()
+
+
+def _insert_task(db, user_id, client_id, todo_id):
+    """Insert one task into an account's inbox."""
+    db.execute(
+        "INSERT INTO todos (id, user_id, list_id, client_id, title, planned_on,"
+        " rank, active_seconds)"
+        " SELECT ?, ?, l.id, ?, 'Feed the cat', '2026-06-01', 'n', 0"
+        "   FROM todo_lists l WHERE l.user_id = ? AND l.kind = 'inbox'",
+        (todo_id, user_id, client_id, user_id),
+    )
+    db.commit()
+
+
+def test_the_task_identity_swap_keeps_every_row_and_does_not_rebuild_the_table(
+    migrated,
+):
+    """`uq_todo_client_id` becomes unique on `client_id` alone.
+
+    Both halves measured rather than reasoned about. The index is a standalone
+    partial index rather than a table constraint, so dropping and re-creating
+    it is pure index DDL and ``sqlite_master.rootpage`` for ``todos`` is
+    unmoved — where a `batch_alter_table` would have gone down the
+    copy-``DROP``-rename path, which is the operation that has emptied tables
+    in this database before.
+    """
+    chain = revisions()
+    upgrade(chain[chain.index(SHARED_LISTS) - 1])
+
+    db = sqlite3.connect(migrated)
+    _seed_two_accounts_with_lists(db)
+    _insert_task(db, 1, "alice-task", 1)
+    _insert_task(db, 2, "bob-task", 2)
+    db.execute(
+        "INSERT INTO todo_steps (id, todo_id, client_id, title, rank)"
+        " VALUES (1, 1, 'alice-step', 'Open the tin', 'n')"
+    )
+    db.commit()
+
+    def rootpages():
+        return dict(
+            db.execute(
+                "SELECT name, rootpage FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        )
+
+    before = rootpages()
+    assert "todo_list_members" not in before
+    upgrade(SHARED_LISTS)
+    after = rootpages()
+
+    assert after["todos"] == before["todos"], (
+        "the todos table was rebuilt: copy, DROP, rename is the operation that "
+        "has emptied tables in this database before"
+    )
+    assert after["todo_steps"] == before["todo_steps"]
+    assert db.execute("SELECT count(*) FROM todos").fetchone()[0] == 2
+    assert db.execute("SELECT count(*) FROM todo_steps").fetchone()[0] == 1
+
+    # The identity is global now, which is what lets two members of one list
+    # resolve the same task rather than each inserting their own copy.
+    assert [row[2] for row in db.execute("PRAGMA index_info('uq_todo_client_id')")] == [
+        "client_id"
+    ]
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_task(db, 2, "alice-task", 3)
+    db.rollback()
+
+    # A step's identity is unchanged: it is unique per parent, and the parent
+    # is how a member reaches it.
+    assert sorted(
+        row[2] for row in db.execute("PRAGMA index_info('uq_step_client_id')")
+    ) == ["client_id", "todo_id"]
+    assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_the_identity_swap_refuses_rather_than_fail_on_a_collision(migrated):
+    """The guard, on the one shape that cannot be made unique.
+
+    Two accounts holding the same `client_id` is astronomically unlikely — the
+    ids are UUIDs — but a bare ``CREATE UNIQUE INDEX`` would report it as
+    *UNIQUE constraint failed*, naming neither the rows nor what to do. A
+    migration that refuses with the colliding ids beats one that stops with a
+    sentence about an index.
+    """
+    chain = revisions()
+    upgrade(chain[chain.index(SHARED_LISTS) - 1])
+
+    db = sqlite3.connect(migrated)
+    _seed_two_accounts_with_lists(db)
+    _insert_task(db, 1, "same-id", 1)
+    _insert_task(db, 2, "same-id", 2)
+
+    with pytest.raises(Exception, match="same-id"):
+        upgrade(SHARED_LISTS)
+
+    # And it refused before touching anything: the guard runs ahead of the
+    # DDL, so a database it stops on is still exactly the one it found.
+    assert db.execute("SELECT count(*) FROM todos").fetchone()[0] == 2
+    assert not _has_table(db, "todo_list_members")
+
+
+TASK_COLOUR = "b8d3a1f70c25"
+"""The revision that gives a task its own optional colour."""
+
+
+def test_a_task_colour_is_added_without_rebuilding_the_table(migrated):
+    """`todos.colour` is nullable with no server default, so it adds in place.
+
+    Measured rather than reasoned about, for the reason the whole
+    *Which changes rebuild the table* rule exists: "adding a column is safe" is
+    the wrong rule, and only *nullable with no server default* takes the
+    in-place path. `sqlite_master.rootpage` for `todos` is unmoved either side,
+    with `todo_steps` as a second unmoved table and the row count as the thing
+    a copy-``DROP``-rename would have taken.
+    """
+    chain = revisions()
+    upgrade(chain[chain.index(TASK_COLOUR) - 1])
+
+    db = sqlite3.connect(migrated)
+    _seed_two_accounts_with_lists(db)
+    _insert_task(db, 1, "alice-task", 1)
+    db.execute(
+        "INSERT INTO todo_steps (id, todo_id, client_id, title, rank)"
+        " VALUES (1, 1, 'alice-step', 'Open the tin', 'n')"
+    )
+    db.commit()
+
+    def rootpages():
+        return dict(
+            db.execute(
+                "SELECT name, rootpage FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        )
+
+    before = rootpages()
+    assert "colour" not in {
+        row[1] for row in db.execute("PRAGMA table_info(todos)").fetchall()
+    }
+    upgrade(TASK_COLOUR)
+    after = rootpages()
+
+    assert after["todos"] == before["todos"], (
+        "the todos table was rebuilt: copy, DROP, rename is the operation that "
+        "has emptied tables in this database before"
+    )
+    assert after["todo_steps"] == before["todo_steps"]
+    assert db.execute("SELECT count(*) FROM todos").fetchone()[0] == 1
+    assert db.execute("SELECT count(*) FROM todo_steps").fetchone()[0] == 1
+
+    # The column exists, is nullable, carries no default, and every existing
+    # row reads null — which is what "take the list's colour" is spelled as.
+    column = next(
+        row
+        for row in db.execute("PRAGMA table_info(todos)").fetchall()
+        if row[1] == "colour"
+    )
+    assert column[2] == "VARCHAR(16)"
+    assert column[3] == 0, "colour arrived NOT NULL, which rebuilds the table"
+    assert column[4] is None, "a server default rebuilds the table too"
+    assert db.execute("SELECT colour FROM todos").fetchall() == [(None,)]
+    assert db.execute("PRAGMA foreign_key_check").fetchall() == []

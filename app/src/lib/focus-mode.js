@@ -5,6 +5,16 @@
  * personal rhythm, and the four shapes offered first turned out to be four
  * opinions about somebody else's. The lengths are copied onto each pomodoro
  * when it starts, so changing them never rewrites what yesterday meant.
+ *
+ * **In the shared zone, and it was shared all along.** This was
+ * `lib/pomodoro/mode.js`, which the Settings page — shared — imported across
+ * from the moment the mode became a preference; the todo half then needed the
+ * same lengths to start a pomodoro from a task, and `store.js` needs them to
+ * write one. Three readers outside the focus zone is the rule's own trigger:
+ * if both halves need something it belongs in the shared zone, and the move is
+ * the signal. Nothing about a *pomodoro* lives here — only the two numbers and
+ * how they are read out of a preferences document, which is why the rest of
+ * `lib/pomodoro/` stayed where it is.
  */
 
 export const DEFAULT_FOCUS_MINUTES = 25

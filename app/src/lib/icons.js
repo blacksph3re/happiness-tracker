@@ -1,5 +1,5 @@
 /**
- * The icons a habit may wear, and the words that find them.
+ * The icons a habit, a task or a step may wear, and the words that find them.
  *
  * A curated set rather than the whole of Unicode, and that is the point: the
  * field used to take any text at all, so a habit could be labelled `AAAA` and
@@ -10,9 +10,11 @@
  * Emoji rather than an icon font: no asset pipeline, no build step, they render
  * on every device the app runs on, and they carry their own colour.
  *
- * Kept in the wellbeing zone because only the question editor needs it. Reading
- * an icon is just rendering a string, which the landing page and the streak rows
- * do without knowing anything about this list.
+ * Shared rather than in the wellbeing zone, which is where it started: a task
+ * and a step carry an icon in place of their tickbox, and it must be chosen
+ * rather than typed for exactly the reason a habit's must be. Reading an icon is
+ * still just rendering a string, which the landing page and the streak rows do
+ * without knowing anything about this list.
  */
 
 /**

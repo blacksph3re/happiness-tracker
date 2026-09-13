@@ -34,13 +34,115 @@
     DEFAULT_BREAK_MINUTES,
     DEFAULT_FOCUS_MINUTES,
     MAX_MINUTES,
-  } from '../lib/pomodoro/mode.js'
+  } from '../lib/focus-mode.js'
   import { AMBIENCES, CHIMES, playChime } from '../lib/pomodoro/sounds.js'
+  import {
+    PRIORITIES,
+    PRIORITY_LABELS,
+    bucketHint,
+    cleanBuckets,
+    cleanSplit,
+    importantSplit,
+    sizeBuckets,
+    todoSettings,
+    urgentDays,
+  } from '../lib/todo-settings.js'
   import { connection } from '../lib/sync.js'
   import { navigate } from '../lib/router.js'
   import { pushToast } from '../lib/toasts.js'
 
   const focus = $derived(preferenceSection($preferenceStore, 'focus'))
+
+  /** The whole `todos` section, view state included, so a save keeps the rest. */
+  const todoSection = $derived(preferenceSection($preferenceStore, 'todos'))
+
+  /** The three things the board is configured by, validated and complete. */
+  const todo = $derived(todoSettings(todoSection))
+
+  /** Why the last todo edit was refused, or null when none was. */
+  let refused = $state(null)
+
+  /**
+   * Save the board's settings, or refuse them.
+   *
+   * **Refused rather than absorbed**, which is the whole reason `cleanSplit`
+   * and `cleanBuckets` are exported: every reader of these settings falls back
+   * to the defaults for a value it cannot use, so a set saved in that state
+   * would come back as the defaults and the control would have silently done
+   * the opposite of what it was told. Asked first, and the caller puts the
+   * field back.
+   *
+   * The section is spread through, not replaced: it also carries the list,
+   * grouping and layout the board is remembering, and a page that saved only
+   * its own half would throw the other away.
+   *
+   * @param {object} patch The parts of `TodoSettings` that changed.
+   * @returns {boolean} Whether it was saved.
+   */
+  function saveTodoSettings(patch) {
+    const wanted = { ...todo, ...patch }
+    if (!cleanSplit(wanted.important)) {
+      refused = 'At least one priority has to count as important, or the matrix has two columns nothing can reach.'
+      return false
+    }
+    if (!Number.isInteger(wanted.urgent_days) || wanted.urgent_days < 0) {
+      refused = 'The urgency window is a whole number of days, zero or more.'
+      return false
+    }
+    if (!cleanBuckets(wanted.buckets)) {
+      refused =
+        'The buckets have to run from zero upwards with no gap and no overlap, and every centre has to fall inside its own bucket.'
+      return false
+    }
+    refused = null
+    persistPreferences('todos', { ...todoSection, settings: wanted })
+    return true
+  }
+
+  /**
+   * Turn one priority's importance on or off.
+   *
+   * @param {string} priority
+   * @param {boolean} wanted
+   * @returns {boolean} Whether it was saved.
+   */
+  function chooseImportant(priority, wanted) {
+    const split = PRIORITIES.filter((one) =>
+      one === priority ? wanted : importantSplit(todo).includes(one)
+    )
+    return saveTodoSettings({ important: split })
+  }
+
+  /**
+   * Change one field of one size bucket.
+   *
+   * A bucket's **upper** edge is the editable one, and setting it moves the
+   * next bucket's lower edge with it. That is not a shortcut: the set has to
+   * cover every minute from zero upwards exactly once or a task with a duration
+   * has no column, and two independently edited numbers that have to be equal
+   * is a rule nobody can satisfy one keystroke at a time. So a boundary is one
+   * number drawn twice, and `from` is read-only.
+   *
+   * @param {number} at Which bucket, indexed as drawn.
+   * @param {string} field `label`, `max` or `centre`.
+   * @param {string|number} value What was typed.
+   * @returns {boolean} Whether it was saved.
+   */
+  function chooseBucket(at, field, value) {
+    const buckets = sizeBuckets(todo).map((one) => ({ ...one }))
+    if (field === 'label') {
+      buckets[at].label = String(value).trim()
+    } else {
+      const number = Number(value)
+      if (!Number.isFinite(number)) {
+        refused = 'That is not a number of minutes.'
+        return false
+      }
+      buckets[at][field] = Math.round(number)
+      if (field === 'max' && buckets[at + 1]) buckets[at + 1].min = Math.round(number)
+    }
+    return saveTodoSettings({ buckets })
+  }
 
   /** Why the notification switch is unavailable, or null when it is not. */
   const pushBlocked = $derived(
@@ -323,6 +425,183 @@
       With no focus sound, a pomodoro that finishes while the app is closed is
       reported when you come back rather than at the moment it ended.
     </p>
+  </div>
+
+  <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-todo-settings>
+    <h2 class="font-semibold">Todos</h2>
+    <p class="mt-1 text-sm text-haze">
+      What the Eisenhower and Size views mean. None of this rewrites a task:
+      they decide which column one falls into, so a split changed today
+      re-groups last month.
+    </p>
+
+    <!-- Labelled with what it means, which is the smoothing-slider lesson: a
+         control that is not on screen still applies, and these apply on a page
+         that does not draw them. -->
+    <p class="meta mt-5">Important · {importantSplit(todo).map((one) => PRIORITY_LABELS[one].toLowerCase()).join(', ')}</p>
+    <div class="mt-2 flex flex-wrap gap-x-5 gap-y-2">
+      {#each PRIORITIES as priority (priority)}
+        <label class="flex items-center gap-2">
+          <input
+            type="checkbox"
+            data-important={priority}
+            checked={importantSplit(todo).includes(priority)}
+            onchange={(event) => {
+              const wanted = event.currentTarget.checked
+              if (!chooseImportant(priority, wanted)) event.currentTarget.checked = !wanted
+            }}
+            class="h-4 w-4 rounded border-white/25 bg-ink"
+          />
+          <span class="text-sm">{PRIORITY_LABELS[priority]}</span>
+        </label>
+      {/each}
+    </div>
+    <!-- A sentence, so not a `.meta`: its case is set unlayered and the
+         `normal-case` beside it was dead CSS, which is three paragraphs of
+         prose in capitals on the page this section is read on. -->
+    <p class="mt-2 text-sm text-haze" data-todo-note>
+      A task with no priority is not important, always — that is the brief's
+      rule and not a default.
+    </p>
+
+    <label class="meta mt-5 block" for="todo-urgent">
+      Urgent · due within {urgentDays(todo)} {urgentDays(todo) === 1 ? 'day' : 'days'}
+    </label>
+    <input
+      id="todo-urgent"
+      type="number"
+      min="0"
+      max="365"
+      step="1"
+      data-urgent-days
+      class="numeral mt-2 w-32 rounded-lg border border-white/15 bg-ink px-4 py-3"
+      value={urgentDays(todo)}
+      onchange={(event) => {
+        const wanted = Number(event.currentTarget.value)
+        if (!saveTodoSettings({ urgent_days: Math.round(wanted) })) {
+          event.currentTarget.value = urgentDays(todo)
+        }
+      }}
+    />
+    <p class="mt-2 text-sm text-haze" data-todo-note>
+      A task with no due date is never urgent. The app is not going to invent a
+      deadline to decide.
+    </p>
+
+    <p class="meta mt-5">Sizes</p>
+    <p class="mt-1 text-sm text-haze" data-todo-note>
+      A drop into a bucket writes its centre, always — the buckets are
+      coarse guesses rather than measurements, so the centre is the more useful
+      number. The upper edge of one bucket is the lower edge of the next, so
+      there is one number for a boundary and no way to leave a gap.
+    </p>
+    <!-- Each bucket is a box of its own, and its hint always takes its own line
+         inside it. Under one wrapping row the two shortest hints stayed inline
+         and the two longest wrapped — 12px under their own fields and **8px
+         above the next bucket's Name label**, so two of the four read as the
+         neighbour's caption. `basis-full` is what makes the hint's line a
+         decision rather than an accident of how long the text came out, and the
+         border is what says which fields it is about. -->
+    <div class="mt-3 flex flex-col gap-3">
+      {#each sizeBuckets(todo) as bucket, at (bucket.id)}
+        <div
+          class="flex flex-wrap items-end gap-x-3 gap-y-1.5 rounded-lg border border-white/10
+                 px-3 py-3"
+          data-bucket={bucket.id}
+        >
+          <label class="flex flex-col gap-1.5">
+            <span class="meta">Name</span>
+            <input
+              data-bucket-label={bucket.id}
+              value={bucket.label}
+              maxlength="40"
+              class="w-40 rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+              onchange={(event) => {
+                if (!chooseBucket(at, 'label', event.currentTarget.value)) {
+                  event.currentTarget.value = bucket.label
+                }
+              }}
+            />
+          </label>
+          {#if bucket.min === null}
+            <!-- The bucket that is not a range. Something has to answer "no
+                 estimate at all", and it is fixed because it has nothing to
+                 configure: no edges, and a drop into it writes no duration. -->
+            <p class="py-2 text-sm text-haze" data-todo-note>No estimate. Nothing to set.</p>
+          {:else}
+            <label class="flex flex-col gap-1.5">
+              <span class="meta">From</span>
+              <input
+                data-bucket-from={bucket.id}
+                class="numeral w-24 rounded-lg border border-white/15 bg-ink px-3 py-2
+                       text-sm opacity-60"
+                value={bucket.min}
+                disabled
+                aria-label={`${bucket.label} starts at`}
+              />
+            </label>
+            <label class="flex flex-col gap-1.5">
+              <span class="meta">To</span>
+              {#if bucket.max === null}
+                <input
+                  data-bucket-to={bucket.id}
+                  class="numeral w-24 rounded-lg border border-white/15 bg-ink px-3 py-2
+                         text-sm opacity-60"
+                  value="∞"
+                  disabled
+                  aria-label={`${bucket.label} has no upper edge`}
+                />
+              {:else}
+                <input
+                  type="number"
+                  min="1"
+                  step="5"
+                  data-bucket-to={bucket.id}
+                  aria-label={`${bucket.label} ends at`}
+                  class="numeral w-24 rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+                  value={bucket.max}
+                  onchange={(event) => {
+                    if (!chooseBucket(at, 'max', event.currentTarget.value)) {
+                      event.currentTarget.value = bucket.max
+                    }
+                  }}
+                />
+              {/if}
+            </label>
+            <label class="flex flex-col gap-1.5">
+              <span class="meta">Centre</span>
+              <input
+                type="number"
+                min="0"
+                step="5"
+                data-bucket-centre={bucket.id}
+                aria-label={`${bucket.label} centre`}
+                class="numeral w-24 rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+                value={bucket.centre}
+                onchange={(event) => {
+                  if (!chooseBucket(at, 'centre', event.currentTarget.value)) {
+                    event.currentTarget.value = bucket.centre
+                  }
+                }}
+              />
+            </label>
+            <!-- The same sentence the column heading draws, from the same
+                 function: two spellings of *1h–4h → 2h* is how two numbers on
+                 one screen come to disagree, and this one is on two screens. -->
+            <p class="meta basis-full normal-case" data-bucket-says={bucket.id}>
+              {bucketHint(bucket)}
+            </p>
+          {/if}
+        </div>
+      {/each}
+    </div>
+
+    {#if refused}
+      <!-- Said rather than swallowed. The field has already gone back to what
+           was stored; without this the only evidence would be a number that
+           declined to change. -->
+      <p class="mt-3 text-sm text-alarm" data-todo-refused>{refused}</p>
+    {/if}
   </div>
 
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-push>

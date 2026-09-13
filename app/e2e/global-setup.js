@@ -1,13 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { BACKEND_ENV, BASE_PORT, WORKERS } from '../playwright.config.js'
+import { BACKEND_ENV, BASE_PORT, RUN_DIR, WORKERS } from '../playwright.config.js'
 
 const BACKEND_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../backend')
-const RUN_DIR = path.join(os.tmpdir(), 'happiness-e2e')
 const REGISTRY = path.join(RUN_DIR, 'servers.json')
 
 /**

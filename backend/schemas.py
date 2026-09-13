@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -7,16 +7,21 @@ from pydantic.fields import FieldInfo
 from config import get_settings
 from models import (
     ICON_MAX_LENGTH,
+    LIST_NAME_MAX_LENGTH,
     PROMPT_MAX_LENGTH,
+    RANK_MAX_LENGTH,
+    TODO_TITLE_MAX_LENGTH,
     TRACK_NAME_MAX_LENGTH,
     EntrySource,
     HabitDirection,
     HabitPeriod,
+    ListKind,
     PomodoroState,
     QuestionKind,
     QuestionOrigin,
     ScoreAggregate,
     SystemKey,
+    TodoPriority,
 )
 from templates import DEFAULT_TEMPLATE
 
@@ -136,6 +141,20 @@ class Changes(BaseModel):
 
     catalogues: Fingerprint
     """Question catalogues, which belong to the account like everything else."""
+
+    todos: Fingerprint
+    """Tasks, which are ticked, corrected, archived and deleted freely.
+
+    The pair earns its keep in both directions here: a tick is an edit no count
+    can see, and moving a task to the archive is an update that moves no count
+    at all.
+    """
+
+    todo_steps: Fingerprint
+    """Subtasks, counted through the task they sit on."""
+
+    todo_lists: Fingerprint
+    """The account's lists, the two system ones included."""
 
     me: Fingerprint
     """The account row itself, whose default catalogue decides what is asked."""
@@ -1065,12 +1084,17 @@ class SyncIntent(BaseModel):
         "entry.delete",
         "pomodoro.upsert",
         "pomodoro.delete",
+        "todo.upsert",
+        "todo.delete",
+        "step.upsert",
+        "step.delete",
     ]
     """What the intent does.
 
     `entry.upsert` covers creating and correcting alike, deliberately: a
     correction to a session another device deleted re-creates it, and a single
     kind is what makes that fall out rather than being special-cased.
+    `todo.upsert` and `step.upsert` are the same shape for the same reason.
     """
 
     client_updated_at: datetime
@@ -1197,6 +1221,22 @@ class PomodoroOut(BaseModel):
     client_id: str | None
     """The identity the recording device gave it. See `TimeEntryOut`."""
 
+    todo_id: int | None
+    """The task this focus was for, or null when the timer was never linked.
+
+    Read the task's *current* title through this where it is set, and the
+    stored `task` text where it is not. Exactly one of the two is ever right
+    for a given row, which is what makes keeping both safe.
+    """
+
+    todo_client_id: str | None
+    """That task's own device identity, or null.
+
+    Sent beside the server id because the client keys its tasks by this: a
+    device folding a pomodoro into its cache would otherwise need a second
+    lookup to say which of its own rows the link names.
+    """
+
     state: PomodoroState
     """Which of the three outcomes it is in, computed on read.
 
@@ -1286,8 +1326,366 @@ class SyncPomodoroPayload(BaseModel):
     tainted: bool = False
     """Whether the focus was marked unsuccessful."""
 
+    todo_client_id: str | None = Field(default=None, max_length=36)
+    """The task this focus is for, named by the identity its device gave it.
+
+    The client's own id and **not** `todo_id`, because a pomodoro started from
+    a task created in the same gesture names a task the server has never seen:
+    its primary key does not exist yet. The server resolves the identity the
+    way `step.upsert` resolves its parent, and refuses the intent when it names
+    a task belonging to somebody else.
+    """
+
 
 SyncResult.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# Todos. Tasks and steps are written only through `/api/sync`, so there is no
+# create or update payload for either — the offline path is the only path,
+# which is what stops it rotting from disuse. Lists are ordinary CRUD, like
+# projects and tags and for the same reason: a container is not something you
+# make on a train.
+# ---------------------------------------------------------------------------
+
+
+class TodoStepOut(BaseModel):
+    """One subtask as exposed by the API, nested inside its task."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    """Surrogate primary key."""
+
+    client_id: str | None
+    """The identity the recording device gave it, which is what a later tick
+    or deletion names it by."""
+
+    title: str
+    """What the step is."""
+
+    icon: str | None
+    """An emoji drawn in place of the tickbox, or null for the tickbox."""
+
+    rank: str
+    """Order within its task."""
+
+    done_at: datetime | None
+    """When it was ticked, in UTC, or null while it is not."""
+
+
+class TodoOut(BaseModel):
+    """One task as exposed by the API, with its steps nested."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    """Surrogate primary key."""
+
+    client_id: str | None
+    """The identity the recording device gave it. See `TimeEntryOut`."""
+
+    list_id: int
+    """Which list it is in. Being archived *is* this pointing at the archive."""
+
+    title: str
+    """What to do."""
+
+    description: str | None
+    """Longer notes, in Markdown."""
+
+    planned_on: date
+    """The local day it is planned for."""
+
+    planned_at: time | None
+    """Wall clock time on that day, or null for the calendar's *anytime* row."""
+
+    due_on: date | None
+    """When it has to be done by, or null."""
+
+    priority: TodoPriority | None
+    """How it ranks against the others. Null is *not important* by definition."""
+
+    duration_minutes: int | None
+    """How long it is expected to take. An estimate, never a measurement."""
+
+    icon: str | None
+    """An emoji drawn in place of the tickbox, or null for the tickbox."""
+
+    colour: str | None
+    """A palette token painting the card, or null to take the list's colour."""
+
+    rank: str
+    """Order within its column."""
+
+    done_at: datetime | None
+    """When it was ticked, in UTC, or null. There is no `is_done`."""
+
+    archived_at: datetime | None
+    """When it last entered the archive, in UTC, or null.
+
+    **When**, never *whether*: read it only for a task already known to be in
+    the archive. The server fills and clears it from the list the task is in,
+    so it cannot disagree with that.
+    """
+
+    active_since: datetime | None
+    """When the current activation began, in UTC, or null when not active."""
+
+    active_seconds: int
+    """Seconds banked from activations that have already ended."""
+
+    steps: list[TodoStepOut] = []
+    """The subtasks, in order. Always nested rather than fetched per task."""
+
+
+class TodoPage(BaseModel):
+    """One page of the archive, with the marker for the page after it."""
+
+    items: list[TodoOut]
+    """The tasks, newest arrival first."""
+
+    next: str | None
+    """An opaque marker to send back as ``before``, or null at the end.
+
+    Opaque because it encodes a *pair* — when the last task on the page was
+    archived and which task it was. A cursor naming only the timestamp would
+    repeat or skip tasks archived in the same instant, which is what a cleanup
+    of a whole list produces.
+    """
+
+
+class TodoListOut(BaseModel):
+    """A list of tasks as exposed by the API, with who else can see it.
+
+    Built by hand rather than read off the row, because the last field depends
+    on **who is asking**: a roster is the owner's to see.
+    """
+
+    id: int
+    """Surrogate primary key."""
+
+    name: str
+    """Display name. Never what the code branches on; `kind` is."""
+
+    kind: ListKind
+    """Which of the three this is."""
+
+    colour: str
+    """A chip palette token.
+
+    One colour per list rather than one per member: two people looking at one
+    list should see one thing, so a shared list carries the owner's choice.
+    """
+
+    rank: str
+    """Column order in the move-between-lists view.
+
+    A shared list carries the rank its **owner** gave it, which this caller
+    never chose. The reply is ordered with the caller's own inbox first and
+    their own archive last regardless, so a rank from another account cannot
+    push a system list out of its place.
+    """
+
+    owner: str
+    """The username of the account the list belongs to.
+
+    Always present, and equal to the caller's own name for a list they own.
+    What draws *Shared by alice* under somebody else's list.
+    """
+
+    shared: bool
+    """Whether anybody besides the owner can see this list."""
+
+    members: list[str] | None
+    """The other usernames that can see it, or null when the caller is not the
+    owner.
+
+    Empty rather than null for an owned list nobody else holds: the absence of
+    members is a fact about it, where null says *not your roster to read*.
+    """
+
+
+class TodoListMemberOut(BaseModel):
+    """One account a list has been shared with."""
+
+    user_id: int
+    """The member's account, which is what a removal names them by."""
+
+    username: str
+    """Their name, which is what the owner sees and shares by."""
+
+    added_by: str | None
+    """Who shared the list, or null once that account is gone.
+
+    Never the member themselves: sharing is the owner's act, and a member
+    cannot hand a list on.
+    """
+
+    created_at: datetime
+    """When the list was shared with them."""
+
+
+class TodoListMemberCreate(BaseModel):
+    """Payload for sharing a list with somebody.
+
+    By **username**, which tells the owner whether a username exists — a small
+    leak the app otherwise makes only to an admin, and the price of the simplest
+    interface. An unknown name answers 404, so it reads exactly as an unowned
+    list does.
+    """
+
+    username: str = Field(min_length=1, max_length=255)
+    """Who to share it with. Not the caller: a list is never shared with its
+    own owner, which answers 409."""
+
+
+class TodoListCreate(BaseModel):
+    """Payload for making a list."""
+
+    name: str = Field(min_length=1, max_length=LIST_NAME_MAX_LENGTH)
+    """Display name. Not unique: two lists called *Home* are the owner's
+    business."""
+
+    colour: str = Field(default="tide", pattern=COLOUR_PATTERN)
+    """A chip palette token."""
+
+    rank: str | None = Field(default=None, max_length=RANK_MAX_LENGTH)
+    """Where it sorts, or null to append after the last list before the archive."""
+
+
+class TodoListUpdate(BaseModel):
+    """Payload for editing a list. Omitted fields are left alone."""
+
+    name: str | None = Field(
+        default=None, min_length=1, max_length=LIST_NAME_MAX_LENGTH
+    )
+    """New display name. Allowed on the two system lists like any other."""
+
+    colour: str | None = Field(default=None, pattern=COLOUR_PATTERN)
+    """New chip palette token."""
+
+    rank: str | None = Field(default=None, max_length=RANK_MAX_LENGTH)
+    """New column order."""
+
+    kind: ListKind | None = None
+    """Accepted only where it matches what is stored, and refused otherwise.
+
+    Present so that a client sending a whole list back does not have to strip
+    the field, and so that an attempt to *change* it is a named 409 rather than
+    a silently ignored key. Turning an ordinary list into a second archive is
+    the kind of thing the partial unique index would report as a 500.
+    """
+
+
+class SyncTodoPayload(BaseModel):
+    """A task as a device queues it.
+
+    Every field of the row, because a task has no extent and nothing merges:
+    the newest version of a task simply is the task. The list is named by its
+    **server** id, which the device always has — lists are online-only CRUD, so
+    a list it could name at all is one it has already read.
+    """
+
+    list_id: int
+    """Which list the task is in."""
+
+    title: str = Field(min_length=1, max_length=TODO_TITLE_MAX_LENGTH)
+    """What to do."""
+
+    description: str | None = Field(default=None, max_length=20_000)
+    """Longer notes, in Markdown."""
+
+    planned_on: date
+    """The local day it is planned for. Mandatory, as the title is."""
+
+    planned_at: time | None = None
+    """Wall clock time on that day, or null for no particular time."""
+
+    due_on: date | None = None
+    """When it has to be done by, or null."""
+
+    priority: TodoPriority | None = None
+    """How it ranks against the others, or null for *not important*."""
+
+    duration_minutes: int | None = Field(default=None, ge=0, le=100_000)
+    """How long it is expected to take, in minutes."""
+
+    icon: str | None = Field(default=None, max_length=ICON_MAX_LENGTH)
+    """An emoji drawn in place of the tickbox.
+
+    Bounded by length alone, as a question's icon is: an icon from a later
+    curated set must not start answering 422.
+    """
+
+    colour: str | None = Field(default=None, pattern=COLOUR_PATTERN)
+    """A palette token painting the card, or null to take the list's colour.
+
+    Bounded by shape and not by membership, exactly as a project's and a
+    list's colour are: the palette gains tokens, and a colour chosen in a
+    later release of the app must not start answering 422 against a server
+    that has not been redeployed yet. The client draws an unrecognised token
+    through `chipColour`'s fallback, so the only thing a membership rule could
+    buy here is a guarantee nothing needs.
+
+    Null is a value rather than an omission — see the class docstring: a
+    `todo.upsert` carries every field of the row, so sending null is the whole
+    of taking a colour off and none of `model_fields_set` is involved.
+    """
+
+    rank: str | None = Field(default=None, max_length=RANK_MAX_LENGTH)
+    """Order within its column, or null to append at the end of the list.
+
+    The client computes this, because only the client knows where the card was
+    dropped. Null is for the writes that name no position at all — the
+    pomodoro handover creating a task in the inbox, say.
+    """
+
+    done_at: datetime | None = None
+    """When it was ticked, in UTC, or null."""
+
+    archived_at: datetime | None = None
+    """When it entered the archive, in UTC, or null.
+
+    A field like any other on the wire, but the server has the last word: a
+    task in the archive list gets a timestamp whether or not one arrived, and a
+    task outside it has this cleared. That keeps the column honest whatever
+    version of the client sent the row.
+    """
+
+    active_since: datetime | None = None
+    """When the current activation began, in UTC, or null when not active."""
+
+    active_seconds: int = Field(default=0, ge=0)
+    """Seconds banked from activations that have already ended."""
+
+
+class SyncStepPayload(BaseModel):
+    """A subtask as a device queues it, naming its parent by client identity.
+
+    **The wire carries the parent's `client_id`; the database stores the real
+    key.** A step created in the modal of a task that is itself still in the
+    outbox has no `todo_id` to point at. Intents replay in order, so the parent
+    is already applied — and where it was refused, the step is refused with
+    *that task no longer exists*, which is what `apply_answer` already says
+    about a missing question.
+    """
+
+    todo_client_id: str = Field(min_length=1, max_length=36)
+    """The identity its device gave the task this step sits on."""
+
+    title: str = Field(min_length=1, max_length=TODO_TITLE_MAX_LENGTH)
+    """What the step is."""
+
+    icon: str | None = Field(default=None, max_length=ICON_MAX_LENGTH)
+    """An emoji drawn in place of the tickbox."""
+
+    rank: str | None = Field(default=None, max_length=RANK_MAX_LENGTH)
+    """Order within its task, or null to append after the last step."""
+
+    done_at: datetime | None = None
+    """When the step was ticked, in UTC, or null. Ticking every step does not
+    tick the task: there is no roll-up, only a counter on the card."""
 
 
 class PushKey(BaseModel):

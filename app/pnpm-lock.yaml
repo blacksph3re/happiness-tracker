@@ -14,6 +14,9 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(vite@8.2.1(jiti@2.7.0)(terser@5.50.0))
+      dompurify:
+        specifier: ^3.4.15
+        version: 3.4.15
       echarts:
         specifier: ^6.1.0
         version: 6.1.0
@@ -23,6 +26,9 @@ importers:
       idb:
         specifier: ^8.0.3
         version: 8.0.3
+      marked:
+        specifier: ^18.0.12
+        version: 18.0.12
       qrcode-generator:
         specifier: ^2.0.4
         version: 2.0.4
@@ -1324,6 +1330,9 @@ packages:
   devalue@5.9.0:
     resolution: {integrity: sha512-RWrqdArjvPbsATEhOPUo6Wndc/iWnkWKlhIrdlF3zMMYo/c3CVtoaVAyLtWxz5h8nSlkHzxnzV2uLydPXmtF+A==}
 
+  dompurify@3.4.15:
+    resolution: {integrity: sha512-EUBjM+B+lkDE41iE82DDSCfkoPGfXx8IxFxPMjNzm/Uk4xDet77rTN9wqlxlVg71kK7XGuUMv6wUxJUwwv+Xyw==}
+
   dotenv@17.4.2:
     resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
     engines: {node: '>=12'}
@@ -1897,6 +1906,11 @@ packages:
 
   magic-string@1.1.0:
     resolution: {integrity: sha512-kS3VHe0nEPST2saQV4Rbkchcd3UBRkVTQHo1D3h/ZTwFDhai/mfKkmtPAtD129EOI7K3HlHIsFOt0WrI2/oU9g==}
+
+  marked@18.0.12:
+    resolution: {integrity: sha512-LEm4ga2YeI2T3GVHj9b0BaDPPk93LLTHMFeMyQbNIzPxc8vCI0y/scy0ZA6z6lXKyT9j9Nhl/OC6ZYKYGuFScA==}
+    engines: {node: '>= 20'}
+    hasBin: true
 
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
@@ -3815,6 +3829,10 @@ snapshots:
 
   devalue@5.9.0: {}
 
+  dompurify@3.4.15:
+    optionalDependencies:
+      '@types/trusted-types': 2.0.7
+
   dotenv@17.4.2: {}
 
   dunder-proto@1.0.1:
@@ -4385,6 +4403,8 @@ snapshots:
   magic-string@1.1.0:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  marked@18.0.12: {}
 
   math-intrinsics@1.1.0: {}
 

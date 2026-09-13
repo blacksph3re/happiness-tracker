@@ -64,6 +64,17 @@
   --color-flame-lift: #f2a462;
   --color-gilt: #e8c46a;
 
+  /* The todo section's accents. A fourth family that is none of the three
+     sections and none of the six chip colours: not the wellbeing purple, not
+     the time teal, not the focus orange, and — the one worth checking — not
+     `sage` (#6f9e8b), which is a chip colour. Fern is darker, greener and less
+     grey than sage, so a list coloured sage inside this section still reads as
+     a list colour rather than as the section's own accent. */
+  --color-fern: #3f7d4e;
+  --color-fern-deep: #2c5a38;
+  --color-fern-lift: #5aa869;
+  --color-lime: #9fc94a;
+
   --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-meta: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace;
 }
@@ -106,6 +117,18 @@ body {
   --color-ember: var(--color-gilt);
 }
 
+/* The todo half, recoloured the way the other two are. */
+.section-todo {
+  --color-dusk: var(--color-fern);
+  --color-dusk-deep: var(--color-fern-deep);
+  --color-dusk-lift: var(--color-fern-lift);
+  /* Lime, as the time section maps `ember` to amber and focus to gold: the
+     selected chip and the accent border want to read as a highlight, and only
+     the destructive border wants to read as a warning — which names `alarm`
+     directly. */
+  --color-ember: var(--color-lime);
+}
+
 /* Hover, app-wide, so a pointer is answered the same way everywhere:
  *   outlined control   border-white/40
  *   destructive        border-ember — the only place the accent means "careful"
@@ -145,6 +168,37 @@ select:not([size]) {
   padding-inline-end: 2.5rem;
 }
 
+/* A checkbox is painted with its own `color`, and Flowbite's was blue.
+ *
+ * Flowbite's forms layer sets `appearance: none` on every checkbox and radio —
+ * which is what makes an `accent-*` class in this app dead CSS, the same family
+ * of silent loss as `.meta text-alarm` — and then paints the checked state with
+ * `background-color: currentColor !important`. So the checked fill *is* the
+ * element's `color`, which that layer sets to `var(--color-brand)`: blue-600,
+ * a colour in none of the four section palettes. Measured as
+ * `oklch(0.488 0.243 264.376)` on the calendar's own toggle, beside a lime
+ * button.
+ *
+ * One declaration fixes it everywhere and no component has to say anything: the
+ * accent token is what each `.section-*` rebinds, so a box paints fern in the
+ * todo half, teal in time, orange in focus and the wellbeing indigo everywhere
+ * else, with no second set of class names — the same trick `bg-dusk` plays.
+ *
+ * In `base`, and it has to out-*specify* Flowbite rather than merely follow it:
+ * the plugin's own base rules are emitted **after** this file's, measured in
+ * the built stylesheet at 22692 against 17359, so `[type='checkbox']` alone
+ * ties on specificity and loses on order — and `:where()` scores zero and
+ * loses outright. Naming the element as well is 0,1,1 against its 0,1,0, which
+ * wins wherever the two land. Layered rather than unlayered so a utility can
+ * still override it: `text-*` on a checkbox now does what it says, which is
+ * more than `accent-*` ever did. */
+@layer base {
+  input[type='checkbox'],
+  input[type='radio'] {
+    color: var(--color-dusk);
+  }
+}
+
 /* Metadata, labels and anything tabular reads as instrument output. */
 .meta {
   font-family: var(--font-meta);
@@ -152,7 +206,26 @@ select:not([size]) {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-size: 0.6875rem;
-  color: var(--color-haze);
+}
+
+/* The colour, and only the colour, sits in a layer — because an unlayered rule
+   beats every layered one whatever its specificity, so `class="meta text-alarm"`
+   was `.meta` winning and the utility emitting CSS nobody could see. An overdue
+   date chip on a task card never turned red, and it was not alone: forty-five
+   `text-*` utilities sit beside a `.meta` in this app and every one of them was
+   losing. Twenty-four name `haze` and so changed nothing; the rest are nine dead
+   `hover:text-paper`, ten `text-paper` on labels and on buttons whose border is
+   already coloured, and two `text-ember` warnings — all of them now doing what
+   they were written to do.
+
+   `base` rather than `components` for the same reason the declaration was split
+   out at all: only `color` should be overridable. The font, the tracking, the
+   case and the size stay unlayered, so `text-sm` beside a `.meta` still loses
+   and the type treatment is not something a utility can half-undo. */
+@layer base {
+  .meta {
+    color: var(--color-haze);
+  }
 }
 
 .numeral {
@@ -173,4 +246,152 @@ select:not([size]) {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* A tick draws itself, and then the title is struck through from the left.
+   Only for a tick made on this device a moment ago — `tick.js` decides that and
+   adds `tick-draw` and `strike-draw`; everything else is drawn in its final
+   state, and unticking removes both at once.
+
+   180ms for the tick, and the strike follows it across the title in the next
+   250: 380ms for the whole, short enough that a second tap is never waiting on
+   it. **The order lives inside the strike's keyframes and never in
+   `animation-delay`.** The rule above cuts durations under reduced motion and
+   leaves delays alone, so a delayed strike would sit invisible for its delay
+   and then snap — which is a pause, not a snap. */
+.tick-path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+
+.tick-draw {
+  animation: tick-draw 180ms cubic-bezier(0.3, 0, 0.2, 1) both;
+}
+
+@keyframes tick-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.strike {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-position: 0 60%;
+  background-size: 0% 1px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.strike.struck {
+  background-size: 100% 1px;
+}
+
+.strike-draw {
+  animation: strike-draw 380ms ease-out both;
+}
+
+@keyframes strike-draw {
+  0%,
+  35% {
+    background-size: 0% 1px;
+  }
+  100% {
+    background-size: 100% 1px;
+  }
+}
+
+/* A task's description, rendered from markdown into `{@html}`. The markup comes
+   out of `marked` and carries no classes, so the only way to style it is by
+   element — which is also why it is scoped to one class rather than left to
+   affect the app's own headings. Deliberately small: this is notes on a task,
+   not a document. */
+.prose-todo > :first-child {
+  margin-top: 0;
+}
+
+.prose-todo h1,
+.prose-todo h2,
+.prose-todo h3 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0.75em 0 0.35em;
+}
+
+.prose-todo h1 {
+  font-size: 1.125rem;
+}
+
+.prose-todo h2 {
+  font-size: 1rem;
+}
+
+.prose-todo h3 {
+  font-size: 0.9375rem;
+}
+
+.prose-todo p,
+.prose-todo ul,
+.prose-todo ol,
+.prose-todo pre,
+.prose-todo blockquote {
+  margin: 0.5em 0;
+}
+
+.prose-todo ul,
+.prose-todo ol {
+  padding-inline-start: 1.25em;
+}
+
+.prose-todo ul {
+  list-style: disc;
+}
+
+.prose-todo ol {
+  list-style: decimal;
+}
+
+.prose-todo a {
+  color: var(--color-ember);
+  text-decoration: underline;
+}
+
+.prose-todo code {
+  font-family: var(--font-meta), monospace;
+  font-size: 0.9em;
+  background: color-mix(in srgb, var(--color-paper) 8%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+}
+
+.prose-todo pre {
+  background: color-mix(in srgb, var(--color-paper) 8%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  overflow-x: auto;
+}
+
+.prose-todo pre code {
+  background: none;
+  padding: 0;
+}
+
+.prose-todo blockquote {
+  border-inline-start: 2px solid var(--color-dusk-lift);
+  padding-inline-start: 0.75rem;
+  color: var(--color-haze);
+}
+
+/* The quick-add's text is transparent so the coloured layer behind it shows
+   through, which means the *selection* has to be transparent too: the browser
+   paints selected text in its own colour by default, and a dragged selection
+   would otherwise reveal the real, uncoloured string on top of the picture of
+   it. Translucent rather than opaque for the same reason — the colours have to
+   stay legible through the highlight. */
+[data-quick-add]::selection {
+  color: transparent;
+  background: color-mix(in srgb, var(--color-paper) 28%, transparent);
 }

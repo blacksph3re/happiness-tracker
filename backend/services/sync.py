@@ -23,10 +23,34 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models import Answer, Pomodoro, Project, Question, QuestionOption, TimeEntry
-from schemas import AnswerIn, SyncEntryPayload, SyncPomodoroPayload
+from models import (
+    Answer,
+    Pomodoro,
+    Project,
+    Question,
+    QuestionOption,
+    TimeEntry,
+    Todo,
+    TodoStep,
+)
+from schemas import (
+    AnswerIn,
+    SyncEntryPayload,
+    SyncPomodoroPayload,
+    SyncStepPayload,
+    SyncTodoPayload,
+)
 from services.pomodoro import PomodoroRuleError, check_pomodoro_shape
 from services.timetrack import TimeRuleError, check_entry_shape, check_no_overlap
+from services.todos import (
+    append_todo_rank,
+    between,
+    find_step,
+    find_todo,
+    identity_is_taken,
+    member_list,
+    system_list,
+)
 from services.wellbeing import QuestionRuleError, check_answer
 
 
@@ -415,8 +439,21 @@ def apply_pomodoro(
             stored,
         )
 
+    # The task the timer names, resolved from the identity its device gave it
+    # rather than from a primary key the device cannot know. Visibility, not
+    # merely existence: `find_todo` resolves through the lists this caller can
+    # see, so a pomodoro cannot point at a task in a list nobody shared with
+    # them and read its title back — and a member removed from a list gets
+    # *that task no longer exists* for the block they had queued against it.
+    todo = None
+    if payload.todo_client_id is not None:
+        todo = find_todo(db, user_id, payload.todo_client_id)
+        if todo is None:
+            return SyncOutcome.CONFLICT, "That task no longer exists", None
+
     pomodoro = stored or Pomodoro(user_id=user_id, client_id=client_id)
     pomodoro.task = payload.task
+    pomodoro.todo_id = todo.id if todo is not None else None
     pomodoro.started_at = payload.started_at
     pomodoro.ended_at = payload.ended_at
     pomodoro.utc_offset = payload.utc_offset
@@ -484,4 +521,312 @@ def delete_pomodoro(
         )
 
     db.delete(stored)
+    return SyncOutcome.APPLIED, None
+
+
+def apply_todo(
+    db: Session,
+    user_id: int,
+    client_id: str,
+    claimed: datetime,
+    payload: SyncTodoPayload,
+    now: datetime,
+) -> tuple[str, str | None, Todo | None]:
+    """Create or correct one task, by the identity its device gave it.
+
+    One kind for both, as `apply_entry` is: a correction to a task another
+    device deleted re-creates it, which is the rule that a delete never beats
+    an edit, falling out rather than being special-cased.
+
+    **Nothing merges.** A task has no extent, so there is no overlap rule and
+    no `merged` outcome — the one thing that makes sessions complicated does
+    not arise here.
+
+    `archived_at` is written from the list rather than from the payload: a task
+    in the archive gets a timestamp whether or not one arrived, and a task
+    outside it has the column cleared. The column records **when** a task
+    entered the archive and never *whether* it is in one, so it must not be
+    able to disagree with the list the row is actually in.
+
+    **Which archive is the server's too.** An archive is per account and a
+    shared list is not, so a cleanup on a shared list has to write somewhere
+    private — and the cleaner's own archive is the wrong place: the tasks would
+    vanish for everybody else, which reads as a deletion nobody asked for. The
+    destination is therefore resolved from the list the task is *coming from*,
+    which is the owner's archive, and the archive id the client sent is
+    overwritten rather than refused. It has to be overwritten: a member cannot
+    know the owner's archive id, and refusing would leave cleanup on a shared
+    list impossible from the only device that would ever do it.
+
+    The rule is narrow by construction — it reads the stored row's list — so an
+    ordinary private cleanup, and a task created directly into an archive, both
+    land where they always did.
+
+    **An identity nothing visible holds may still be taken.** `client_id` is
+    unique globally, so a caller naming a list of their own for a task that
+    sits in a list they cannot see is refused with *that task no longer
+    exists* — see `identity_is_taken`. Left to the insert, the collision is an
+    `IntegrityError` that fails the whole queue rather than one intent.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session. Not committed here.
+    user_id : int
+        Whose task this is.
+    client_id : str
+        The device's identity for the task.
+    claimed : datetime.datetime
+        When the device says the task was last changed.
+    payload : schemas.SyncTodoPayload
+        The task as the device holds it.
+    now : datetime.datetime
+        Server time, recorded as when this was received.
+
+    Returns
+    -------
+    tuple of (str, str or None, Todo or None)
+        The outcome, why when it is not `applied`, and the row as it stands.
+    """
+    stored = find_todo(db, user_id, client_id)
+
+    if stored is not None and not _is_newer(claimed, stored.client_updated_at):
+        return (
+            SyncOutcome.SUPERSEDED,
+            "A newer version of that task is already stored",
+            stored,
+        )
+
+    into = member_list(db, user_id, payload.list_id)
+    if into is None:
+        return SyncOutcome.CONFLICT, "That list no longer exists", None
+
+    if into.kind == "archive" and stored is not None:
+        # Archiving: the destination belongs to whoever owns the list the task
+        # is leaving, never to whoever pressed the button. See the docstring.
+        destination = system_list(db, stored.todo_list.user_id, "archive")
+        if destination is None:
+            return SyncOutcome.CONFLICT, "That archive no longer exists", None
+        into = destination
+
+    if stored is None and identity_is_taken(db, client_id):
+        # Nothing visible holds this identity and yet it is taken, which means
+        # the task is in a list this caller cannot see — and the list they
+        # *did* name is one of their own. There is no write to apply, and
+        # inserting anyway would collide with the global unique on `client_id`
+        # and take every intent behind this one down with it.
+        return SyncOutcome.CONFLICT, "That task no longer exists", None
+
+    todo = stored or Todo(user_id=user_id, client_id=client_id)
+    todo.list_id = into.id
+    todo.title = payload.title
+    todo.description = payload.description
+    todo.planned_on = payload.planned_on
+    todo.planned_at = payload.planned_at
+    todo.due_on = payload.due_on
+    todo.priority = payload.priority
+    todo.duration_minutes = payload.duration_minutes
+    todo.icon = payload.icon
+    todo.colour = payload.colour
+    todo.done_at = payload.done_at
+    todo.active_since = payload.active_since
+    todo.active_seconds = payload.active_seconds
+    todo.archived_at = (payload.archived_at or now) if into.kind == "archive" else None
+    todo.rank = payload.rank or todo.rank or append_todo_rank(db, into.id)
+    todo.client_updated_at = claimed
+    todo.server_received_at = now
+
+    if stored is None:
+        db.add(todo)
+    # Flushed before the next intent looks, as `apply_answer` is: a queue
+    # holding a task and a step on it must find the task when the step goes
+    # looking, and `autoflush=False` means nothing else would make it visible.
+    db.flush()
+    return SyncOutcome.APPLIED, None, todo
+
+
+def delete_todo(
+    db: Session, user_id: int, client_id: str, claimed: datetime
+) -> tuple[str, str | None]:
+    """Remove one task and its steps, unless something newer happened to it.
+
+    Its pomodoros stay. `pomodoros.todo_id` is `ON DELETE SET NULL`, so the
+    hours spent on a deleted task are still in the focus history, reading the
+    text that was typed at the time.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session. Not committed here.
+    user_id : int
+        The caller. A task is reached through the lists this caller can see, so
+        a member deletes from a shared list and somebody removed from one finds
+        nothing to delete.
+    client_id : str
+        The device's identity for the task.
+    claimed : datetime.datetime
+        When the device says the deletion was made.
+
+    Returns
+    -------
+    tuple of (str, str or None)
+        The outcome and, when the deletion was not carried out, why.
+    """
+    stored = find_todo(db, user_id, client_id)
+
+    # Already gone, here or elsewhere. Replaying a deletion is a no-op rather
+    # than an error, which is what lets a queue be flushed twice safely.
+    if stored is None:
+        return SyncOutcome.APPLIED, None
+
+    if not _is_newer(claimed, stored.client_updated_at):
+        return (
+            SyncOutcome.DROPPED,
+            "That task was changed elsewhere after it was deleted here, so it was kept",
+        )
+
+    db.delete(stored)
+    # Before the next intent looks, so a step queued behind this deletion is
+    # refused rather than inserted against a row on its way out.
+    db.flush()
+    return SyncOutcome.APPLIED, None
+
+
+def apply_step(
+    db: Session,
+    user_id: int,
+    client_id: str,
+    claimed: datetime,
+    payload: SyncStepPayload,
+    now: datetime,
+) -> tuple[str, str | None, TodoStep | None]:
+    """Create or correct one subtask, resolving the parent its device named.
+
+    The parent arrives as a `client_id` rather than as a key, because a step
+    added in the modal of a task that is itself still in the outbox has no key
+    to point at. Intents replay in order, so the parent is already applied —
+    and where it was refused, this is refused too.
+
+    The parent is resolved through the lists the caller can see, so a member
+    ticks a step on a task somebody else created and a removed member gets
+    *that task no longer exists*.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session. Not committed here.
+    user_id : int
+        The caller. A step is reached through its task, and the task through
+        the lists this caller can see.
+    client_id : str
+        The device's identity for the step.
+    claimed : datetime.datetime
+        When the device says the step was last changed.
+    payload : schemas.SyncStepPayload
+        The step as the device holds it, naming its parent.
+    now : datetime.datetime
+        Server time, recorded as when this was received.
+
+    Returns
+    -------
+    tuple of (str, str or None, TodoStep or None)
+        The outcome, why when it is not `applied`, and the row as it stands.
+    """
+    parent = find_todo(db, user_id, payload.todo_client_id)
+    if parent is None:
+        return SyncOutcome.CONFLICT, "That task no longer exists", None
+
+    stored = db.execute(
+        select(TodoStep).where(
+            TodoStep.todo_id == parent.id, TodoStep.client_id == client_id
+        )
+    ).scalar_one_or_none()
+
+    if stored is not None and not _is_newer(claimed, stored.client_updated_at):
+        return (
+            SyncOutcome.SUPERSEDED,
+            "A newer version of that subtask is already stored",
+            stored,
+        )
+
+    step = stored or TodoStep(todo_id=parent.id, client_id=client_id)
+    step.title = payload.title
+    step.icon = payload.icon
+    step.done_at = payload.done_at
+    step.rank = payload.rank or step.rank or _appended_step_rank(db, parent.id)
+    step.client_updated_at = claimed
+    step.server_received_at = now
+
+    if stored is None:
+        db.add(step)
+    db.flush()
+    return SyncOutcome.APPLIED, None, step
+
+
+def _appended_step_rank(db: Session, todo_id: int) -> str:
+    """Return a rank placing a step after the last one on its task.
+
+    The fallback for a step queued with no position, which the client does not
+    normally produce: it computes the key a drop lands on.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    todo_id : int
+        The task whose steps to measure.
+
+    Returns
+    -------
+    str
+        The new rank.
+    """
+    last = db.execute(
+        select(TodoStep.rank)
+        .where(TodoStep.todo_id == todo_id)
+        .order_by(TodoStep.rank.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return between(last, None)
+
+
+def delete_step(
+    db: Session, user_id: int, client_id: str, claimed: datetime
+) -> tuple[str, str | None]:
+    """Remove one subtask, unless something newer happened to it.
+
+    Named by its own identity alone, with no parent beside it: a step's owner
+    is reached by joining the task, which is also the scope its `client_id` is
+    unique within.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session. Not committed here.
+    user_id : int
+        Whose step this is, reached through the task.
+    client_id : str
+        The device's identity for the step.
+    claimed : datetime.datetime
+        When the device says the deletion was made.
+
+    Returns
+    -------
+    tuple of (str, str or None)
+        The outcome and, when the deletion was not carried out, why.
+    """
+    stored = find_step(db, user_id, client_id)
+
+    if stored is None:
+        return SyncOutcome.APPLIED, None
+
+    if not _is_newer(claimed, stored.client_updated_at):
+        return (
+            SyncOutcome.DROPPED,
+            "That subtask was changed elsewhere after it was deleted here, so "
+            "it was kept",
+        )
+
+    db.delete(stored)
+    db.flush()
     return SyncOutcome.APPLIED, None

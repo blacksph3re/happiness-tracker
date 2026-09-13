@@ -13,7 +13,13 @@
     splitSeconds,
   } from '../../lib/pomodoro/derive.js'
   import { weekOptions } from '../../lib/pomodoro/charts.js'
-  import { ensurePomodoros, pomodoros as pomodoroStore } from '../../lib/store.js'
+  import { taskTitle } from '../../lib/pomodoro/task.js'
+  import {
+    ensurePomodoros,
+    ensureTodos,
+    pomodoros as pomodoroStore,
+    todos as todoStore,
+  } from '../../lib/store.js'
 
   /**
    * What the focus half adds up to, over a day or a week.
@@ -72,6 +78,19 @@
     ensurePomodoros({ start: shown.start, end: shown.end })
   })
 
+  // The tasks a linked block is named by. The strip is focus *history*, so it
+  // reads the task's current title like every other reader of one — a name
+  // drawn from the stored copy here and from the link on the timer would be
+  // two names for one thing, which is the failure the link exists to avoid.
+  // Not part of the window: a task has no date on this page and the load is
+  // cached app-wide, so arriving from anywhere that already reads tasks — the
+  // landing page does — costs nothing.
+  $effect(() => {
+    ensureTodos()
+  })
+
+  const tasks = $derived($todoStore ?? [])
+
   /** Seconds since local midnight for a stored UTC instant and its offset. */
   function secondsIntoDay(iso, offsetMinutes) {
     const local = new Date(Date.parse(`${iso}Z`) + offsetMinutes * 60_000)
@@ -105,7 +124,7 @@
       }
       const split = splitSeconds(row)
       const from = at - current.origin
-      const name = row.task ?? 'no task description'
+      const name = taskTitle(row, tasks) ?? 'no task description'
       const clock = clockLabel(row.started_at, row.utc_offset)
       current.spans.push({
         key: `${row.client_id ?? row.id}:focus`,

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Literal
 from uuid import uuid4
 
@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Time,
     UniqueConstraint,
     func,
     text,
@@ -996,10 +997,19 @@ class TimeEntry(Base):
 
 
 # ---------------------------------------------------------------------------
-# Focus. Pomodoros are independent of both halves above: nothing here
-# references a project or a question, and nothing above references a pomodoro.
-# Time reaches the tracker only as a copy, when somebody presses the transfer
-# button, which is why there is no foreign key in either direction.
+# Focus. A pomodoro references neither a project nor a question, and neither of
+# those halves references a pomodoro. Time reaches the tracker only as a copy,
+# when somebody presses the transfer button, which is why there is no foreign
+# key in either direction.
+#
+# There is exactly **one** reference out of this section, and it points at the
+# todos below: `pomodoros.todo_id`. It exists because a running pomodoro sets
+# its task active, which requires the pomodoro to name a task — and because the
+# focus history then reads the *current* title through the link, so renaming a
+# task retitles the hours spent on it. That is the whole meaning of the todo
+# field's ownership moving to the todo half. `task` stays beside it for the
+# years of pomodoros that have no link, and exactly one of the two is ever read
+# for a given row.
 # ---------------------------------------------------------------------------
 
 
@@ -1052,6 +1062,20 @@ class Pomodoro(Base):
     description would turn a timer into a form. Editable afterwards, because
     discovering a minute in that you are really doing something else is the
     ordinary case rather than the exception.
+    """
+
+    todo_id: Mapped[int | None] = mapped_column(
+        ForeignKey("todos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    """The task this focus was for, or NULL when the timer was never linked.
+
+    The one reference that leaves this section; the comment above it says why
+    it exists. ``SET NULL`` rather than a cascade: deleting a task must not
+    delete the hours spent on it, and a pomodoro that has lost its task falls
+    back to `task`, which is the other half of why that column stays.
+
+    Nullable with no server default, so the migration adding it is one SQLite
+    performs **in place**. See `Project.updated_at` for why that matters.
     """
 
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -1138,6 +1162,536 @@ class Pomodoro(Base):
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
     """Timestamp set on insert and refreshed on every update."""
+
+    todo: Mapped[Todo | None] = relationship(lazy="selectin")
+    """The task this focus was for, loaded with the pomodoro.
+
+    ``selectin`` rather than lazy, because every pomodoro read reports the
+    task's client identity beside the server id: lazy loading would be one
+    query per pomodoro in a list of a hundred.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Todos. Four tables, and the shape follows the *answer* side of the
+# days-and-instants rule rather than the session side: a plan is a local date,
+# not an instant. "Feed the cat tomorrow at nine" means nine o'clock wherever
+# you are, so `planned_on` is a DATE and `planned_at` a TIME with no
+# `utc_offset` beside them, exactly as an answer carries a client-local `day`.
+# Only the columns recording something that *happened* — done, archived,
+# activated — are UTC instants.
+#
+# Nothing here references a project or a question either. The one link between
+# this section and another is `pomodoros.todo_id`, declared above and explained
+# there.
+#
+# This is also the one section where a row is not reached through its
+# `user_id`. A list has an owner and any number of **members**, so a task
+# belongs to the list it is in rather than to whoever typed it: every read and
+# every intent resolves through `visible_list_ids`, and `todos.user_id` records
+# only who created the row. `todo_list_members` is what that set is built from.
+# ---------------------------------------------------------------------------
+
+TodoPriority = Literal["very_high", "high", "medium", "low", "very_low"]
+"""How a task ranks against the others.
+
+Ordered highest first, and the order is the metric: ``PRIORITIES.index`` is
+what "one step less important" means, which is what the Eisenhower drop needs
+to move a task to the nearest legal value rather than to a fixed one.
+"""
+
+PRIORITIES: tuple[TodoPriority, ...] = (
+    "very_high",
+    "high",
+    "medium",
+    "low",
+    "very_low",
+)
+"""`TodoPriority` as data, for the check constraint and the service rules."""
+
+ListKind = Literal["ordinary", "inbox", "archive"]
+"""Which of the three a list is.
+
+A `Literal` rather than two booleans, and never matched on the *name*: the two
+special lists are ordinary rows that can be renamed, so any code reading
+``name == "Archive"`` is a bug waiting for somebody to rename it.
+"""
+
+LIST_KINDS: tuple[ListKind, ...] = ("ordinary", "inbox", "archive")
+"""`ListKind` as data, for the check constraint and the service rules."""
+
+LIST_NAME_MAX_LENGTH = 60
+"""Longest a list name may be. Shorter than a project's, because a list name is
+drawn as a column heading rather than as a row."""
+
+TODO_TITLE_MAX_LENGTH = 200
+"""Longest a task or step title may be.
+
+Longer than a question prompt, which is capped by the layout it has to fit:
+a task title wraps onto as many lines as it needs on a card.
+"""
+
+RANK_MAX_LENGTH = 255
+"""Longest an ordering key may be.
+
+Generous on purpose. `between` is total — there is always another key between
+two neighbours — so the only bad outcome is keys that keep getting longer, and
+the answer to that is the rebalance a drag performs on its own column rather
+than a limit the function has to consult.
+"""
+
+
+class TodoList(Base):
+    """A column of tasks: one of the two system lists, or one the owner made."""
+
+    __tablename__ = "todo_lists"
+    __table_args__ = (
+        CheckConstraint(
+            "kind in ('ordinary', 'inbox', 'archive')", name="ck_list_kind"
+        ),
+        # At most one inbox and one archive per account, and no ceiling on
+        # ordinary lists. This is also what makes `ensure_system_lists`
+        # idempotent rather than merely careful: a second attempt cannot
+        # produce a second inbox, which holds even for a call site added later
+        # by somebody who never read the helper.
+        Index(
+            "uq_list_kind",
+            "user_id",
+            "kind",
+            unique=True,
+            sqlite_where=text("kind != 'ordinary'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The owner. Everything in this database belongs to somebody.
+
+    The owner alone renames, recolours, shares and deletes the list, and is
+    **never** a `TodoListMember` row — so "owner or member" is one ``OR`` and
+    there is no row saying somebody shares a list with themselves.
+    """
+
+    name: Mapped[str] = mapped_column(String(LIST_NAME_MAX_LENGTH), nullable=False)
+    """Display name, deliberately **not** unique: two lists called *Home* are
+    the owner's business, and the code never looks a list up by name."""
+
+    kind: Mapped[ListKind] = mapped_column(String(8), nullable=False)
+    """Which of the three this is. What the code branches on, always.
+
+    The annotation is a `Literal` and the column type is spelled out beside it,
+    because SQLAlchemy infers ``String`` from ``Mapped[str]`` and infers nothing
+    at all from ``Mapped[Literal[...]]``.
+    """
+
+    colour: Mapped[str] = mapped_column(String(16), nullable=False)
+    """A chip palette token, stored rather than assigned — as a project's is, and
+    for the same reason: reordering must not change what colour a list has."""
+
+    rank: Mapped[str] = mapped_column(String(RANK_MAX_LENGTH), nullable=False)
+    """Column order in the move-between-lists view. See `RANK_MAX_LENGTH`."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    """Timestamp set by the database when the row is inserted."""
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    """Timestamp set on insert and refreshed on every update.
+
+    What lets a list renamed on one device reach another: a rename moves no
+    count, so the digest would otherwise not see it at all.
+    """
+
+    todos: Mapped[list[Todo]] = relationship(
+        back_populates="todo_list", cascade="all, delete-orphan"
+    )
+    """The tasks in this list. Deleting a list takes them, and their steps.
+
+    Lazy on purpose: the read endpoints go the other way, from tasks to their
+    list, and the only caller that wants this collection is the delete.
+    """
+
+    owner: Mapped[User] = relationship(foreign_keys=[user_id])
+    """The account the list belongs to, for the *shared by* line.
+
+    Lazy, and eager-loaded by the one read that wants it — `lists_for` asks for
+    it explicitly, because the authorization resolvers load a list per intent
+    and have no use for the username.
+    """
+
+    members: Mapped[list[TodoListMember]] = relationship(
+        back_populates="todo_list",
+        cascade="all, delete-orphan",
+        order_by="TodoListMember.id",
+    )
+    """Who else can see this list. Deleting the list takes the rows with it.
+
+    Lazy for the same reason `owner` is. `lists_for` loads it with one extra
+    statement for all the lists at once rather than one per list.
+    """
+
+
+class Todo(Base):
+    """One task: a title, a list and a planned date, with the rest optional."""
+
+    __tablename__ = "todos"
+    __table_args__ = (
+        CheckConstraint(
+            "priority is null or priority in"
+            " ('very_high', 'high', 'medium', 'low', 'very_low')",
+            name="ck_todo_priority",
+        ),
+        CheckConstraint(
+            "duration_minutes is null or duration_minutes >= 0",
+            name="ck_todo_duration_not_negative",
+        ),
+        CheckConstraint("active_seconds >= 0", name="ck_todo_active_not_negative"),
+        # Unique on `client_id` **alone**, not per user as a session's and a
+        # pomodoro's are. A task in a shared list is edited by every member, and
+        # keyed per user each of them would look it up under their own id, find
+        # nothing, and insert a second row — two cards for one task on
+        # everybody's board. The ids are UUIDs, so a global unique costs
+        # existing rows nothing.
+        #
+        # `todo_steps.client_id` stays unique per `todo_id` and needs no such
+        # change: a step's scope is its parent, every member resolves the same
+        # parent row, and the wire names the parent anyway.
+        Index(
+            "uq_todo_client_id",
+            "client_id",
+            unique=True,
+            sqlite_where=text("client_id IS NOT NULL"),
+        ),
+        Index("ix_todos_user_planned", "user_id", "planned_on"),
+        # The archive is read newest-arrival-first within one list, which is the
+        # one query here with an order the caller cannot narrow.
+        Index("ix_todos_list_archived", "list_id", "archived_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """Who **created** the task, which is not who it belongs to.
+
+    A task belongs to the list it is in: every member of a shared list may edit
+    it, tick it, move it and delete it, so authorization is
+    ``list_id in visible_list_ids(caller)`` and never a comparison against this
+    column. It is kept because *who typed this* is a fact worth having — and
+    because a member's cleanup writes rows into the owner's archive, where the
+    creator is the one piece of provenance left.
+
+    The column keeps its name: renaming one is a table rebuild for the sake of
+    a word.
+    """
+
+    list_id: Mapped[int] = mapped_column(
+        ForeignKey("todo_lists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """Which list the task is in. Never null: every task is in a real list, the
+    inbox included, which is what makes *archived* a list rather than a flag."""
+
+    client_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, default=lambda: str(uuid4())
+    )
+    """The identity a device gives a task before the server has one.
+
+    See `TimeEntry.client_id`: the identity outlives the row, which is what
+    lets an edit made offline find what it meant — and what a step names its
+    parent by, since a task created in the modal may have no server id yet.
+    """
+
+    title: Mapped[str] = mapped_column(String(TODO_TITLE_MAX_LENGTH), nullable=False)
+    """What to do. One of the two mandatory fields."""
+
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Longer notes, in Markdown. Rendered through a sanitiser on the client."""
+
+    planned_on: Mapped[date] = mapped_column(Date, nullable=False)
+    """The local day the task is planned for. The other mandatory field.
+
+    A date rather than an instant, and with no offset beside it: a plan means
+    that day wherever you are, exactly as an answer's `day` does.
+    """
+
+    planned_at: Mapped[time | None] = mapped_column(Time, nullable=True)
+    """Wall clock time on that day, or NULL for no particular time.
+
+    NULL is what puts a task in the calendar's *anytime* row, so it is a
+    meaningful value rather than missing data.
+    """
+
+    due_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    """When it has to be done by. Feeds the Eisenhower urgency axis and nothing
+    else, which is why it is optional where `planned_on` is not."""
+
+    priority: Mapped[TodoPriority | None] = mapped_column(String(9), nullable=True)
+    """How it ranks against the others, or NULL.
+
+    NULL is *not important* by definition rather than by omission: the
+    Eisenhower split reads it that way, so there is no third state.
+    """
+
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """How long it is expected to take. An estimate, never a measurement — the
+    measurement is `active_seconds` below, and the two are different facts."""
+
+    icon: Mapped[str | None] = mapped_column(String(ICON_MAX_LENGTH), nullable=True)
+    """An emoji drawn in place of the tickbox, or NULL for the tickbox.
+
+    Bounded by length alone, as a question's icon is: an icon from a later
+    curated set must not start answering 422.
+    """
+
+    colour: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """A chip palette token painting the card's background, or NULL.
+
+    NULL means *take the list's colour*, which is what the client already
+    draws for every task today — so the column is an override rather than the
+    first answer, and there is no default for a migration to invent.
+
+    Bounded by `schemas.COLOUR_PATTERN` rather than by the six tokens the
+    picker offers, as a project's and a list's colour are, and for the same
+    reason: the palette gains tokens, and one chosen in a later release must
+    not start answering 422 against a server that has not been redeployed.
+    """
+
+    rank: Mapped[str] = mapped_column(String(RANK_MAX_LENGTH), nullable=False)
+    """Order within its column, in whichever grouping is in force.
+
+    One key rather than one per grouping, deliberately: a drag places a task
+    where it was dropped, and a task has one position that every view reads.
+    """
+
+    done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When it was ticked, in UTC, or NULL while it is not.
+
+    There is no `is_done`: one fact, one place. A task in the archive with this
+    null is *won't do*; with it set, it is cleaned up.
+    """
+
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """**When** the task last entered the archive, in UTC.
+
+    Never *whether* it is archived — that is ``list_id == the archive list``,
+    and a column saying otherwise could disagree with the list the row is
+    actually in. This one has a narrower job: it is set when a task enters the
+    archive, cleared when it leaves, and read only for rows already known to be
+    in one, because the archive is ordered by arrival and nothing else supplies
+    that date. `updated_at` would reorder the archive whenever an archived task
+    was edited, and `done_at` is absent on everything marked *won't do*.
+
+    The server fills it and clears it rather than trusting what arrives, so the
+    timestamp stays honest whatever version of the client sent the row.
+    """
+
+    active_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When the current activation began, in UTC, or NULL when not active.
+
+    Non-NULL **is** the active state; there is no `is_active`.
+    """
+
+    active_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    """Time banked from activations that have ended.
+
+    The one place this design steps away from computing on read, and knowingly:
+    the pure version is an activations table shaped like `TimeEntry`, summed on
+    read. Two columns were chosen to start with, so this is the primary record
+    of past activations rather than a derivation of one — the way
+    `Pomodoro.focus_seconds` already is. The upgrade path stays clean, because
+    a table would be additive and this becomes its opening balance.
+    """
+
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When the device says this task was last changed. See `Answer`."""
+
+    server_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When the server accepted the write that last set this row."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    """Timestamp set by the database when the row is inserted."""
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    """Timestamp set on insert and refreshed on every update."""
+
+    steps: Mapped[list[TodoStep]] = relationship(
+        back_populates="todo",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="[TodoStep.rank, TodoStep.client_id]",
+    )
+    """The subtasks, in order.
+
+    ``selectin`` rather than lazy, because steps come back nested inside their
+    task in every read: loading them per task is an N+1 of exactly the kind
+    `Variable.component_ids` already had to be warned about. Ordered by
+    ``(rank, client_id)``, which is also how `between` breaks a tie — two
+    devices inserting offline into the same gap can produce one key twice, and
+    the identity is what settles it.
+    """
+
+    todo_list: Mapped[TodoList] = relationship(back_populates="todos")
+    """The list the task is in. Named `todo_list` because `list` is a builtin."""
+
+
+class TodoStep(Base):
+    """One subtask: a title, a tick, an icon and a position, and nothing else.
+
+    Its own table rather than a self-reference on `Todo`, and that is the whole
+    design: *one level deep* stops being a rule nothing can enforce and becomes
+    a fact about the schema, no query in the feature carries
+    ``parent_id IS NULL``, and a step has no column that means nothing. A step
+    is four fields because a step is four fields.
+    """
+
+    __tablename__ = "todo_steps"
+    __table_args__ = (
+        # Unique per **parent**, not per user. Ownership here is reached through
+        # the task, as a `DeductionBand`'s is through its tag, and there is no
+        # `user_id` to scope against without denormalising one. The wire names a
+        # step's parent anyway — `step.upsert` carries `todo_client_id` — so the
+        # pair is what an upsert resolves against, and a `step.delete` naming
+        # only its own id finds the row by joining its parent's visibility.
+        #
+        # Sharing left this alone, deliberately, where `todos.client_id` had to
+        # become globally unique: the parent **is** the scope, and two members
+        # editing one step both resolve the same `todo_id`. Nothing here was
+        # ever keyed on who was looking.
+        Index(
+            "uq_step_client_id",
+            "todo_id",
+            "client_id",
+            unique=True,
+            sqlite_where=text("client_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    todo_id: Mapped[int] = mapped_column(
+        ForeignKey("todos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The task this step belongs to, which is also how its owner is reached."""
+
+    client_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, default=lambda: str(uuid4())
+    )
+    """The step's own identity, so ticking one is a single intent rather than a
+    rewrite of its parent."""
+
+    title: Mapped[str] = mapped_column(String(TODO_TITLE_MAX_LENGTH), nullable=False)
+    """What the step is."""
+
+    icon: Mapped[str | None] = mapped_column(String(ICON_MAX_LENGTH), nullable=True)
+    """An emoji drawn in place of the tickbox, as on a task."""
+
+    rank: Mapped[str] = mapped_column(String(RANK_MAX_LENGTH), nullable=False)
+    """Order within its task. The same helper a task's rank comes from: a task
+    has few steps and integers would do, but two ordering implementations is
+    one more than this feature needs."""
+
+    done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When the step was ticked, in UTC, or NULL while it is not.
+
+    Ticking every step does **not** tick the task: there is no roll-up, only a
+    counter on the card.
+    """
+
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When the device says this step was last changed. See `Answer`."""
+
+    server_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """When the server accepted the write that last set this row."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    """Timestamp set by the database when the row is inserted."""
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    """Timestamp set on insert and refreshed on every update."""
+
+    todo: Mapped[Todo] = relationship(back_populates="steps")
+    """The task this step sits on."""
+
+
+class TodoListMember(Base):
+    """One account a list has been shared with.
+
+    A member sees the list and every task in it, and can add, edit, tick, drag
+    and delete tasks, and leave. The owner alone renames, recolours, shares and
+    deletes the list — and the owner is `TodoList.user_id` rather than a row
+    here, so "owner or member" is one ``OR``.
+
+    Only ordinary lists are shareable. The partial unique on
+    ``(user_id, kind)`` already says every account has exactly one inbox, and
+    sharing one would make a member's parsed ``#inbox`` ambiguous.
+    """
+
+    __tablename__ = "todo_list_members"
+    __table_args__ = (
+        # One row per person per list. The idempotent POST reads through this
+        # rather than merely trusting its own lookup: sharing twice is a thing
+        # two devices can do at once.
+        UniqueConstraint("list_id", "user_id", name="uq_list_member"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    list_id: Mapped[int] = mapped_column(
+        ForeignKey("todo_lists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The list being shared. Deleting the list takes this row with it."""
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """Who it is shared with. Never the list's own owner."""
+
+    added_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    """Who shared it, for the *shared by* line, or NULL once that account is gone.
+
+    ``SET NULL`` rather than a cascade, because losing the person who shared a
+    list must not silently revoke everybody's access to it. Today that is
+    belt-and-braces and honestly unreachable: only an owner can share, so this
+    is always `TodoList.user_id`, and deleting that account takes the list and
+    every membership of it with them. It is a cascade waiting to be wrong the
+    first time somebody may hand a list on — which is when this column stops
+    restating the owner and starts saying something.
+    """
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    """Timestamp set by the database when the row is inserted."""
+
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
+    """The member's account, read for their username."""
+
+    sharer: Mapped[User | None] = relationship(foreign_keys=[added_by])
+    """The account that shared the list, or None once it is gone."""
+
+    todo_list: Mapped[TodoList] = relationship(back_populates="members")
+    """The list this membership is of. Named as `Todo.todo_list` is."""
 
 
 class PushSubscription(Base):
