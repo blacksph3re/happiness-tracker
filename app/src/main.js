@@ -1,5 +1,7 @@
 import { mount } from 'svelte'
 import './app.css'
+// Keeps `data-theme` in step with the chosen appearance once the bundle runs.
+import './lib/theme.svelte.js'
 // Powers Flowbite's interactive components (dropdowns, modals, tooltips, ...).
 // Elements rendered after the initial mount need an explicit `initFlowbite()`.
 import 'flowbite'

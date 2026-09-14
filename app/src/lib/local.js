@@ -228,31 +228,55 @@ export async function retireIntents(seqs) {
 }
 
 /**
- * Store the conflicts and decisions a person has not read yet.
+ * Where one account's unread verdicts are kept.
  *
+ * Per account, as the queue is: a refusal names the account's own lists, and
+ * another account signing in on this device must see none of it.
+ *
+ * @param {number} account
+ * @returns {string}
+ */
+function verdictsKey(account) {
+  return `unread:${account}`
+}
+
+/**
+ * The single record every account shared before verdicts were kept per account.
+ *
+ * Nothing in it says whose it was, so it is shown to nobody and deleted.
+ */
+const LEGACY_VERDICTS = 'unread'
+
+/**
+ * Store the conflicts and decisions one account has not read yet.
+ *
+ * @param {number} account Whose writes they were answers to.
  * @param {{conflicts: Array<object>, notices: Array<object>}} verdicts
  */
-export async function writeVerdicts(verdicts) {
+export async function writeVerdicts(account, verdicts) {
   const db = await connect()
-  if (!db) return
+  if (!db || account === null || account === undefined) return
   try {
-    await db.put(VERDICTS, verdicts, 'unread')
+    await db.put(VERDICTS, verdicts, verdictsKey(account))
   } catch {
     // As everywhere here: losing this costs a notice, never data.
   }
 }
 
 /**
- * Read back what the server decided and nobody has dismissed.
+ * Read back what the server decided for one account and nobody has dismissed.
  *
+ * @param {number|null} account Null while signed out, which reads nothing.
  * @returns {Promise<{conflicts: Array<object>, notices: Array<object>}>}
  */
-export async function readVerdicts() {
+export async function readVerdicts(account) {
+  const empty = { conflicts: [], notices: [] }
   const db = await connect()
-  if (!db) return { conflicts: [], notices: [] }
+  if (!db || account === null || account === undefined) return empty
   try {
-    return (await db.get(VERDICTS, 'unread')) ?? { conflicts: [], notices: [] }
+    await db.delete(VERDICTS, LEGACY_VERDICTS)
+    return (await db.get(VERDICTS, verdictsKey(account))) ?? empty
   } catch {
-    return { conflicts: [], notices: [] }
+    return empty
   }
 }

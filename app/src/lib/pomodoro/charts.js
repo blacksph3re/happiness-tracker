@@ -1,4 +1,5 @@
-import { baseOptions } from '../chart-options.js'
+import { baseOptions, chrome } from '../chart-options.js'
+import { themeToken } from '../theme.svelte.js'
 
 /**
  * The week: how long each day ran, split into focus and break, and how often.
@@ -34,22 +35,22 @@ export function weekOptions({ labels, counts, focus, breaks }) {
     },
     legend: {
       data: ['Focus', 'Break', 'Pomodoros'],
-      textStyle: { color: '#b9b3cc' },
+      textStyle: { color: chrome().muted },
       top: 0,
     },
     grid: { left: 48, right: 48, top: 36, bottom: 28 },
-    xAxis: { type: 'category', data: labels, axisLabel: { color: '#b9b3cc' } },
+    xAxis: { type: 'category', data: labels, axisLabel: { color: chrome().muted } },
     yAxis: [
       {
         type: 'value',
-        axisLabel: { color: '#b9b3cc', formatter: '{value}h' },
-        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
+        axisLabel: { color: chrome().muted, formatter: '{value}h' },
+        splitLine: { lineStyle: { color: chrome().grid } },
       },
       {
         type: 'value',
         // Whole pomodoros only: half of one is not a thing that happened.
         minInterval: 1,
-        axisLabel: { color: '#b9b3cc' },
+        axisLabel: { color: chrome().muted },
         splitLine: { show: false },
       },
     ],
@@ -62,7 +63,7 @@ export function weekOptions({ labels, counts, focus, breaks }) {
         // Capped, or a week with one day in it draws a bar the width of the
         // chart — which reads as a full week rather than as a Monday.
         barMaxWidth: 48,
-        itemStyle: { color: '#f2a462' },
+        itemStyle: { color: themeToken('flame-lift') },
       },
       {
         name: 'Break',
@@ -70,7 +71,7 @@ export function weekOptions({ labels, counts, focus, breaks }) {
         stack: 'time',
         data: breaks,
         barMaxWidth: 48,
-        itemStyle: { color: '#6f9e8b', borderRadius: [3, 3, 0, 0] },
+        itemStyle: { color: themeToken('sage'), borderRadius: [3, 3, 0, 0] },
       },
       {
         name: 'Pomodoros',
@@ -79,8 +80,8 @@ export function weekOptions({ labels, counts, focus, breaks }) {
         data: counts,
         smooth: false,
         symbolSize: 6,
-        lineStyle: { color: '#b9b3cc' },
-        itemStyle: { color: '#b9b3cc' },
+        lineStyle: { color: chrome().muted },
+        itemStyle: { color: chrome().muted },
       },
     ],
   }

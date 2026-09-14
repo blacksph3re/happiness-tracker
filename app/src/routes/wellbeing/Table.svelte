@@ -1,4 +1,6 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/wellbeing/column.js'
   import { tick } from 'svelte'
 
   import { save, toCsv } from '../../lib/download.js'
@@ -238,7 +240,8 @@
   }
 </script>
 
-<section class="mx-auto w-full max-w-6xl px-5 py-8">
+<Frame column={COLUMN}>
+<section>
   <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
     <div>
       <p class="meta">Every answer you have given</p>
@@ -248,25 +251,25 @@
       <!-- On a narrow screen these move the single visible day; on a wide one
            they widen the span of columns the table shows. -->
       <button
-        class="meta rounded-md border border-white/15 px-4 py-2 hover:border-white/40 md:hidden"
+        class="btn-outline meta md:hidden"
         onclick={() => stepDay(-1)}
       >
         ← Earlier
       </button>
       <button
-        class="meta rounded-md border border-white/15 px-4 py-2 hover:border-white/40 md:hidden"
+        class="btn-outline meta md:hidden"
         onclick={() => stepDay(1)}
       >
         Later →
       </button>
       <button
-        class="meta hidden rounded-md border border-white/15 px-4 py-2 hover:border-white/40 md:inline-block"
+        class="btn-outline meta hidden md:inline-block"
         onclick={() => widen('past')}
       >
         ← Earlier days
       </button>
       <button
-        class="meta hidden rounded-md border border-white/15 px-4 py-2 hover:border-white/40 md:inline-block"
+        class="btn-outline meta hidden md:inline-block"
         onclick={() => widen('future')}
       >
         Later days →
@@ -276,8 +279,7 @@
            header row and nothing else — which is the cost of the export no
            longer coming from the server, and worth spending a `disabled` on. -->
       <button
-        class="meta rounded-md border border-white/15 px-4 py-2 hover:border-white/40
-               disabled:cursor-not-allowed disabled:opacity-30"
+        class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-30"
         disabled={loading}
         onclick={download}
       >
@@ -348,10 +350,8 @@
       </div>
 
       <button
-        class="meta mt-4 w-full rounded-md border px-3 py-3 transition
-               {selectedDay === today()
-          ? 'border-ember/60 text-paper hover:bg-ember/10'
-          : 'border-white/15 hover:border-white/40'}"
+        class="btn-outline meta mt-4 w-full transition
+               {selectedDay === today() ? 'border-ember/60 text-paper hover:bg-ember/10' : ''}"
         onclick={() => navigate(`/answer?day=${selectedDay}`)}
       >
         Answer this day
@@ -359,7 +359,10 @@
     </div>
 
     {:else}
-    <!-- Days run left to right like a timeline; the table scrolls, the page does not. -->
+    <!-- Days run left to right like a timeline; the table scrolls, the page does not.
+         The sticky column is painted the page's own ground, which is what the
+         day cells scroll over: `ink-soft` made the header row two-tone, white
+         beside grey under the light theme. -->
     <div bind:this={scroller} class="overflow-x-auto rounded-xl border border-white/10">
       <!-- Fixed widths: a long enum label must not stretch its column and knock
            every other day out of alignment. -->
@@ -376,7 +379,7 @@
         <thead>
           <tr>
             <th
-              class="meta sticky left-0 z-20 truncate border-r border-white/15 bg-ink-soft
+              class="meta sticky left-0 z-20 truncate border-r border-white/15 bg-ink
                      px-4 py-3 text-left"
               scope="col"
             >
@@ -400,7 +403,7 @@
             <tr class="border-t border-white/8">
               <th
                 class="sticky left-0 z-20 truncate border-r border-white/15
-                       bg-ink-soft px-4 py-3 text-left
+                       bg-ink px-4 py-3 text-left
                        font-medium {question.origin === 'asked' ? 'text-paper' : 'text-haze'}"
                 scope="row"
                 title={question.prompt}
@@ -421,7 +424,7 @@
           {/each}
           <tr class="border-t border-white/15">
             <th
-              class="meta sticky left-0 z-20 truncate border-r border-white/15 bg-ink-soft
+              class="meta sticky left-0 z-20 truncate border-r border-white/15 bg-ink
                      px-4 py-3 text-left"
               scope="row"
             >
@@ -430,10 +433,8 @@
             {#each days as day (day)}
               <td class="px-2 py-3">
                 <button
-                  class="meta w-full rounded-md border px-3 py-2 transition
-                         {day === today()
-                    ? 'border-ember/60 text-paper hover:bg-ember/10'
-                    : 'border-white/15 hover:border-white/40'}"
+                  class="btn-outline meta w-full transition
+                         {day === today() ? 'border-ember/60 text-paper hover:bg-ember/10' : ''}"
                   onclick={() => navigate(`/answer?day=${day}`)}
                 >
                   Answer
@@ -448,8 +449,9 @@
 
     {#if answered.length === 0}
       <p class="mt-4 text-sm text-haze">
-        Nothing recorded yet. Pick any day above and start answering.
+        Nothing recorded yet.
       </p>
     {/if}
   {/if}
 </section>
+</Frame>

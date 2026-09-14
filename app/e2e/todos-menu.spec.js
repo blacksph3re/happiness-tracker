@@ -562,3 +562,63 @@ test('every row of the menu is a thumb tall at 320', async ({ page, account }) =
     expect(height, 'a menu row is shorter than a thumb').toBeGreaterThanOrEqual(44)
   }
 })
+
+test('the menu is a menu from the keyboard: arrows, Home, End, and Escape or Tab back to the card', async ({
+  page,
+  account,
+}) => {
+  // Reported from the keyboard review: the focus went in, the arrows did
+  // nothing, Tab walked out past the last item into the page header, and
+  // Escape then left the focus on the header's link rather than the card.
+  await makeTodos(account, [{ title: 'Feed the cat' }, { title: 'Water the plants' }])
+  await openTasks(page, account, 'date')
+  const target = card(page, 'Feed the cat')
+  await expect(target).toBeVisible()
+
+  await target.focus()
+  await page.keyboard.press('Shift+F10')
+  await expect(menu(page)).toHaveAttribute('role', 'menu')
+  await expect(menu(page).getByRole('menuitem')).toHaveCount(3)
+  const wontDo = menu(page).locator('[data-menu-wont-do]')
+  const pomodoro = menu(page).locator('[data-menu-pomodoro]')
+  const send = menu(page).locator('[data-menu-send]')
+  await expect(wontDo).toBeFocused()
+
+  await page.keyboard.press('ArrowDown')
+  await expect(pomodoro).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(send).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(wontDo).toBeFocused()
+  await page.keyboard.press('ArrowUp')
+  await expect(send).toBeFocused()
+  await page.keyboard.press('Home')
+  await expect(wontDo).toBeFocused()
+  await page.keyboard.press('End')
+  await expect(send).toBeFocused()
+
+  // The list step is a menu too, and Back returns to the verb that opened it.
+  await page.keyboard.press('Enter')
+  const rows = menu(page).locator('[data-menu-list]')
+  await expect(rows.first()).toBeFocused()
+  await page.keyboard.press('End')
+  await expect(menu(page).locator('[data-menu-back]')).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(send).toBeFocused()
+
+  await page.keyboard.press('Escape')
+  await expect(menu(page)).toHaveCount(0)
+  await expect(target).toBeFocused()
+
+  await page.keyboard.press('Shift+F10')
+  await expect(wontDo).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Tab')
+  await expect(menu(page)).toHaveCount(0)
+  await expect(target).toBeFocused()
+
+  await page.keyboard.press('Shift+F10')
+  await page.keyboard.press('Shift+Tab')
+  await expect(menu(page)).toHaveCount(0)
+  await expect(target).toBeFocused()
+})

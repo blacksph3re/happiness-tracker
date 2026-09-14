@@ -4,7 +4,25 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#191627" />
     <title>Daily Tracker</title>
+    <!-- The appearance, before anything paints. The bundle loads after the
+         stylesheet and a light device would flash dark for that long, so the
+         stored choice is read here and `lib/theme.svelte.js` takes over once it
+         runs. The key and the two grounds must agree with that module and with
+         `app.css`; `e2e/appearance.spec.js` holds both. -->
+    <script>
+      try {
+        var choice = localStorage.getItem('ht.appearance')
+        var light =
+          choice === 'light' ||
+          (choice === 'system' && matchMedia('(prefers-color-scheme: light)').matches)
+        document.documentElement.dataset.theme = light ? 'light' : 'dark'
+        if (light) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#f4f2f8')
+        }
+      } catch (error) {}
+    </script>
   </head>
   <body>
     <div id="app"></div>

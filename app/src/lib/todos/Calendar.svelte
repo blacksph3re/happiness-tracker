@@ -3,8 +3,9 @@
 
   import { estimateLabel } from '../clock.js'
   import { dayLabel, shiftDay } from '../day.js'
-  import { wide } from '../media.js'
+  import { tall, wide } from '../media.js'
   import { swipe } from '../swipe.js'
+  import CalendarAgenda from './CalendarAgenda.svelte'
   import { calendarDrag } from './calendar-drag.svelte.js'
   import {
     ANYTIME_CAP,
@@ -26,7 +27,6 @@
     hourLabel,
     minutesOf,
     placeBlocks,
-    weekLabel,
     weekOf,
     weekdayLabel,
   } from './calendar.js'
@@ -48,12 +48,27 @@
    * and in day mode the strip goes back to being a standalone row, because
    * there is then one body column and seven chips and they cannot line up.
    *
+   * **Except a phone's Week, which is an agenda.** Seven hour columns do not
+   * fit below 48rem, and one day of hours under the strip made Week and Day the
+   * same picture with arrows that stepped differently. There Week lists the
+   * strip's seven days with the tasks planned on each (`CalendarAgenda`), and
+   * the header, the pills, the arrows and the strip are exactly where they are
+   * in Day, so switching moves none of them. The hours — and dropping at a time
+   * and resizing, which need them — stay Day's.
+   *
    * **The body scrolls, and opens at the useful hour.** Twenty-four rows is
    * some 1,200px, which on a phone is the whole screen and then some before the
    * first task. The hours scroll inside a box of their own with the header and
    * the anytime row stuck to its top, and the first paint puts the now line a
    * third of the way down on a day that has one and 07:00 at the top on a day
    * that does not.
+   *
+   * **Under 30rem tall there is no box**, which is the board's rule for a
+   * column: at 844×390 the box was its 24rem floor inside a 390px window, so
+   * the page scrolled a little and the box scrolled the rest. There the hours
+   * flow in the page, the header and the anytime row stick to the top of the
+   * *window*, and the body opens at midnight — scrolling the window on arrival
+   * would carry the controls above the calendar off screen.
    *
    * **A block is carried, and the shadow is the promise.** A drag moves a task
    * to another day and another quarter hour at once, so what is under the
@@ -130,6 +145,15 @@
     onopen = () => {},
     onadd = () => {},
     onselect = () => {},
+    /**
+     * Switch between Day and Week, as the pills do.
+     *
+     * For a phone's agenda, whose day headings open that day in Day: a
+     * navigation inside the page, so the pill has to follow it.
+     *
+     * @type {(mode: 'day' | 'week') => void}
+     */
+    onmode = () => {},
     /**
      * Move a task to a day and a time, and say whether anything was written.
      *
@@ -218,6 +242,18 @@
   const single = $derived(days.length === 1)
 
   /**
+   * Whether the body is the week as a list rather than hours: Week on a phone.
+   *
+   * Decided by the width and the mode together, and never stored: a remembered
+   * Week restores as this on a phone and as seven columns on a desktop, and a
+   * window crossing 48rem swaps the two over the same selected day.
+   */
+  const agenda = $derived(!$wide && mode === 'week')
+
+  /** The agenda's element, which the drag auto-scrolls the window against. */
+  let agendaBox = $state(null)
+
+  /**
    * Whether the strip is the body's header row rather than a row above it.
    *
    * The same condition as `!single`, named for what it decides: seven chips can
@@ -288,6 +324,17 @@
   )
   const anytime = $derived(anytimeRow.height)
 
+  /**
+   * Whether the anytime row sticks under the day header while the hours scroll.
+   *
+   * Not under 30rem tall, where there is no scroll box and the page scrolls
+   * instead: at 844×390 the 52px header and a 74px row kept 126 of 390px on
+   * screen for good. The header stays, because a column of hours with no day
+   * over it is a column of nothing; the row scrolls away with the page and is
+   * back the moment the page is at its top, which is where a drag into it goes.
+   */
+  const rowSticks = $derived(anytimeRow.sticky && $tall)
+
   /** The lines between two untimed slots, which are drawn over the rows. */
   const rowLines = $derived(due.connectors.filter((line) => line.anytime))
 
@@ -327,8 +374,8 @@
    * @returns {number} A `scrollTop`, never negative.
    */
   function openingOffset(holdsNow) {
-    const above = anytimeRow.sticky ? 0 : anytime
-    const covered = anytimeRow.sticky ? anytime : 0
+    const above = rowSticks ? 0 : anytime
+    const covered = rowSticks ? anytime : 0
     if (holdsNow) {
       const room = Math.max(scroller.clientHeight - HEAD - covered, HOUR)
       return Math.max(above + (minute / 60) * HOUR - room / 3, 0)
@@ -386,17 +433,6 @@
    */
   function colourOf(task) {
     return taskColour(task, listsById[task.list_id])
-  }
-
-  /**
-   * Step by what the controls name: a day in Day, a whole week in Week.
-   *
-   * Day used to name a week and step one, which jumped past six days nobody
-   * could see. The *mode* decides and not the width: a phone in Week draws one
-   * day of hours, but the strip and the label above it are still a week.
-   */
-  function step(direction) {
-    onselect(shiftDay(selected, direction * (mode === 'day' ? 1 : 7)))
   }
 
   /**
@@ -468,19 +504,22 @@
   // The scrolling body, which the drag needs for two different reasons: the
   // auto-scroll when a block is carried to the top or the bottom of it, and the
   // left and right sides that step the day under a block held against them.
+  // In the agenda that is the list, which is never its own scroll box, so the
+  // drag reads its computed overflow and scrolls the window instead.
   $effect(() => {
-    drag.body = scroller
+    drag.body = agenda ? agendaBox : scroller
     return () => {
       drag.body = null
     }
   })
 
-  // Only a one-day body has a neighbouring day to step to — seven columns are
-  // all already on screen. Assigning a callback rather than deriving state, as
-  // the board does: `onEdge` is a plain closure variable inside the drag, so
-  // this effect writes nothing anything reads and cannot re-trigger itself.
+  // Only a one-day body has a neighbouring day to step to — seven columns, and
+  // the agenda's seven days, are all already on screen. Assigning a callback
+  // rather than deriving state, as the board does: `onEdge` is a plain closure
+  // variable inside the drag, so this effect writes nothing anything reads and
+  // cannot re-trigger itself.
   $effect(() => {
-    drag.onEdge = single ? (delta) => onselect(shiftDay(selected, delta)) : null
+    drag.onEdge = single && !agenda ? (delta) => onselect(shiftDay(selected, delta)) : null
     return () => {
       drag.onEdge = null
     }
@@ -578,8 +617,9 @@
     const clock = at === null ? 'anytime' : clockOfMinutes(at)
     // A one-day body would otherwise be showing the day the task just left, so
     // the selection follows it. Before the move lands, or the column the block
-    // is about to be focused in does not exist yet.
-    if (single) onselect(day)
+    // is about to be focused in does not exist yet. The agenda follows too, or
+    // a task nudged past Sunday would leave the list it is focused in.
+    if (single || agenda) onselect(day)
     await commit(task, `${task.title} on ${dayLabel(day)}, ${clock}`, () =>
       onmove(task, { day, minutes: at })
     )
@@ -728,47 +768,6 @@
   </div>
 {/snippet}
 
-<!-- The controls. Each group is its own flex container, so a cramped row moves a
-     group to the next line rather than splitting one in half. The label is
-     where the month is said: the chips carry a weekday and a number and no
-     month at all, which at 320px is the only way seven of them fit. In Day it
-     names the day, because that is what the arrows step. -->
-<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-  <div class="flex items-center gap-1">
-    <button
-      class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40"
-      data-step="-1"
-      aria-label={mode === 'day' ? 'Previous day' : 'Previous week'}
-      onclick={() => step(-1)}
-    >
-      ‹
-    </button>
-    <span
-      class="meta min-w-28 text-center whitespace-nowrap"
-      data-span-label={mode}
-      data-week-label={mode === 'week' ? '' : undefined}
-    >
-      {mode === 'day' ? dayLabel(selected) : weekLabel(selected)}
-    </span>
-    <button
-      class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40"
-      data-step="1"
-      aria-label={mode === 'day' ? 'Next day' : 'Next week'}
-      onclick={() => step(1)}
-    >
-      ›
-    </button>
-  </div>
-
-  <button
-    class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-    data-today-button
-    onclick={() => onselect(today)}
-  >
-    Today
-  </button>
-</div>
-
 {#if !striped}
   <!-- The standalone strip: a week is still in view over a body that is one
        day of it, which is the whole of "a strip and a day". On a desktop it is
@@ -786,6 +785,28 @@
   </div>
 {/if}
 
+{#if agenda}
+  <!-- A drop on a day's section is a strip chip's drop — the day alone, the
+       time kept. Dropping at a time and resizing are Day's, which a heading
+       opens on that day. -->
+  <CalendarAgenda
+    days={week}
+    {tasks}
+    {today}
+    {showDue}
+    {listsById}
+    {drag}
+    {menu}
+    bind:box={agendaBox}
+    onopen={openUnlessDropped}
+    {onadd}
+    onday={(day) => {
+      onselect(day)
+      onmode('day')
+    }}
+    onkey={onKey}
+  />
+{:else}
 <!-- The hours scroll and their headers do not. `touch-pan-y` leaves the
      vertical drag to the browser and keeps the horizontal one for the swipe,
      which is decided at touchstart and so cannot be done from a listener. The
@@ -793,9 +814,9 @@
      the same thing with buttons, which is why the element needs no role it
      could not honour. -->
 <div
-  class="overflow-y-auto touch-pan-y"
+  class="{$tall ? 'overflow-y-auto' : ''} touch-pan-y"
   data-body
-  style:max-height="max(24rem, 70vh)"
+  style:max-height={$tall ? 'max(24rem, 70vh)' : undefined}
   bind:this={scroller}
   bind:clientWidth={bodyWidth}
   use:swipe={{
@@ -854,8 +875,8 @@
          of its own row so a label names the line it sits on. -->
     <div class="border-r border-white/10" style:grid-area="2 / 1">
       <div
-        class="{anytimeRow.sticky ? 'sticky' : 'relative'} z-20 flex items-start justify-end bg-ink px-2"
-        style:top={anytimeRow.sticky ? `${HEAD}px` : undefined}
+        class="{rowSticks ? 'sticky' : 'relative'} z-20 flex items-start justify-end bg-ink px-2"
+        style:top={rowSticks ? `${HEAD}px` : undefined}
         style:height={`${anytime}px`}
       >
         <span class="meta">Anytime</span>
@@ -887,12 +908,12 @@
              `overflow: hidden`, which drew two of a day's fifty and said nothing
              about the other forty-eight. -->
         <div
-          class="{anytimeRow.sticky ? 'sticky' : 'relative'} z-20 overflow-hidden border-b
+          class="{rowSticks ? 'sticky' : 'relative'} z-20 overflow-hidden border-b
                  border-white/10 bg-ink transition
                  {anytimeOver ? 'bg-dusk/30 ring-1 ring-ember ring-inset' : ''}"
           data-anytime-row={day}
           data-shadow={anytimeOver ? 'anytime' : undefined}
-          style:top={anytimeRow.sticky ? `${HEAD}px` : undefined}
+          style:top={rowSticks ? `${HEAD}px` : undefined}
           style:height={`${anytime}px`}
         >
           <button
@@ -977,11 +998,19 @@
 
         <!-- The hours. Each row is the button that adds into it, so a tap on
              empty space is a tap on the row and a tap on a block never is —
-             there is no hit testing to get wrong. -->
+             there is no hit testing to get wrong.
+
+             Out of the tab order: a stop per hour was 168 presses across a
+             week before the first task. The keyboard adds through the day's
+             plus, which opens the task where its time is typed — one way in
+             per day, and nothing a roving focus would have to keep in step
+             with the drag, the lanes and the scroll. Still named buttons, so a
+             screen reader's own navigation reaches every hour. -->
         {#each HOURS as hour (hour)}
           <button
             class="block w-full border-b border-white/5 hover:bg-dusk/10"
             style:height={`${HOUR}px`}
+            tabindex="-1"
             data-hour={hour}
             aria-label={`Add a task at ${hourLabel(hour)} on ${dayLabel(day)}`}
             onclick={() => onadd({ day, hour })}
@@ -1019,7 +1048,7 @@
             style:left={`calc(${(block.lane / block.lanes) * 100}% + 1px)`}
             style:width={`calc(${100 / block.lanes}% - 2px)`}
             style:border-color={colourOf(block.task)}
-            style:background={`color-mix(in srgb, ${colourOf(block.task)} 18%, transparent)`}
+            style:background={`color-mix(in srgb, ${colourOf(block.task)} 18%, var(--color-ink))`}
             oncontextmenu={menu ? (event) => menu.contextmenu(event, block.task) : undefined}
             onpointerdown={(event) => {
               drag.start(event, block.task)
@@ -1120,9 +1149,17 @@
 
         {#if day === today}
           <!-- Only on today, because a line saying "now" on another day would be
-               saying it about a time that day does not have. -->
+               saying it about a time that day does not have.
+
+               Beneath the blocks (`z-[5]` against their `z-10`) and over the
+               hour rows, which are not positioned: a mark belongs to the layer
+               of the thing it describes, and this one describes the grid. Drawn
+               over the blocks it crossed a title mid-letter, which reads as the
+               strike-through of a done task. A block's tint is mixed into the
+               ground rather than over transparency for the same reason — a
+               line beneath an 18% tint is still a line through the title. -->
           <div
-            class="pointer-events-none absolute inset-x-0 z-10 border-t border-ember"
+            class="pointer-events-none absolute inset-x-0 z-[5] border-t border-ember"
             data-now
             style:top={`${anytime + (minute / 60) * HOUR}px`}
           ></div>
@@ -1166,10 +1203,10 @@
          `viewBox` to stretch. -->
     {#if rowLines.length}
       <div
-        class="{anytimeRow.sticky ? 'sticky' : 'relative'} pointer-events-none z-20 self-start"
+        class="{rowSticks ? 'sticky' : 'relative'} pointer-events-none z-20 self-start"
         data-anytime-lines
         style:grid-area={`2 / 2 / 3 / span ${days.length}`}
-        style:top={anytimeRow.sticky ? `${HEAD}px` : undefined}
+        style:top={rowSticks ? `${HEAD}px` : undefined}
         style:height={`${anytime}px`}
       >
         <svg class="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
@@ -1195,6 +1232,7 @@
     {/if}
   </div>
 </div>
+{/if}
 
 <!-- The block under the pointer. `fixed` and `pointer-events: none`, which is
      what lets `elementFromPoint` see the column underneath it rather than the

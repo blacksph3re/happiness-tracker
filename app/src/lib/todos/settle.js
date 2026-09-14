@@ -24,17 +24,26 @@
  *   the pointer let go, in client coordinates.
  */
 export function settleInto(node, from) {
+  // **Measured with the transition switched off**, and before the measurement:
+  // that order is the fix for a card that fell in from the top edge. The render
+  // that puts the card down removes the carry's `translate3d` in the same style
+  // change that restores the card's own `transition`, so the browser starts
+  // easing that transform away — from the pointer's position in *viewport*
+  // coordinates, applied to a card now back in the flow. A box read then is the
+  // slot plus the whole release offset, so `dy` came out as minus the slot's own
+  // top and the card was put back at the top of the screen. On a drop onto its
+  // own slot nothing re-renders to correct it, so it flew the whole way; on a
+  // moved drop it was one frame. `transition: none` cancels a running
+  // transition outright, which jumps it to its end — the card in its slot.
+  node.style.transition = 'none'
   const to = node.getBoundingClientRect()
   const dx = from.left - to.left
   const dy = from.top - to.top
-  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return
-  // Nothing worth animating, and worth saying so: a card dropped back in its
-  // own slot has already arrived, and a transition over half a pixel is a
-  // transition somebody's test can catch mid-flight for no reason.
-  if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return
-
-  node.style.transition = 'none'
-  node.style.transform = `translate3d(${dx}px, ${dy}px, 0)`
+  // A card already where it belongs still goes through the release below, with
+  // nothing to animate: the eased-away carry is already cancelled, and clearing
+  // the transition over an unchanged transform starts nothing new.
+  const still = !Number.isFinite(dx) || !Number.isFinite(dy) || (Math.abs(dx) < 1 && Math.abs(dy) < 1)
+  if (!still) node.style.transform = `translate3d(${dx}px, ${dy}px, 0)`
   // Reading a layout property is what makes the two lines above the *before*
   // of the change below. Without it the browser coalesces both styles into one
   // recalculation, there is no start value, and nothing animates.

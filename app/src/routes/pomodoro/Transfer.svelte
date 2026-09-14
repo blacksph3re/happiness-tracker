@@ -80,8 +80,7 @@
       <div class="mt-4 flex items-center gap-3">
         <button
           data-confirm-transfer
-          class="rounded-md bg-dusk px-4 py-2 font-semibold transition
-                 hover:bg-dusk-lift disabled:opacity-40"
+          class="btn-filled disabled:opacity-40"
           disabled={!chosen || busy}
           onclick={confirm}
         >
@@ -95,8 +94,7 @@
     {:else}
       <button
         data-open-transfer
-        class="meta rounded-md border border-white/20 px-4 py-2 transition
-               hover:border-white/40"
+        class="btn-outline meta"
         onclick={() => (open = true)}
       >
         Copy {formatDuration(seconds)} to a project →

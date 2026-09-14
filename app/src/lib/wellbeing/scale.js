@@ -6,7 +6,9 @@
  */
 export function tint(ratio) {
   const clamped = Math.min(Math.max(ratio, 0), 1)
-  return `color-mix(in oklab, var(--color-dusk-lift) ${12 + clamped * 58}%, transparent)`
+  // `--color-band` is set only under the light theme, where `dusk-lift` at 70%
+  // is too dark for the label drawn on it.
+  return `color-mix(in oklab, var(--color-band, var(--color-dusk-lift)) ${12 + clamped * 58}%, transparent)`
 }
 
 /**

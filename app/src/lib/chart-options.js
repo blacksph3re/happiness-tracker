@@ -7,41 +7,54 @@
  */
 
 import { dayLabel } from './day.js'
+import { themeToken } from './theme.svelte.js'
 
-/** Series colours, in the order ECharts assigns them.
+/** The series colours' tokens, in the order ECharts assigns them.
  *
- * Exported because the box plot's key is rendered as markup beside the chart
- * and has to match the boxes; two copies would drift apart the first time one
- * of them changed.
+ * Tokens rather than hex values, so a chart draws in the theme in force. The
+ * box plot's key is rendered as markup beside the chart and names the same
+ * tokens through `var()`; two copies of the colours would drift apart the
+ * first time one of them changed.
  */
-export const PALETTE = ['#6b55b8', '#e8734a', '#6f9e8b', '#b9b3cc', '#a07ae8', '#e8b04a']
+export const SERIES_TOKENS = ['chart-1', 'chart-2', 'chart-3', 'chart-4', 'chart-5', 'chart-6']
 
-const MUTED = '#b9b3cc'
-const GRIDLINE = '#2a2440'
-const AXIS_LINE = '#3a3350'
+/** The series colours, resolved for the theme in force. */
+export function palette() {
+  return SERIES_TOKENS.map((name) => themeToken(name))
+}
 
 /**
- * The radar's rings and spokes, which are brighter than every other chart's
- * gridlines on purpose.
+ * A chart's chrome, resolved for the theme in force.
  *
- * A cartesian chart carries tick labels and an axis line, so a faint splitline
- * is a hint beside things that already say where a value sits. A radar has none
- * of that: the web *is* the scale, and at `GRIDLINE` it measured **1.07:1**
- * against the `ink-soft` card it is drawn on — reported as barely readable,
- * which is what a ratio that close to 1 looks like. This is 2.21:1: present
- * enough to read a value off, and still well under the plotted shape.
+ * Read when a chart's options are built, and — because `themeToken` reads the
+ * theme — built again when it changes, so a chart already on screen redraws.
  *
- * `charts.test.js` asserts the ratio rather than this hex, or it would only be
- * restating the line below back to itself.
+ * `web` is the radar's rings and spokes, which are brighter than every other
+ * chart's gridlines on purpose. A cartesian chart carries tick labels and an
+ * axis line, so a faint splitline is a hint beside things that already say
+ * where a value sits. A radar has none of that: the web *is* the scale, and at
+ * the gridline colour it measured **1.07:1** against the `ink-soft` card it is
+ * drawn on — reported as barely readable, which is what a ratio that close to 1
+ * looks like. `chart-web` is 2.21:1 in dark: present enough to read a value
+ * off, and still well under the plotted shape. `charts.test.js` asserts the
+ * ratio in both themes rather than the hex, or it would only be restating the
+ * stylesheet back to itself.
  */
-const RADAR_WEB = '#5a5185'
+export function chrome() {
+  return {
+    muted: themeToken('chart-muted'),
+    grid: themeToken('chart-grid'),
+    axis: themeToken('chart-axis'),
+    web: themeToken('chart-web'),
+  }
+}
 
 /** The chrome every view shares: dusk palette, muted gridlines, scrolling legend. */
 export function baseOptions() {
   return {
     backgroundColor: 'transparent',
-    color: PALETTE,
-    textStyle: { color: MUTED, fontFamily: 'Inter, system-ui, sans-serif' },
+    color: palette(),
+    textStyle: { color: chrome().muted, fontFamily: 'Inter, system-ui, sans-serif' },
     grid: { left: 48, right: 20, top: 56, bottom: 40 },
     animationDuration: 300,
     animationDurationUpdate: 300,
@@ -51,10 +64,10 @@ export function baseOptions() {
       // of wrapping into rows that overlap the plot.
       type: 'scroll',
       top: 0,
-      textStyle: { color: MUTED },
-      pageTextStyle: { color: MUTED },
-      pageIconColor: PALETTE[0],
-      pageIconInactiveColor: AXIS_LINE,
+      textStyle: { color: chrome().muted },
+      pageTextStyle: { color: chrome().muted },
+      pageIconColor: palette()[0],
+      pageIconInactiveColor: chrome().axis,
     },
     tooltip: { trigger: 'axis' },
   }
@@ -67,7 +80,11 @@ export function baseOptions() {
  * @param {object} extra Axis fields merged over the shared ones.
  */
 function axisFor(variable, extra) {
-  const shared = { nameLocation: 'middle', splitLine: { lineStyle: { color: GRIDLINE } }, ...extra }
+  const shared = {
+    nameLocation: 'middle',
+    splitLine: { lineStyle: { color: chrome().grid } },
+    ...extra,
+  }
   if (variable.kind === 'enum') {
     return {
       ...shared,
@@ -105,10 +122,10 @@ export function lineOptions({ days, series, showSymbols, smoothed }) {
     xAxis: {
       type: 'category',
       data: days,
-      axisLine: { lineStyle: { color: AXIS_LINE } },
+      axisLine: { lineStyle: { color: chrome().axis } },
       axisLabel: { formatter: (day) => dayLabel(day) },
     },
-    yAxis: { type: 'value', splitLine: { lineStyle: { color: GRIDLINE } } },
+    yAxis: { type: 'value', splitLine: { lineStyle: { color: chrome().grid } } },
     series: series.map(({ name, data }) => ({
       name,
       type: 'line',
@@ -138,10 +155,10 @@ export function radarOptions({ indicators, averages }) {
     tooltip: {},
     radar: {
       indicator: indicators,
-      axisName: { color: MUTED },
-      splitLine: { lineStyle: { color: RADAR_WEB } },
+      axisName: { color: chrome().muted },
+      splitLine: { lineStyle: { color: chrome().web } },
       splitArea: { areaStyle: { color: ['transparent'] } },
-      axisLine: { lineStyle: { color: RADAR_WEB } },
+      axisLine: { lineStyle: { color: chrome().web } },
     },
     series: [
       {
@@ -209,12 +226,12 @@ export function boxOptions({ labels, summaries }) {
       data: labels.map((_, index) => String(index + 1)),
       axisLabel: { interval: 0 },
     },
-    yAxis: { type: 'value', splitLine: { lineStyle: { color: GRIDLINE } } },
+    yAxis: { type: 'value', splitLine: { lineStyle: { color: chrome().grid } } },
     series: [
       {
         type: 'boxplot',
         data: summaries,
-        itemStyle: { color: GRIDLINE, borderWidth: 2 },
+        itemStyle: { color: chrome().grid, borderWidth: 2 },
         // One colour per box, matching the key rendered under the chart.
         colorBy: 'data',
       },
@@ -240,7 +257,7 @@ export function totalsOptions({ choices, counts }) {
     xAxis: {
       type: 'category',
       data: choices.map((choice) => choice.label),
-      axisLine: { lineStyle: { color: AXIS_LINE } },
+      axisLine: { lineStyle: { color: chrome().axis } },
       axisLabel: {
         interval: 0,
         rotate: choices.length > 5 ? 30 : 0,
@@ -250,13 +267,13 @@ export function totalsOptions({ choices, counts }) {
     yAxis: {
       type: 'value',
       minInterval: 1,
-      splitLine: { lineStyle: { color: GRIDLINE } },
+      splitLine: { lineStyle: { color: chrome().grid } },
     },
     series: [
       {
         type: 'bar',
         data: counts,
-        itemStyle: { color: PALETTE[0] },
+        itemStyle: { color: palette()[0] },
         barMaxWidth: 48,
       },
     ],

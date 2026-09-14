@@ -1,4 +1,6 @@
 <script>
+  import { tick } from 'svelte'
+
   import { clampDrop } from './groupings.js'
   import QuickAdd from './QuickAdd.svelte'
   import TaskCard from './TaskCard.svelte'
@@ -14,8 +16,10 @@
    * a time, and none of that reaches in here.
    *
    * The component knows nothing about dates, priorities or lists. A column is
-   * `{id, label, hint, tasks, date?, readonly?, paged?, sweepTo?, archiveOwner?}`
-   * and that is the whole contract.
+   * `{id, label, hint, tasks, date?, readonly?, paged?, sweepTo?, archiveOwner?,
+   * unread?}` and that is the whole contract. `unread` is a sentence, set on a
+   * column drawing a collection this page has not confirmed by a read — the
+   * archive offline — and it replaces both the count and *Nothing here yet*.
    */
   let {
     column,
@@ -72,7 +76,11 @@
     onopen = () => {},
     /** Move a card with the keyboard: one step along, or one column across. */
     onnudge = () => {},
-    /** Archive every done task in *this* column, where that is on offer. */
+    /**
+     * Archive every done task in *this* column, where that is on offer. Called
+     * with the column and the Archive press, whose `detail` says whether a key
+     * made it — the page decides where the focus goes from that.
+     */
     oncleanup = null,
     /**
      * Move every open task in this column to the column it names, where the
@@ -220,16 +228,58 @@
    * What the sweep asks, as one string. Composed here rather than in markup,
    * where an `{#if}` beside a `?` swallowed the space between two sentences.
    */
-  const question = $derived(
+  const sweepQuestion = $derived(
     column.sweepTo
       ? `Move ${open} ${column.label.toLowerCase()} ${open === 1 ? 'task' : 'tasks'} to ${
           column.sweepTo.label
-        }?${column.sweepTo.date ? ` They will be planned for ${column.sweepTo.date}.` : ''}`
+        }${column.sweepTo.date ? ` (${column.sweepTo.date})` : ''}?`
       : ''
   )
 
   /** Whether the sweep has asked its question, armed per column like cleanup. */
   let sweeping = $state(false)
+
+  /** The two buttons that raise a question, and the Cancel of each question. */
+  let clearButton = $state(null)
+  let clearCancel = $state(null)
+  let sweepButton = $state(null)
+  let sweepCancel = $state(null)
+
+  /**
+   * Raise or take back a heading question, and keep the focus on something that exists.
+   *
+   * **The question replaces the button that asked it**, so a press from the
+   * keyboard left the focus on `<body>`: the element it was on had gone. Asking
+   * puts it on the question's Cancel — the answer that changes nothing, so a
+   * second Enter is safe — and taking the question back, by Cancel or Escape,
+   * puts it back on the button that asked.
+   *
+   * @param {'clear'|'sweep'} which
+   * @param {boolean} asking
+   */
+  async function question(which, asking) {
+    if (which === 'clear') confirming = asking
+    else sweeping = asking
+    await tick()
+    const target =
+      which === 'clear' ? (asking ? clearCancel : clearButton) : asking ? sweepCancel : sweepButton
+    target?.focus()
+  }
+
+  /**
+   * Escape on a question's own buttons takes the question back.
+   *
+   * On the buttons rather than the row, which is not an interactive element;
+   * the focus is on one of them whenever the question was raised from the keyboard.
+   *
+   * @param {KeyboardEvent} event
+   * @param {'clear'|'sweep'} which
+   */
+  function onQuestionKey(event, which) {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    question(which, false)
+  }
 
   // Disarmed whenever the count moves, the rule the toolbar's cleanup follows:
   // a question armed against three tasks must not be answered about a fourth
@@ -333,7 +383,12 @@
     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
       {#if titled}
         <h2 class="text-sm font-semibold tracking-tight">{column.label}</h2>
-        <span class="meta numeral" data-count={column.id}>{column.tasks.length}</span>
+        <!-- No count for a collection this page has not read: a number there
+             would be a claim about the server made from what the device
+             happens to hold. See `unread` on the column contract. -->
+        {#if !column.unread}
+          <span class="meta numeral" data-count={column.id}>{column.tasks.length}</span>
+        {/if}
       {/if}
       {#if column.hint}
         <span class="meta" data-hint={column.id}>{column.hint}</span>
@@ -355,31 +410,33 @@
             </span>
           {/if}
           <button
-            class="meta rounded-md border border-ember px-2 py-1 whitespace-nowrap
-                   text-paper transition hover:bg-ember/10"
+            class="btn-danger meta border-ember whitespace-nowrap text-paper select-none [-webkit-touch-callout:none]"
             data-cleanup-column-confirm={column.id}
-            onclick={() => {
+            onkeydown={(event) => onQuestionKey(event, 'clear')}
+            onclick={(event) => {
               confirming = false
-              oncleanup(column)
+              oncleanup(column, event)
             }}
           >
             Archive
           </button>
           <button
-            class="meta rounded-md border border-white/20 px-2 py-1 whitespace-nowrap
-                   hover:border-white/40"
+            class="btn-outline meta whitespace-nowrap select-none [-webkit-touch-callout:none]"
+            bind:this={clearCancel}
             data-cleanup-column-cancel={column.id}
-            onclick={() => (confirming = false)}
+            onkeydown={(event) => onQuestionKey(event, 'clear')}
+            onclick={() => question('clear', false)}
           >
             Cancel
           </button>
         {:else}
           <button
-            class="meta ml-auto rounded-md border border-white/15 px-2 py-1 whitespace-nowrap
-                   hover:border-white/40 {clearable ? '' : 'invisible'}"
+            class="btn-outline meta ml-auto whitespace-nowrap select-none [-webkit-touch-callout:none]
+                   {clearable ? '' : 'invisible'}"
+            bind:this={clearButton}
             data-cleanup-column={clearable ? column.id : undefined}
             disabled={!clearable}
-            onclick={() => (confirming = true)}
+            onclick={() => question('clear', true)}
           >
             Clean up {done}
           </button>
@@ -390,11 +447,11 @@
              than the column: *Later* in this grouping is the day after
              tomorrow, which skips two days somebody may have expected. -->
         {#if sweeping && sweepable}
-          <span class="meta ml-auto" data-sweep-asking={column.id}>{question}</span>
+          <span class="meta ml-auto" data-sweep-asking={column.id}>{sweepQuestion}</span>
           <button
-            class="meta rounded-md border border-ember px-2 py-1 whitespace-nowrap
-                   text-paper transition hover:bg-ember/10"
+            class="btn-danger meta border-ember whitespace-nowrap text-paper select-none [-webkit-touch-callout:none]"
             data-sweep-confirm={column.id}
+            onkeydown={(event) => onQuestionKey(event, 'sweep')}
             onclick={() => {
               sweeping = false
               onsweep(column)
@@ -403,20 +460,22 @@
             Move
           </button>
           <button
-            class="meta rounded-md border border-white/20 px-2 py-1 whitespace-nowrap
-                   hover:border-white/40"
+            class="btn-outline meta whitespace-nowrap select-none [-webkit-touch-callout:none]"
+            bind:this={sweepCancel}
             data-sweep-cancel={column.id}
-            onclick={() => (sweeping = false)}
+            onkeydown={(event) => onQuestionKey(event, 'sweep')}
+            onclick={() => question('sweep', false)}
           >
             Cancel
           </button>
         {:else}
           <button
-            class="meta ml-auto rounded-md border border-white/15 px-2 py-1 whitespace-nowrap
-                   hover:border-white/40 {sweepable ? '' : 'invisible'}"
+            class="btn-outline meta ml-auto whitespace-nowrap select-none [-webkit-touch-callout:none]
+                   {sweepable ? '' : 'invisible'}"
+            bind:this={sweepButton}
             data-sweep={sweepable ? column.id : undefined}
             disabled={!sweepable}
-            onclick={() => (sweeping = true)}
+            onclick={() => question('sweep', true)}
           >
             Move {open} to {column.sweepTo.label}
           </button>
@@ -427,7 +486,7 @@
              no button is exactly as tall above its cards as one with. -->
         <span
           aria-hidden="true"
-          class="meta invisible ml-auto rounded-md border px-2 py-1 whitespace-nowrap"
+          class="btn-outline meta invisible ml-auto whitespace-nowrap"
           >&nbsp;</span>
       {:else if steady === 'line' && !column.hint && !titled}
         <span aria-hidden="true" class="meta invisible">&nbsp;</span>
@@ -497,7 +556,13 @@
            window.*, *No projects yet* — and four bare headings over four boxes
            said nothing at all about whether a column was empty or still
            loading. -->
-      {#if !rows.length}
+      {#if column.unread}
+        <!-- Said in place of *Nothing here yet*, which an offline reload of
+             the archive used to read while the server held three tasks: the
+             archive is never in the snapshot, so until a read confirms it this
+             column does not know what is in it, and says so. -->
+        <p class="meta" data-archive-unread={column.id}>{column.unread}</p>
+      {:else if !rows.length}
         <p class="meta" data-empty={column.id}>Nothing here yet</p>
       {/if}
 
@@ -536,8 +601,8 @@
        that has just tapped it. -->
   {#if column.paged && onolder}
     <button
-      class="meta self-start rounded-md border border-white/15 px-3 py-2 whitespace-nowrap
-             hover:border-white/40 disabled:border-white/10 disabled:text-haze"
+      class="btn-outline meta self-start whitespace-nowrap select-none [-webkit-touch-callout:none]
+             disabled:border-white/10 disabled:text-haze"
       data-show-older={column.id}
       disabled={loadingOlder}
       aria-busy={loadingOlder ? 'true' : undefined}

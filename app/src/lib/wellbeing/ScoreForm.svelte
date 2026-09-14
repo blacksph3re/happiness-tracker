@@ -81,8 +81,7 @@
       </div>
     {:else}
       <p class="text-sm text-haze">
-        This catalogue has no scaled questions yet. A score reads numbers, so options
-        questions cannot feed one.
+        No scaled questions yet.
       </p>
     {/each}
   </div>
@@ -109,15 +108,14 @@
     <button
       type="submit"
       disabled={chosen.length === 0}
-      class="rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift
-             disabled:cursor-not-allowed disabled:opacity-30"
+      class="btn-filled disabled:cursor-not-allowed disabled:opacity-30"
     >
       {submitLabel}
     </button>
     {#if oncancel}
       <button
         type="button"
-        class="meta rounded-md border border-white/15 px-4 py-3 hover:border-white/40"
+        class="btn-outline meta"
         onclick={oncancel}
       >
         Cancel

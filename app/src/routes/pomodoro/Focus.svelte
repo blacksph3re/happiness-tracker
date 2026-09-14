@@ -1,4 +1,6 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/pomodoro/column.js'
   import { today } from '../../lib/day.js'
   import {
     clockLabel,
@@ -373,7 +375,8 @@
   }
 </script>
 
-<section class="mx-auto w-full max-w-3xl px-5 py-10">
+<Frame column={COLUMN}>
+<section>
   <p class="meta">Focus</p>
   <h1 class="mt-1 text-3xl font-bold tracking-tight">
     {#if running}
@@ -458,7 +461,7 @@
         </a>
         <button
           data-start
-          class="rounded-md bg-dusk px-6 py-2.5 font-semibold transition hover:bg-dusk-lift"
+          class="btn-filled"
           onclick={start}
         >
           {running ? 'Start the next one' : 'Start'}
@@ -638,20 +641,19 @@
               </label>
               <button
                 data-save-edit
-                class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift"
+                class="btn-filled"
                 onclick={saveEdit}
               >
                 Save
               </button>
               <button
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+                class="btn-outline meta"
                 onclick={() => (editing = null)}
               >
                 Cancel
               </button>
               <p class="meta w-full normal-case text-haze">
-                {editing.planned} minutes was the mode at the time. Change the mode in
-                Settings; it does not rewrite what is already recorded.
+                Planned at {editing.planned} minutes.
               </p>
             </div>
           {/if}
@@ -662,3 +664,4 @@
     <p class="mt-8 text-haze">Nothing yet today.</p>
   {/if}
 </section>
+</Frame>

@@ -1,4 +1,6 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/pomodoro/column.js'
   import { dayLabel, shiftDay, today } from '../../lib/day.js'
   import { clockLabel, clockOfSeconds, formatDuration, localDay } from '../../lib/clock.js'
   import { period, stepPeriod, daysIn } from '../../lib/period.js'
@@ -215,7 +217,8 @@
   const activeDays = $derived(new Set(rows.map(({ day }) => day)).size)
 </script>
 
-<section class="mx-auto w-full max-w-3xl px-5 py-10">
+<Frame column={COLUMN}>
+<section>
   <p class="meta">Focus</p>
   <h1 class="mt-1 text-3xl font-bold tracking-tight">{heading}</h1>
 
@@ -232,22 +235,32 @@
         {label}
       </button>
     {/each}
-    <span class="ml-auto flex gap-2">
+    <!-- Beside the pills, so drawn at their height: a 44px box here would make
+         the row taller than every pill in it. The reach comes from a negative
+         margin around the drawn box, never from padding, and the two reaches
+         meet in the gap rather than overlapping. -->
+    <span class="ml-auto flex">
       <button
-        class="meta rounded-md border border-white/20 px-3 py-2 transition hover:border-white/40"
+        class="group -my-[4.75px] flex h-11 items-center pr-1"
         aria-label="Previous"
         onclick={() => (anchor = stepPeriod(unit, anchor, -1))}
       >
-        ←
+        <span
+          class="meta flex w-11 justify-center rounded-md border border-white/15 py-2 transition
+                 group-hover:border-white/40"
+        >←</span>
       </button>
       <button
-        class="meta rounded-md border border-white/20 px-3 py-2 transition
-               hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-40"
+        class="group -my-[4.75px] flex h-11 items-center pl-1 disabled:cursor-not-allowed
+               disabled:opacity-40"
         aria-label="Next"
         disabled={atLatest}
         onclick={() => (anchor = stepPeriod(unit, anchor, 1))}
       >
-        →
+        <span
+          class="meta flex w-11 justify-center rounded-md border border-white/15 py-2 transition
+                 group-enabled:group-hover:border-white/40"
+        >→</span>
       </button>
     </span>
   </div>
@@ -296,11 +309,11 @@
         <Swimlanes {lanes} window={laneWindow} />
       </div>
       <p class="meta mt-3 normal-case">
-        Each row starts at the time on its left. The green part of a block is
-        its break.
+        Green is break time.
       </p>
     </div>
   {:else}
     <p class="mt-6 text-haze">Nothing recorded on this day.</p>
   {/if}
 </section>
+</Frame>

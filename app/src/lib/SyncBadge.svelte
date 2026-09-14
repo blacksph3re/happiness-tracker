@@ -2,7 +2,7 @@
   import { clearTokens } from './api.js'
   import { purgePush } from './push.js'
   import { revalidate } from './revalidate.js'
-  import { navigate } from './router.js'
+  import { mayNavigate, navigate } from './router.js'
   import {
     conflicts,
     connection,
@@ -27,9 +27,11 @@
   async function signInAgain() {
     // The same two calls `signOut` makes, and for the same reason: leaving is
     // leaving, however it was reached, and a subscription outlives a token.
+    const next = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`
+    if (!mayNavigate(next)) return
     await purgePush()
     clearTokens()
-    navigate('/login')
+    navigate(next)
   }
 
   /**
@@ -110,9 +112,13 @@
   role="status"
   aria-live="polite"
 >
+<!-- A 44px reach around an 18px cloud, from negative margins and the padding
+     they give back, so nothing drawn moves: 13px above and below, 4px to the
+     left — meeting the mark's 4px in the 8px gap between them — and 22px to the
+     right, where there is nothing to press. -->
 <button
   type="button"
-  class="inline-flex items-center"
+  class="-my-[13px] -mr-[22px] -ml-1 inline-flex min-h-11 items-center py-[13px] pr-[22px] pl-1"
   aria-label={spoken}
   title={spoken}
   onpointerdown={(event) => event.stopPropagation()}
@@ -203,7 +209,7 @@
         {/each}
       </ul>
       <button
-        class="meta mt-3 rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+        class="btn-outline meta mt-3"
         onclick={() => dismissConflicts()}
       >
         Dismiss

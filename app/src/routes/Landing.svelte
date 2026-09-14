@@ -1,4 +1,5 @@
 <script>
+  import Frame from '../lib/Frame.svelte'
   import { link } from '../lib/router.js'
   import { formatDuration, localDay } from '../lib/clock.js'
 import { elapsed } from '../lib/time/duration.js'
@@ -62,10 +63,12 @@ import { elapsed } from '../lib/time/duration.js'
    * Centred rather than `self-start`: the pair is a two-column grid, so each
    * button already fills its half and a left-aligned label would leave the
    * two looking different widths when the words differ in length.
+   *
+   * No border utility beside the kind: `border-white/20` sat here, and a
+   * utility outranks the kind's own hover, so none of the eight buttons ever
+   * answered a pointer.
    */
-  const ACTION =
-    'meta flex items-center justify-center rounded-md border border-white/20 ' +
-    'px-3 py-2.5 text-center transition hover:border-white/40'
+  const ACTION = 'btn-outline meta flex text-center transition'
 
   /**
    * The cards' grid, named once because the habits below line up under it.
@@ -229,7 +232,8 @@ import { elapsed } from '../lib/time/duration.js'
      what decides whether "Check out" and "Patterns" sit side by side. 72rem
      over four is within a hair of 56rem over three, so nothing but the count
      changed. -->
-<section class="mx-auto w-full max-w-6xl px-5 py-10">
+<Frame column="max-w-6xl">
+<section class="max-w-6xl">
   <p class="meta">Today</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">What are you recording?</h1>
 
@@ -264,11 +268,6 @@ import { elapsed } from '../lib/time/duration.js'
           {:else}
             {outstanding} of {questions.length} left
           {/if}
-        </p>
-        <p class="mt-1 text-sm text-haze">
-          {outstanding === 0 && questions.length > 0
-            ? 'Every question answered for today.'
-            : 'One tap per question.'}
         </p>
       </div>
       <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
@@ -309,11 +308,6 @@ import { elapsed } from '../lib/time/duration.js'
           <p class="mt-3 text-2xl font-semibold">
             {projectCount === 0 ? 'No projects yet' : 'Nothing running'}
           </p>
-          <p class="mt-1 text-sm text-haze">
-            {projectCount === 0
-              ? 'Name a project and it becomes a button.'
-              : 'Tap a project to start its timer.'}
-          </p>
         {/if}
       </div>
       <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
@@ -337,7 +331,6 @@ import { elapsed } from '../lib/time/duration.js'
           <p class="mt-3 truncate text-2xl font-semibold">
             {focusing.task ?? 'Focusing'}
           </p>
-          <p class="mt-1 text-sm text-haze">A pomodoro is running.</p>
         {:else if focusTotals.count > 0}
           <p class="mt-3 text-2xl font-semibold">
             {focusTotals.count}
@@ -348,7 +341,6 @@ import { elapsed } from '../lib/time/duration.js'
           </p>
         {:else}
           <p class="mt-3 text-2xl font-semibold">Nothing yet</p>
-          <p class="mt-1 text-sm text-haze">One press and the clock runs.</p>
         {/if}
       </div>
       <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
@@ -379,13 +371,11 @@ import { elapsed } from '../lib/time/duration.js'
             Nothing planned
           {:else}
             {todoCount.n} {todoCount.what}
-            <span class="text-sm font-normal text-haze">across your lists</span>
+            <!-- One phrase: at four cards across it split and left "lists"
+                 alone on a line. It may take a line of its own; its words
+                 stay together. -->
+            <span class="text-sm font-normal whitespace-nowrap text-haze">across your lists</span>
           {/if}
-        </p>
-        <p class="mt-1 text-sm text-haze">
-          {todoCount.n === 0
-            ? 'A line typed is a task planned.'
-            : 'One list, or a week on a clock.'}
         </p>
       </div>
       <!-- Calendar rather than Patterns, and it is not a renaming: this half
@@ -439,7 +429,8 @@ import { elapsed } from '../lib/time/duration.js'
                      purpose, so a habit with no run owes them where it stands
                      rather than vanishing. -->
                 <span data-streak={run}>
-                  🔥 — · {standing} of {habit.target} this {habit.period}
+                  🔥 {standing} of {habit.target}
+                  {habit.period === 'day' ? 'today' : `this ${habit.period}`}
                 </span>
               {/if}
             </span>
@@ -454,3 +445,4 @@ import { elapsed } from '../lib/time/duration.js'
     </section>
   {/if}
 </section>
+</Frame>

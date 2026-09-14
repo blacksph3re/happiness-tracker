@@ -67,7 +67,8 @@ const SCROLL_GRACE_MS = 150
 /**
  * Make the menu state for one page, and the handlers a task opens it with.
  *
- * @returns {{shown: {task: object, x: number, y: number, focus: boolean}|null,
+ * @returns {{shown: {task: object, x: number, y: number, focus: boolean,
+ *   origin: HTMLElement|null}|null,
  *   justOpened: boolean, contextmenu: Function,
  *   fromKey: Function, press: Function, close: Function}} Read `shown` in
  *   markup; call the rest from a card's or a block's own handlers.
@@ -104,8 +105,28 @@ export function taskMenu() {
     press = null
   }
 
-  function close() {
+  /**
+   * Close the menu, and give the focus back to what opened it from the keyboard.
+   *
+   * **A menu opened by a key returns the focus when it goes.** It took the
+   * focus in, so closing it left the focus wherever the browser put it — after
+   * Tab walked out past the last item, on the header's first link. The element
+   * the keys were pressed on is focused again when it is still on the page;
+   * when it has gone — *won't do* took the card to the archive — a card or
+   * block with the same task is, and when neither exists nothing is.
+   *
+   * @param {boolean} [restore] False for a dismissal by a press elsewhere or a
+   *   scroll, where the reader has moved on and taking the focus back would
+   *   drag the page to a card they left.
+   */
+  function close(restore = true) {
+    const was = shown
     shown = null
+    if (!restore || !was?.focus) return
+    const origin = was.origin?.isConnected
+      ? was.origin
+      : document.querySelector(`[data-client-id="${was.task.client_id}"]`)
+    if (origin instanceof HTMLElement) origin.focus({ preventScroll: true })
   }
 
   /**
@@ -119,11 +140,13 @@ export function taskMenu() {
    *   browser scrolls a newly focused element into view, and a scroll is one of
    *   the three things that dismiss this. Measured, not reasoned about: a
    *   right-click on the second card opened the menu and shut it in the same
-   *   breath, and the event log read `focusin` then `scroll`.
+   *   breath, and the event log read `focusin` then `scroll`. `origin` is
+   *   the element the keys were pressed on, which `close` gives the focus back
+   *   to.
    */
-  function open(task, at, { focus = false } = {}) {
+  function open(task, at, { focus = false, origin = null } = {}) {
     shownAt = Date.now()
-    shown = { task, x: at.x, y: at.y, focus }
+    shown = { task, x: at.x, y: at.y, focus, origin }
   }
 
   // Escape as well as the two pointer listeners: a menu is a thing with the
@@ -136,7 +159,7 @@ export function taskMenu() {
     dismiss: (why) => {
       // Every reason closes it except the scroll its own opening caused.
       if (why === 'scroll' && Date.now() - shownAt < SCROLL_GRACE_MS) return
-      close()
+      close(why === 'escape')
     },
     escape: true,
   })
@@ -223,7 +246,11 @@ export function taskMenu() {
       // Under the card's own bottom-left corner, which is where a menu opened
       // by a pointer at that point would be. Nothing has to measure the menu:
       // the clamp in `TaskMenu` is the browser's arithmetic either way.
-      open(task, { x: box ? box.left + 8 : 0, y: box ? box.bottom : 0 }, { focus: true })
+      open(
+        task,
+        { x: box ? box.left + 8 : 0, y: box ? box.bottom : 0 },
+        { focus: true, origin: event.currentTarget ?? null }
+      )
       return true
     },
     /**

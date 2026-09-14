@@ -6,12 +6,8 @@
  * series mean: hours, which can overlap.
  */
 
-import { baseOptions } from '../chart-options.js'
+import { baseOptions, chrome } from '../chart-options.js'
 import { dayLabel } from '../day.js'
-
-const MUTED = '#b9b3cc'
-const GRIDLINE = '#2a2440'
-const AXIS_LINE = '#3a3350'
 
 /**
  * Hours per group over time, as a line.
@@ -34,14 +30,14 @@ export function lineOptions({ days, series, smoothed }) {
     xAxis: {
       type: 'category',
       data: days,
-      axisLine: { lineStyle: { color: AXIS_LINE } },
+      axisLine: { lineStyle: { color: chrome().axis } },
       axisLabel: { formatter: (day) => dayLabel(day) },
     },
     yAxis: {
       type: 'value',
       name: 'hours',
-      nameTextStyle: { color: MUTED },
-      splitLine: { lineStyle: { color: GRIDLINE } },
+      nameTextStyle: { color: chrome().muted },
+      splitLine: { lineStyle: { color: chrome().grid } },
     },
     series: series.map(({ name, colour, data }) => ({
       name,
@@ -87,14 +83,14 @@ export function barOptions({ days, series }) {
     xAxis: {
       type: 'category',
       data: days,
-      axisLine: { lineStyle: { color: AXIS_LINE } },
+      axisLine: { lineStyle: { color: chrome().axis } },
       axisLabel: { formatter: (day) => dayLabel(day) },
     },
     yAxis: {
       type: 'value',
       name: 'hours',
-      nameTextStyle: { color: MUTED },
-      splitLine: { lineStyle: { color: GRIDLINE } },
+      nameTextStyle: { color: chrome().muted },
+      splitLine: { lineStyle: { color: chrome().grid } },
     },
     series: series.map(({ name, colour, data }) => ({
       name,
@@ -162,7 +158,7 @@ export function weekdayOptions({ labels, series }) {
     xAxis: {
       type: 'category',
       data: labels,
-      axisLine: { lineStyle: { color: AXIS_LINE } },
+      axisLine: { lineStyle: { color: chrome().axis } },
       axisLabel: { interval: 0 },
     },
   }

@@ -1,9 +1,49 @@
+<script module>
+  /** Projects with an import still writing in this tab, whether or not its panel is open. */
+  const live = new Set()
+
+  /**
+   * Where a started import records how far it has got, until it finishes.
+   *
+   * Kept per device, because what it describes is this device's outbox. A
+   * record still here when the panel opens, with no import live in this tab,
+   * is an import that was cut short.
+   */
+  const progressKey = (projectId) => `ht.import.${projectId}`
+
+  function readProgress(projectId) {
+    try {
+      return JSON.parse(localStorage.getItem(progressKey(projectId)) ?? 'null')
+    } catch {
+      return null
+    }
+  }
+
+  function writeProgress(projectId, progress) {
+    try {
+      if (progress) localStorage.setItem(progressKey(projectId), JSON.stringify(progress))
+      else localStorage.removeItem(progressKey(projectId))
+    } catch {
+      // Private window or blocked storage: the import itself is unaffected, and
+      // only the note on a later visit is lost.
+    }
+  }
+</script>
+
 <script>
+  import { onDestroy, untrack } from 'svelte'
   import { parseCsv } from '../csv.js'
   import { saveEntries } from '../store.js'
   import { settle } from '../sync.js'
+  import { beforeNavigate } from '../router.js'
   import { formatDuration, offsetLabel, utcOffset } from '../clock.js'
-  import { crossesClockChange, guessColumns, planImport } from './import.js'
+  import {
+    SNIFF_BYTES,
+    crossesClockChange,
+    guessColumns,
+    looksLikeText,
+    planImport,
+  } from './import.js'
 
   /**
    * Bringing a project's history in from a spreadsheet.
@@ -50,6 +90,35 @@
   /** What became of the import, once it is over. */
   let outcome = $state(null)
 
+  /** Set when the person chose to leave mid-import: the loop stops after its chunk. */
+  let stopping = false
+
+  /** Whether the loop is between asking the outbox to store a chunk and hearing back. */
+  let storing = false
+
+  /**
+   * An earlier import into this project that did not finish, if one did not.
+   *
+   * Read once, as the panel opens. `exact` is true only when this tab stopped
+   * the import itself; a closed tab leaves the last count known to be stored,
+   * which is a floor rather than a figure.
+   */
+  // Deliberately the value at mount: the panel is drawn per project and the
+  // note describes the visit it opened on.
+  const cutShort = untrack(() => (live.has(project.id) ? null : readProgress(project.id)))
+
+  const cutShortText = $derived.by(() => {
+    if (!cutShort) return ''
+    const { name, total: of, written: done, exact } = cutShort
+    if (exact) {
+      return `An import of ${name} was stopped after ${done} of ${of} sessions. Importing the file again marks those ${done} as overlaps.`
+    }
+    if (done === 0) {
+      return `An import of ${name} was cut short, and some of its ${of} sessions may have been stored. Importing the file again marks any that were as overlaps.`
+    }
+    return `An import of ${name} was cut short after at least ${done} of ${of} sessions. Importing the file again marks those as overlaps.`
+  })
+
   const columns = $derived(file?.columns ?? [])
   const ready = $derived(Boolean(mapping.start) && Boolean(mapping.end || mapping.duration))
 
@@ -90,6 +159,13 @@
     if (!chosen) return
     refused = ''
     filename = chosen.name
+    // Before parsing: a binary file parses into one row of nonsense columns,
+    // which the mapping step would then offer as if they meant something.
+    if (!looksLikeText(new Uint8Array(await chosen.slice(0, SNIFF_BYTES).arrayBuffer()))) {
+      refused = 'That is not a text file. Export the sheet as CSV and choose that.'
+      file = null
+      return
+    }
     const parsed = parseCsv(await chosen.text())
     if (parsed.columns.length === 0 || parsed.rows.length === 0) {
       refused = 'That file has no rows under a header.'
@@ -124,8 +200,12 @@
     // arrive as one request the server has to hold in memory whole.
     const CHUNK = 100
     let sent = true
+    live.add(project.id)
+    const progress = { name: filename, total, written: 0, exact: false }
+    writeProgress(project.id, progress)
     for (let at = 0; at < queue.length; at += CHUNK) {
       const batch = queue.slice(at, at + CHUNK)
+      storing = true
       const stored = await saveEntries(
         batch.map((one) => ({
           project_id: project.id,
@@ -135,21 +215,64 @@
           note: one.note,
         }))
       )
+      storing = false
       written += stored
+      writeProgress(project.id, { ...progress, written })
+      if (stopping) break
       if (stored < batch.length) {
         refused = 'This device would not store any more. What is shown is saved; the rest is not.'
         break
       }
       sent = (await settle()) && sent
+      if (stopping) break
     }
+    live.delete(project.id)
+    // Stopped by leaving, the count is exact: every chunk the loop started has
+    // come back. Nothing stored is nothing to report.
+    writeProgress(project.id, stopping && written > 0 ? { ...progress, written, exact: true } : null)
     outcome = { written, sent, merging }
     step = 'done'
   }
+
+  /**
+   * Ask before an in-app navigation takes the page away from a running import.
+   *
+   * Through the router's guard, so a link, Back and Forward, and a `navigate()`
+   * from code — signing out — all ask the same question. Leaving is then the
+   * answer to "stop?": the chunk on the device still goes, and no further one
+   * is started.
+   */
+  function mayLeave() {
+    if (step !== 'writing' || stopping) return true
+    const leave = confirm(
+      `This import has written ${written} of ${total} sessions. Leave and stop it there?`
+    )
+    if (leave) {
+      stopping = true
+      // Between chunks the count is already exact, so the record can say so
+      // now; mid-chunk the loop says so when that chunk comes back.
+      if (!storing && written > 0) {
+        writeProgress(project.id, { name: filename, total, written, exact: true })
+      }
+    }
+    return leave
+  }
+
+  function onBeforeUnload(event) {
+    // Closing or reloading the tab: only the browser may ask, in its own words.
+    if (step !== 'writing') return
+    event.preventDefault()
+    event.returnValue = ''
+  }
+
+  onDestroy(beforeNavigate(mayLeave))
 
   function back() {
     step = step === 'preview' ? 'clock' : step === 'clock' ? 'mapping' : 'file'
   }
 </script>
+
+<svelte:window onbeforeunload={onBeforeUnload} />
 
 <div class="mt-4 w-full border-t border-white/10 pt-4" data-import={project.id}>
   <div class="flex flex-wrap items-baseline justify-between gap-2">
@@ -168,6 +291,12 @@
   {#if refused}
     <p class="mt-3 rounded-lg border border-ember/60 px-3 py-2 text-sm" data-import-refused>
       {refused}
+    </p>
+  {/if}
+
+  {#if step === 'file' && cutShortText}
+    <p class="mt-3 rounded-lg border border-ember/60 px-3 py-2 text-sm" data-import-cut-short>
+      {cutShortText}
     </p>
   {/if}
 
@@ -256,7 +385,7 @@
       >
         {#each OFFSETS as minutes (minutes)}
           <option value={minutes}>
-            {offsetLabel(minutes)}{minutes === utcOffset() ? ", this device's clock" : ''}
+            {offsetLabel(minutes)}{minutes === utcOffset() ? ", this device’s clock" : ''}
           </option>
         {/each}
       </select>
@@ -266,7 +395,7 @@
       <!-- Said rather than worked around: one offset for the whole file is the
            simplification this import makes, and this is where it shows. -->
       <p class="mt-3 rounded-lg border border-ember/60 px-3 py-2 text-sm" data-clock-warning>
-        This device's clock changes between {plan.days[0]} and {plan.days.at(-1)}, and one
+        This device’s clock changes between {plan.days[0]} and {plan.days.at(-1)}, and one
         offset is used for the whole file. Rows on the far side of the change come in an
         hour out.
       </p>
@@ -392,7 +521,7 @@
   <div class="mt-4 flex flex-wrap gap-2">
     {#if step !== 'file' && step !== 'writing' && step !== 'done'}
       <button
-        class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+        class="btn-outline meta"
         onclick={back}
       >
         Back
@@ -403,8 +532,7 @@
       <button
         data-import-next
         disabled={!ready}
-        class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift
-               disabled:cursor-not-allowed disabled:opacity-30"
+        class="btn-filled disabled:cursor-not-allowed disabled:opacity-30"
         onclick={() => (step = step === 'mapping' ? 'clock' : 'preview')}
       >
         {step === 'mapping' && !ready ? 'Map a start and an end' : 'Next'}
@@ -415,8 +543,7 @@
       <button
         data-import-write
         disabled={writing.length === 0}
-        class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift
-               disabled:cursor-not-allowed disabled:opacity-30"
+        class="btn-filled disabled:cursor-not-allowed disabled:opacity-30"
         onclick={write}
       >
         Import {writing.length} {writing.length === 1 ? 'session' : 'sessions'}
@@ -426,7 +553,7 @@
     {#if step !== 'writing'}
       <button
         data-import-close
-        class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+        class="btn-outline meta"
         onclick={onclose}
       >
         {step === 'done' ? 'Close' : 'Cancel'}

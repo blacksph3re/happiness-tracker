@@ -331,9 +331,8 @@ test('choosing the archive in the list select is the same as won’t do', async 
   page,
   account,
 }) => {
-  // The note under the control says so, and it has to be true of the *writes*
-  // as well: both go through one helper, so an active task is banked the same
-  // way whichever of the two somebody used.
+  // Both go through one helper, so an active task is banked the same way
+  // whichever of the two somebody used.
   const archive = await systemList(account, 'archive')
   await makeTodo(account, { title: 'Feed the cat' })
   const box = await open(page, 'Feed the cat')
@@ -873,3 +872,147 @@ test('the colour picker offers the six the app has, each a thumb across', async 
     expect(size.height, 'a swatch is a thumb tall').toBeGreaterThanOrEqual(44)
   }
 })
+
+/**
+ * A long title wraps in the modal and grows the field.
+ *
+ * Measured before the fix: a 196-character title in a single-line input showed
+ * its first 29 characters at 320 and its first 71 at 1280, and scrolled sideways
+ * inside the box for the rest.
+ */
+for (const size of [
+  { width: 320, height: 720 },
+  { width: 1280, height: 900 },
+]) {
+  test(`a long title is all on screen at ${size.width}px`, async ({ page, account }) => {
+    await page.setViewportSize(size)
+    const long = 'Write up the notes from the planning meeting, '.repeat(4).trim().slice(0, 196)
+    await makeTodo(account, { title: long })
+    const box = await open(page, long.slice(0, 20))
+    const field = box.locator('[data-field="title"]')
+    await expect(field).toHaveValue(long)
+
+    const measure = () =>
+      field.evaluate((node) => ({
+        sideways: node.scrollWidth - node.clientWidth,
+        hidden: node.scrollHeight - node.clientHeight,
+        height: node.getBoundingClientRect().height,
+        lines: node.clientHeight / parseFloat(getComputedStyle(node).lineHeight),
+      }))
+    await expect.poll(async () => (await measure()).hidden).toBeLessThanOrEqual(1)
+    const grown = await measure()
+    expect(grown.sideways, 'the title scrolls sideways').toBeLessThanOrEqual(0)
+    expect(grown.lines, 'the title is on one line').toBeGreaterThan(1.8)
+
+    // It shrinks back when the title does.
+    await field.fill('Short')
+    await expect.poll(async () => (await measure()).height).toBeLessThan(grown.height)
+  })
+}
+
+test('Enter adds no line to a title, and a pasted line break becomes a space', async ({
+  page,
+  account,
+}) => {
+  await makeTodo(account, { title: 'Feed the cat' })
+  const box = await open(page, 'Feed the cat')
+  const field = box.locator('[data-field="title"]')
+
+  // In the middle of the title: at its end a line break turned into a space
+  // would be trimmed away by the save, and pass against an Enter that types.
+  await field.click()
+  await page.keyboard.press('Home')
+  for (let step = 0; step < 4; step += 1) await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(1000)
+  await expect(field).toHaveValue('Feed the cat')
+
+  await field.fill('Feed the cat\nand the dog')
+  await expect(field).toHaveValue('Feed the cat and the dog')
+  await settled(page)
+  await expect
+    .poll(async () => (await storedTodos(account))[0].title, { timeout: 15_000 })
+    .toBe('Feed the cat and the dog')
+})
+
+/**
+ * The modal on a touch phone, where the coarse-pointer rule makes every field
+ * 16px — which is what gave a native date input the intrinsic width to push
+ * past the modal. Measured before the fix at 320: Planned, At, Due, Priority
+ * and List all ended at x=320 against a content edge at 288, and the title was
+ * a 178px column beside Close.
+ */
+for (const size of [
+  { width: 320, height: 720 },
+  { width: 390, height: 844 },
+]) {
+  test.describe(`the modal on a ${size.width}px touch screen`, () => {
+    test.use({ viewport: size, isMobile: true, hasTouch: true })
+
+    test(`every field ends inside the modal at ${size.width}px`, async ({ page, account }) => {
+      await makeTodo(account, { title: 'Feed the cat', planned_at: '09:00:00', due_on: '2026-06-20' })
+      const box = await open(page, 'Feed the cat')
+      expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'a coarse pointer').toBe(true)
+      await expect(box.locator('[data-field="due_on"]')).toBeVisible()
+
+      let worst = { sideways: 0, over: [] }
+      for (let sample = 0; sample < 5; sample += 1) {
+        const seen = await box.evaluate((dialog) => {
+          const inner = dialog.firstElementChild
+          const edge =
+            inner.getBoundingClientRect().right - parseFloat(getComputedStyle(inner).paddingRight)
+          const over = [...dialog.querySelectorAll('input, select, textarea, [data-clear]')]
+            .filter((node) => node.getBoundingClientRect().width > 0)
+            .map((node) => ({
+              name: node.dataset.field ?? node.dataset.clear ?? node.getAttribute('aria-label'),
+              past: Math.round((node.getBoundingClientRect().right - edge) * 10) / 10,
+            }))
+            .filter((one) => one.past > 0.5)
+          return { sideways: dialog.scrollWidth - dialog.clientWidth, over }
+        })
+        worst = {
+          sideways: Math.max(worst.sideways, seen.sideways),
+          over: seen.over.length > worst.over.length ? seen.over : worst.over,
+        }
+        await page.waitForTimeout(80)
+      }
+      console.log(`modal fields ${size.width}:`, JSON.stringify(worst))
+      expect(worst.over, 'fields past the modal content edge').toEqual([])
+      expect(worst.sideways, 'the modal scrolls sideways').toBeLessThanOrEqual(0)
+    })
+
+    test(`the title has the modal's whole width at ${size.width}px`, async ({ page, account }) => {
+      const title =
+        'Ring the insurance company about the claim for the bicycle taken from outside the station and ask them for the reference number'
+      await makeTodo(account, { title })
+      const box = await open(page, title.slice(0, 30))
+      const field = box.locator('[data-field="title"]')
+      await expect(field).toHaveValue(title)
+      const read = () =>
+        box.evaluate((dialog) => {
+          const inner = dialog.firstElementChild
+          const style = getComputedStyle(inner)
+          const content =
+            inner.getBoundingClientRect().width -
+            parseFloat(style.paddingLeft) -
+            parseFloat(style.paddingRight)
+          const node = dialog.querySelector('[data-field="title"]')
+          const own = getComputedStyle(node)
+          const text =
+            node.clientHeight - parseFloat(own.paddingTop) - parseFloat(own.paddingBottom)
+          return {
+            content,
+            width: node.getBoundingClientRect().width,
+            lines: Math.round(text / parseFloat(own.lineHeight)),
+            hidden: node.scrollHeight - node.clientHeight,
+          }
+        })
+      await expect.poll(async () => (await read()).hidden).toBeLessThanOrEqual(1)
+      const seen = await read()
+      console.log(`modal title ${size.width}:`, JSON.stringify(seen))
+      expect(seen.width, 'the title is squeezed beside another control').toBeGreaterThanOrEqual(
+        seen.content - 1
+      )
+    })
+  })
+}

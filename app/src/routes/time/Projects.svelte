@@ -1,4 +1,6 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/time/column.js'
   import AdminOffline, { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
   import { attempt, unwrap } from '../../lib/api.js'
   import {
@@ -266,11 +268,12 @@
   }
 </script>
 
-<section class="mx-auto w-full max-w-4xl px-5 py-8">
+<Frame column={COLUMN}>
+<section>
   <p class="meta">What you track, and how it groups</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">Projects</h1>
 
-  <AdminOffline does="Projects and tags are shared between your devices" />
+  <AdminOffline />
 
   {#if loading}
     <p class="meta">Loading…</p>
@@ -301,45 +304,40 @@
                  are wider than the row, and `shrink-0` pushed Import CSV off
                  the card. The arrows stay one group of their own. -->
             <div class="flex flex-wrap items-center gap-2">
-              <!-- The gap is exactly the two arrows' reach, so their 44px meet
-                   without overlapping: a disabled arrow's opacity paints it
-                   above its neighbour, and a shared 2px went to the arrow that
-                   cannot be pressed. The side padding is the same reach toward
-                   Edit's drawn box. -->
-              <span class="flex items-center gap-[18px] px-1.5">
-                <!-- 44px to aim at, drawn at its old 26×35: the negative margin
-                     keeps the layout and the span carries the look. -->
+              <!-- Drawn at 44px, the size of the buttons beside them and of the
+                   arrows on Lists and Questions: this row has the room, so a
+                   reach around a smaller box would only make three sizes of
+                   button in one row. -->
+              <span class="flex items-center gap-1">
                 <button
-                  class="group -mx-[9px] -my-[4.5px] flex size-11 items-center justify-center
+                  class="meta flex size-11 items-center justify-center rounded-md border
+                         border-white/15 enabled:hover:border-white/40
                          disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Move {project.name} earlier"
                   disabled={offline || position === 0}
                   title={hint}
                   onclick={() => move(project, -1)}
                 >
-                  <span class="meta rounded-md border border-white/15 px-2 py-2
-                               group-enabled:group-hover:border-white/40">↑</span>
+                  ↑
                 </button>
-                <!-- 44px to aim at, drawn at its old 26×35: the negative margin
-                     keeps the layout and the span carries the look. -->
                 <button
-                  class="group -mx-[9px] -my-[4.5px] flex size-11 items-center justify-center
+                  class="meta flex size-11 items-center justify-center rounded-md border
+                         border-white/15 enabled:hover:border-white/40
                          disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Move {project.name} later"
                   disabled={offline || position === projects.length - 1}
                   title={hint}
                   onclick={() => move(project, 1)}
                 >
-                  <span class="meta rounded-md border border-white/15 px-2 py-2
-                               group-enabled:group-hover:border-white/40">↓</span>
+                  ↓
                 </button>
               </span>
               <button
                 disabled={offline}
                 title={hint || 'Edit'}
                 aria-label="Edit"
-                class="meta rounded-md border border-white/15 p-2 hover:border-white/40
-                       disabled:cursor-not-allowed disabled:opacity-40"
+                class="meta flex size-11 items-center justify-center rounded-md border border-white/15
+                       hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => (editing = editing === project.id ? null : project.id)}
               >
                 <IconPencil />
@@ -347,8 +345,7 @@
               <button
                 disabled={offline}
                 title={hint}
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                       disabled:cursor-not-allowed disabled:opacity-40"
+                class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => saveProject(project, { active: !project.active })}
               >
                 {project.active ? 'Archive' : 'Restore'}
@@ -357,9 +354,7 @@
                 data-import-open={project.id}
                 disabled={offline}
                 title={hint}
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                       disabled:cursor-not-allowed disabled:opacity-40
-                       disabled:hover:border-white/15"
+                class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-white/15"
                 onclick={() =>
                   importing === project.id ? (importing = null) : openImport(project)}
               >
@@ -415,7 +410,7 @@
               <div class="flex flex-col gap-1.5">
                 <span class="meta">Tags</span>
                 {#if tags.length === 0}
-                  <p class="text-sm text-haze">No tags yet — add one below.</p>
+                  <p class="text-sm text-haze">No tags yet.</p>
                 {:else}
                   <div class="flex flex-wrap gap-2">
                     {#each tags as tag (tag.id)}
@@ -452,7 +447,7 @@
         </li>
       {:else}
         <li class="rounded-lg border border-white/10 bg-ink-soft px-5 py-8 text-haze">
-          No projects yet. Add the first one below.
+          No projects yet.
         </li>
       {/each}
     </ul>
@@ -529,8 +524,7 @@
               <button
                 disabled={offline}
                 title={hint}
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                       disabled:cursor-not-allowed disabled:opacity-40"
+                class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => (editingBands === tag.id ? (editingBands = null) : openBands(tag))}
               >
                 Rule
@@ -550,9 +544,8 @@
             {#if editingBands === tag.id}
               <div class="mt-4 w-full border-t border-white/10 pt-4" data-bands={tag.id}>
                 <p class="meta normal-case">
-                  Turns tracked time into reported time on this tag's days. The
-                  addition lands first; the bands are measured against the total
-                  after it.
+                  Turns tracked time into reported time. The addition is applied before
+                  the bands.
                 </p>
 
                 <label class="mt-3 flex flex-col gap-1.5">
@@ -567,9 +560,6 @@
                     class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
                            py-2 text-sm"
                   />
-                  <span class="meta normal-case">
-                    A day that tracked nothing stays at nothing.
-                  </span>
                 </label>
 
                 <div class="mt-3 flex flex-col gap-2">
@@ -678,18 +668,14 @@
                       </tbody>
                     </table>
                     <p class="meta mt-2 normal-case">
-                      Only the highest band a day reaches applies — they replace each
-                      other rather than adding up. A day with nothing tracked loses
-                      nothing. A capped band reports its threshold however long the day
-                      ran.
+                      Only the highest band reached applies.
                     </p>
                   </div>
                 {/if}
 
                 <div class="mt-3 flex flex-wrap gap-2">
                   <button
-                    class="meta flex items-center gap-2 rounded-md border border-white/15
-                           px-3 py-2 hover:border-white/40"
+                    class="btn-outline meta flex items-center gap-2"
                     onclick={() =>
                       {
                         bands = [...bands, { from_minutes: 0, deduct_minutes: 30 }]
@@ -700,8 +686,7 @@
                     Add a band
                   </button>
                   <button
-                    class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
-                           hover:bg-dusk-lift"
+                    class="btn-filled"
                     onclick={() => saveBands(tag)}
                   >
                     Save rule
@@ -734,3 +719,4 @@
     </div>
   {/if}
 </section>
+</Frame>

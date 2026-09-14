@@ -46,7 +46,7 @@
   width={size}
   height={size}
   viewBox="-4 -4 {drawn.count + 8} {drawn.count + 8}"
-  class="rounded-lg bg-white p-0"
+  class="rounded-lg bg-sheet p-0"
 >
   <rect x="-4" y="-4" width={drawn.count + 8} height={drawn.count + 8} fill="#fff" />
   <path d={drawn.path} fill="#000" />

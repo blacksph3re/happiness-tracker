@@ -477,7 +477,7 @@ test('a pair too thin to rank is kept, dimmed, below every ranked one', async ({
   await expect(last.locator('[data-overlap]')).toHaveText('3 days')
   // Kept rather than dropped, and said so, so the question does not simply
   // vanish from the page with nothing explaining the absence.
-  await expect(page.getByText(/answered together on fewer than 10 days/)).toBeVisible()
+  await expect(page.getByText(/fewer than 10 shared days/)).toBeVisible()
 
   // Every thin pair sits below every ranked one, rather than interleaved.
   const overlaps = await list.locator('[data-overlap]').allTextContents()
@@ -528,4 +528,42 @@ test('an enum question is not ranked, because its options carry no scale', async
   // And it is on the page — as something to filter by.
   await page.getByRole('button', { name: /^Show/ }).click()
   await expect(page.getByText('Where did you work')).toBeVisible()
+})
+
+test('a view chosen while the preferences read is out is kept', async ({ page, account }) => {
+  // With the read held, Totals chosen on arrival went back to Over time when it
+  // returned. Stored explicitly, so the read has something to put back.
+  await withHistory(account, 21)
+  await account.api.put('/api/me/preferences', { data: { stats: { view: 'line' } } })
+  const stale = await (await account.api.get('/api/me/preferences')).json()
+  let release
+  const gate = new Promise((resolve) => (release = resolve))
+  let delivered
+  const answered = new Promise((resolve) => (delivered = resolve))
+  let holding = true
+  await page.route('**/api/me/preferences', async (route) => {
+    if (!holding || route.request().method() !== 'GET') return route.continue()
+    holding = false
+    await gate
+    await route.fulfill({ json: stale })
+    delivered()
+  })
+
+  await page.goto('/stats')
+  await page.getByRole('button', { name: 'Totals', exact: true }).click()
+  const show = page.locator('main button[aria-expanded]').first()
+  await expect(show).toHaveText(/Show · \d+\s+questions?/)
+
+  release()
+  await answered
+  // A negative claim, so it is sampled rather than polled.
+  const seen = new Set()
+  for (let i = 0; i < 10; i += 1) {
+    seen.add((await show.textContent()).replace(/\s+/g, ' ').trim().replace(/\d+/g, 'N'))
+    await page.waitForTimeout(100)
+  }
+  expect([...seen]).toEqual(['Show · N questions Change'])
+  await expect
+    .poll(async () => (await (await account.api.get('/api/me/preferences')).json()).stats?.view)
+    .toBe('totals')
 })

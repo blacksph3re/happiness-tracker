@@ -117,7 +117,7 @@
   {#if value}
     <button
       type="button"
-      class="meta rounded-md border border-white/15 px-3 py-3 hover:border-ember"
+      class="btn-danger meta"
       onclick={() => choose(null)}
     >
       Clear

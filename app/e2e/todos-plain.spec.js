@@ -314,7 +314,7 @@ test.describe('one column on a phone', () => {
         account,
         Array.from({ length: 20 }, (_, n) => ({
           title: `task ${n} with a title long enough to wrap on a narrow phone`,
-          rank: `b${String(n).padStart(2, '0')}`,
+          rank: `b${String.fromCharCode(98 + n)}`,
         }))
       )
       await page.setViewportSize(size)

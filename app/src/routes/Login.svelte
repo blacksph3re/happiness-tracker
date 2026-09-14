@@ -26,6 +26,33 @@
    */
   let challenge = $state('')
 
+  /**
+   * Where to go once signed in: the page that was asked for.
+   *
+   * Signed out on a deep link, the form is drawn *at* that address, so staying
+   * put is the answer. On `/login` itself the address may carry `next`, and
+   * that is followed only when it is a path in this app — never another origin,
+   * never a protocol-relative `//host`, never a backslash a browser would read
+   * as one. Anything else lands on the chooser, as every sign-in used to.
+   *
+   * @returns {string}
+   */
+  function destination() {
+    const { pathname, search, origin } = window.location
+    if (pathname !== '/login') return pathname + search
+    const next = new URLSearchParams(search).get('next')
+    if (!next || !next.startsWith('/') || next.startsWith('//') || next.includes('\\')) {
+      return '/'
+    }
+    try {
+      const url = new URL(next, origin)
+      if (url.origin !== origin || url.pathname === '/login') return '/'
+      return url.pathname + url.search
+    } catch {
+      return '/'
+    }
+  }
+
   /** What a failure means, in the words the person on the form needs. */
   function explain(failure, fallback) {
     // A lockout has to say so. Told "that is wrong" instead, someone who typed
@@ -54,7 +81,8 @@
     } finally {
       busy = false
     }
-    navigate('/')
+    // Replaced, so Back does not return to a sign-in form for a session that exists.
+    navigate(destination(), { replace: true })
   }
 
   async function answer(event) {
@@ -80,7 +108,8 @@
     } finally {
       busy = false
     }
-    navigate('/')
+    // Replaced, so Back does not return to a sign-in form for a session that exists.
+    navigate(destination(), { replace: true })
   }
 
   /** Abandon the challenge and start again, for a wrong account or a lost phone. */

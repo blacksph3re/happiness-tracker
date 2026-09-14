@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest'
 import {
   crossesClockChange,
   guessColumns,
+  looksLikeText,
   planImport,
   readDuration,
   readMoment,
@@ -394,5 +395,40 @@ describe('crossesClockChange', () => {
   test('a range inside one clock says nothing', () => {
     expect(crossesClockChange(['2026-08-01', '2026-08-31'])).toBe(false)
     expect(crossesClockChange(['2026-01-05'])).toBe(false)
+  })
+})
+
+describe('whether a file is text at all', () => {
+  const bytes = (text) => new TextEncoder().encode(text)
+  const NUL = String.fromCharCode(0)
+
+  test('a spreadsheet export is text, whatever its separators', () => {
+    expect(looksLikeText(bytes('Datum;Von;Dauer\r\n01.06.2026;09:00;1:30\n'))).toBe(true)
+    expect(looksLikeText(bytes('Start\tEnd\tNote\n2026-06-01 09:00\t10:00\tCafe\n'))).toBe(true)
+  })
+
+  test('a Latin-1 file is still text: an accent is not a control character', () => {
+    // "Cafe" with an e-acute as Windows-1252 writes it, which is not valid
+    // UTF-8. Refusing on a failed decode would refuse the file Excel produces.
+    expect(looksLikeText(new Uint8Array([0x43, 0x61, 0x66, 0xe9, 0x2c, 0x31, 0x0a]))).toBe(true)
+  })
+
+  test('a binary file is not, and one NUL is enough', () => {
+    expect(looksLikeText(new Uint8Array([0, 255, 1, 2, 3, 200, 10, 13, 0, 44, 44, 34]))).toBe(false)
+    // Long enough that one control character is inside the 1% budget, so it
+    // is the NUL itself that refuses this and not the count.
+    const long = `Start,End,Note\n${'2026-06-01 09:00,2026-06-01 10:00,fine\n'.repeat(10)}`
+    expect(looksLikeText(bytes(long))).toBe(true)
+    expect(looksLikeText(bytes(`${long}2026-06-02 09:00,${NUL}\n`))).toBe(false)
+  })
+
+  test('control characters past the budget are not text, even without a NUL', () => {
+    const noisy = new Uint8Array(200).fill(0x41)
+    for (let at = 0; at < 200; at += 20) noisy[at] = 0x01
+    expect(looksLikeText(noisy)).toBe(false)
+  })
+
+  test('an empty file is text, and is refused later for having no rows', () => {
+    expect(looksLikeText(new Uint8Array())).toBe(true)
   })
 })

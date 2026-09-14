@@ -1781,3 +1781,39 @@ def test_a_new_list_is_placed_among_the_callers_own_and_not_a_shared_one(
     assert held["inbox"]["rank"] < made["rank"] < held["archive"]["rank"]
     assert [row["name"] for row in lists(client, bob_headers)][0] == "Inbox"
     assert [row["kind"] for row in lists(client, bob_headers)][-1] == "archive"
+
+
+def test_a_malformed_rank_is_refused_per_intent(client, admin_headers):
+    inbox = kinds(client, admin_headers)["inbox"]
+    bad = ["m9", "M", "", "n-", "a b", "é"]
+    intents = [
+        todo_intent(next(_seq), f"t-bad-{at}", inbox["id"], rank=rank)
+        for at, rank in enumerate(bad)
+    ]
+    intents.append(todo_intent(next(_seq), "t-good", inbox["id"], rank="n"))
+
+    results = list(push(client, admin_headers, intents).values())
+
+    for rank, result in zip(bad, results[:-1], strict=True):
+        assert result["outcome"] == "conflict", (rank, result)
+        assert "could not read" in result["detail"], (rank, result)
+        assert "rank" in result["detail"], (rank, result)
+    assert results[-1]["outcome"] == "applied", results[-1]
+    assert [row["client_id"] for row in tasks(client, admin_headers)] == ["t-good"]
+
+    step = one(
+        client,
+        admin_headers,
+        "step.upsert",
+        "s-bad",
+        {"todo_client_id": "t-good", "title": "Chop onions", "rank": "m9"},
+    )
+    assert step["outcome"] == "conflict", step
+    assert "rank" in step["detail"], step
+
+    created = client.post(
+        "/api/todos/lists",
+        headers=admin_headers,
+        json={"name": "Errands", "rank": "m9"},
+    )
+    assert created.status_code == 422, created.text

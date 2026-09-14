@@ -106,7 +106,7 @@ test('a finished day reopens for review and reloads intact', async ({ page, acco
 
   // Reopening shows it for review rather than the closing card again.
   await page.goto('/answer')
-  await expect(page.getByText('Every question is answered for this day.')).toBeVisible()
+  await expect(page.getByText('All answered for this day.')).toBeVisible()
   await expect(bands(page).nth(2)).toHaveAttribute('aria-pressed', 'true')
 
   // A reload restores the same answers.
@@ -282,7 +282,7 @@ test('every answer moves exactly one question forward', async ({ page, account }
   // The run ends on the card even with a question still open, and says so
   // rather than claiming the day is finished.
   await expect(page.getByRole('heading', { name: 'End of the questions' })).toBeVisible()
-  await expect(page.getByText('1 question is still open')).toBeVisible()
+  await expect(page.getByText('1 still open.')).toBeVisible()
   await expect(
     page.getByRole('heading', { name: 'That is the day recorded' })
   ).toHaveCount(0)

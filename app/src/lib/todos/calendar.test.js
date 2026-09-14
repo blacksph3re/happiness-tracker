@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import {
   ANYTIME_CAP,
@@ -133,6 +133,47 @@ describe('weekLabel', () => {
 
   test('reads the same from any day inside the week', () => {
     expect(weekLabel('2026-06-21')).toBe(weekLabel(MONDAY))
+  })
+
+  // The `dayLabel` rule, which this function did not follow: a week in another
+  // year read exactly like one in this, so stepping back past January said
+  // nothing about which June it had reached.
+  describe('around a year boundary', () => {
+    afterEach(() => vi.useRealTimers())
+
+    /** Freeze the clock at a local instant, so "the current year" is known. */
+    const at = (...parts) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date(...parts))
+    }
+
+    test('names no year for a week inside the current one, at either end of it', () => {
+      at(2026, 11, 31, 23, 30)
+      expect(weekLabel('2026-01-05')).toBe('Jan 5 \u2013 11')
+      expect(weekLabel('2026-12-21')).toBe('Dec 21 \u2013 27')
+    })
+
+    test('names the year once for a week inside another year, in either form', () => {
+      at(2026, 11, 31, 23, 30)
+      expect(weekLabel('2025-06-09')).toBe('Jun 9 \u2013 15, 2025')
+      expect(weekLabel('2027-03-01')).toBe('Mar 1 \u2013 7, 2027')
+      expect(weekLabel('2025-06-30')).toBe('Jun 30 \u2013 Jul 6, 2025')
+    })
+
+    test('names both years for a week that spans two, whichever year it is now', () => {
+      at(2026, 11, 31, 23, 30)
+      expect(weekLabel('2026-12-31')).toBe('Dec 28, 2026 \u2013 Jan 3, 2027')
+      at(2027, 0, 1, 0, 30)
+      expect(weekLabel('2027-01-01')).toBe('Dec 28, 2026 \u2013 Jan 3, 2027')
+      at(2026, 5, 15, 12)
+      expect(weekLabel('2026-12-28')).toBe('Dec 28, 2026 \u2013 Jan 3, 2027')
+    })
+
+    test('follows the clock across midnight into the new year', () => {
+      at(2027, 0, 4, 0, 30)
+      expect(weekLabel('2027-01-04')).toBe('Jan 4 \u2013 10')
+      expect(weekLabel('2026-12-21')).toBe('Dec 21 \u2013 27, 2026')
+    })
   })
 })
 

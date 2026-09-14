@@ -673,8 +673,14 @@ test('the copy button offers the same total the day reports', async ({ page, acc
   await start(page, 'Second')
   await page.clock.fastForward('31:00')
 
-  const totals = await page.locator('[data-totals]').textContent()
-  const offer = await page.locator('[data-open-transfer]').textContent()
+  // Both numbers out of one read, once the transfer's own re-read has landed
+  // and the button is back: two separate reads can straddle that reply.
+  await expect(page.locator('[data-open-transfer]')).toBeVisible()
+  const [totals, offer] = await page.evaluate(() =>
+    ['[data-totals]', '[data-open-transfer]'].map(
+      (selector) => document.querySelector(selector).textContent
+    )
+  )
   // 2 pomodoros of 25 + 5 is an hour, and the button says so too.
   expect(totals).toContain('0h 50m')
   expect(offer).toContain('1h 00m')

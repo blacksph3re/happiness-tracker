@@ -3,7 +3,8 @@
   import { get } from 'svelte/store'
 
   import Board from '../../lib/todos/Board.svelte'
-  import Frame from '../../lib/todos/Frame.svelte'
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/todos/column.js'
   import TaskMenu from '../../lib/todos/TaskMenu.svelte'
   import TaskModal from '../../lib/todos/TaskModal.svelte'
   import { tick, untick } from '../../lib/todos/fields.js'
@@ -19,15 +20,17 @@
   import { selectedLists, storedLists, todoSettings } from '../../lib/todo-settings.js'
   import { cardDrag } from '../../lib/todos/drag.svelte.js'
   import { taskMenu } from '../../lib/todos/task-menu.svelte.js'
-  import { between, needsRebalance, spread } from '../../lib/todos/rank.js'
+  import { between, isRank, needsRebalance, placeBetween, spread } from '../../lib/todos/rank.js'
   import { dayLabel, today as todayKey } from '../../lib/day.js'
   import { chipColour } from '../../lib/palette.js'
   import { wide } from '../../lib/media.js'
   import { resource } from '../../lib/resource.svelte.js'
+  import { connection } from '../../lib/sync.js'
   import {
     archive,
     archiveListId,
     archiveNext,
+    archiveRead,
     ensureArchive,
     ensurePomodoros,
     ensurePreferences,
@@ -255,26 +258,40 @@
   const choosable = $derived(grouping.layouts.length > 1 && $wide)
 
   /**
-   * How much of the frame the board fills — and nothing about where it starts.
+   * How the board is arranged: the layout in force, except that the archive is
+   * always a stack.
    *
-   * The frame is fixed by the window (`Frame.svelte`), so the heading, the
-   * toolbar and the board all start at its left edge in every view. A column row
-   * and a 2×2 grid fill it: columns are laid out from a per-column minimum, and
-   * a five-column grouping bounded by a reading width was clipped at every
-   * desktop width. A stack keeps the reading width, where a card 1,500px wide is
-   * a line nobody can follow — but anchored left rather than centred, because
-   * *centred* is what used to move the heading every time the board changed
-   * shape, not *wide*.
+   * The archive is one column whatever layout the grouping it was reached from
+   * remembers, and one column in a row or a 2×2 grid is a stack drawn wrongly —
+   * half the frame in a quadrant, the whole of it in a column row.
    */
-  const boardWidth = $derived(layout === 'stacked' ? 'max-w-todo-reading' : '')
+  const arrangement = $derived(showingArchive ? 'stacked' : layout)
+
+  /**
+   * Whether the board breaks out of the half's column to fill the frame.
+   *
+   * The heading and the toolbar sit in the column (`lib/todos/column.js`) in
+   * every view, so nothing above the board moves when it changes shape. A stack
+   * fills that column, where a card 1,500px wide is a line nobody can follow; a
+   * column row and a 2×2 grid fill the frame from its left edge, because columns
+   * are laid out from a per-column minimum and a five-column grouping bounded by
+   * a reading width was clipped at every desktop width.
+   */
+  const breakout = $derived(arrangement !== 'stacked')
 
   // The archive is the one collection that is paged and the one that is not in
   // the snapshot: it is read when it is looked at, and not before. Two views
   // look at it — the archive chip, and the `list` grouping, where it is a
   // column like any other. The loader writes only `archive`, so there is
   // nothing here to feed back.
+  //
+  // The connection is part of the query so that a read which could not reach
+  // the server is asked again when it can: the digest cannot say the archive
+  // moved, because to this device nothing about it did — it was never read.
+  // `ensureArchive` answers from the store once a read has confirmed it, so a
+  // connection coming and going costs nothing after that.
   const archiveLoad = resource(
-    () => showingArchive || byList,
+    () => (showingArchive || byList ? $connection : null),
     (wanted) => (wanted ? ensureArchive() : Promise.resolve([])),
     { name: 'todo archive' }
   )
@@ -345,6 +362,19 @@
   })
 
   /**
+   * What the archive's column says while no read has confirmed it, or null.
+   *
+   * Never a count and never *Nothing here yet*: see `archiveRead`.
+   */
+  const unread = $derived(
+    $archiveRead
+      ? null
+      : archiveLoad.loading
+        ? 'Reading the archive…'
+        : 'The archive needs a connection'
+  )
+
+  /**
    * The archive has no order of its own, so the chip view is not a grouping.
    *
    * A task arrives there by being finished or abandoned, never by being placed
@@ -362,6 +392,7 @@
             preset: {},
             date: null,
             paged: Boolean($archiveNext),
+            unread,
             tasks: tasks.toSorted((a, b) =>
               (b.archived_at ?? '9999').localeCompare(a.archived_at ?? '9999')
             ),
@@ -378,6 +409,7 @@
           // of a paged collection is said by the absence of a marker, so a
           // column with no cursor behind it draws no control at all.
           paged: column.id === String(archiveColumn) && Boolean($archiveNext),
+          unread: column.id === String(archiveColumn) ? unread : null,
           // The route's to derive rather than the grouping's to declare:
           // `preset` is what the column's quick-add fills in, which is the same
           // function a drop into it uses. `date` *is* the grouping's now — a
@@ -602,9 +634,10 @@
    *   asks for the end.
    * @returns {Promise<unknown>|false} The write, or `false` where there was
    *   nothing to write. Truthy either way for a caller that only wants to know
-   *   whether anything happened — and awaitable for the one caller that has to
-   *   know *when* it did: the keyboard puts the focus back on a card the store
-   *   update re-creates, and it cannot aim at an element that does not exist.
+   *   whether anything happened — and awaitable for the callers that have to
+   *   know *when* it did: a keyboard move must not read the column's order
+   *   until the move before it has landed, and a sweep aims the focus at a
+   *   card that does not exist until then.
    */
   function place(task, column, index) {
     const inside = column.tasks.some((row) => row.client_id === task.client_id)
@@ -632,15 +665,16 @@
     // which is what stops an arrow key at the boundary.
     if (!Object.keys(patch).length && was === at) return false
 
-    const rank = between(lower, upper)
+    const { rank, rebalance } = placeBetween(lower, upper)
     const moved = { ...task, ...patch, rank }
 
-    if (!needsRebalance(rank)) {
+    if (!rebalance) {
       return saveTodo(moved)
     }
 
-    // The key this drop would need has grown far enough to be silly, so the
-    // drop re-ranks its own column instead — one batch, short keys, and the
+    // The key this drop would need has grown far enough to be silly — or a
+    // neighbour's key is not one the encoding can read at all — so the drop
+    // re-ranks its own column instead — one batch, short keys, and the
     // task in its new place. The operation that would have degraded is the one
     // that repairs it, and nobody had to schedule anything.
     const ordered = [...others.slice(0, at), moved, ...others.slice(at)]
@@ -674,13 +708,17 @@
     if (!target || !moving.length) return false
     const leaving = new Set(moving.map((row) => row.client_id))
     const staying = target.tasks.filter((row) => !leaving.has(row.client_id))
-    let last = staying.at(-1)?.rank ?? null
+    const tail = staying.at(-1)?.rank ?? null
+    // A malformed key at the end cannot be appended after, so the target is
+    // re-ranked — which is also what repairs it.
+    const readable = !tail || isRank(tail)
+    let last = readable ? tail : null
     const moved = moving.map((task) => {
       const rank = between(last, null)
       last = rank
       return { ...task, ...grouping.drop(task, target.id, today, settings, lists), rank }
     })
-    if (!moved.some((row) => needsRebalance(row.rank))) return saveTodos(moved)
+    if (readable && !moved.some((row) => needsRebalance(row.rank))) return saveTodos(moved)
     const ordered = [...staying, ...moved]
     const fresh = spread(ordered.length)
     return saveTodos(ordered.map((row, spot) => ({ ...row, rank: fresh[spot] })))
@@ -698,81 +736,170 @@
   }
 
   /**
+   * The keyboard moves still to be made, one after another.
+   *
+   * **Each press moves one slot from where the previous press left the card.**
+   * A move reads the column's order to decide its slot, and the order only
+   * changes once the write before it has reached the store — so four presses
+   * with no pause used to read one order four times, and 150ms apart they read
+   * whichever half-landed order happened to be there: 2, 3, 5, 8 on screen
+   * while the live region said 2, 3, 4, 6. Chained, every move reads the order
+   * the previous one wrote, and the sentence is built from that same read.
+   */
+  let nudging = Promise.resolve()
+
+  /**
    * Move a card with the keyboard: along its column, or into the next one.
+   *
+   * Queued behind any move still being written — see `nudging`. The card is
+   * found again by identity when its turn comes, because the task and column
+   * a press was made on describe the board before the moves ahead of it.
+   *
+   * @param {object} task
+   * @param {string} _columnId The column the card was in when the key was pressed.
+   * @param {number} dx `-1` or `1` to move across, `0` to stay.
+   * @param {number} dy `-1` or `1` to move along, `0` to stay.
+   */
+  function nudge(task, _columnId, dx, dy) {
+    const clientId = task.client_id
+    // A refused intent is reported by the toast the drain raises; here it only
+    // means the next move reads the order as it stands.
+    nudging = nudging.then(() => nudgeNow(clientId, dx, dy)).catch(() => {})
+  }
+
+  /**
+   * Make one keyboard move against the board as it is now.
    *
    * Sideways is the one gesture that cannot name a place, so it lands at the
    * **same index** in the neighbouring column, clamped to its length — which is
    * as close to *where it was* as a keyboard can be. Along the column is a rank
    * change and nothing else, exactly as an in-column drag is.
    *
-   * @param {object} task
-   * @param {string} columnId The column the card is in now.
-   * @param {number} dx `-1` or `1` to move across, `0` to stay.
-   * @param {number} dy `-1` or `1` to move along, `0` to stay.
+   * The focus is not handled here: a card that moves takes the focus with it
+   * through `followFocus`, whatever moved it.
+   *
+   * @param {string} clientId
+   * @param {number} dx
+   * @param {number} dy
+   * @returns {Promise<void>} Once the write has reached the store.
    */
-  function nudge(task, columnId, dx, dy) {
+  async function nudgeNow(clientId, dx, dy) {
     if (showingArchive) return
-    const from = columns.findIndex((one) => one.id === columnId)
+    const from = columns.findIndex((one) => one.tasks.some((row) => row.client_id === clientId))
     const column = columns[from]
     if (!column) return
+    const spot = column.tasks.findIndex((row) => row.client_id === clientId)
+    const task = column.tasks[spot]
 
     if (dy) {
-      const spot = column.tasks.findIndex((row) => row.client_id === task.client_id)
       const to = spot + dy
       // Refused rather than clamped: a card at the top asked to go up has
       // nowhere to go, and writing a rank that changes nothing would queue an
       // intent saying nothing.
-      if (spot < 0 || to < 0 || to >= column.tasks.length) return
+      if (to < 0 || to >= column.tasks.length) return
       const written = place(task, column, to)
       if (written) {
         announce(`Moved within ${column.label}, position ${to + 1}`)
-        keepFocus(task.client_id, written)
+        await written
       }
       return
     }
 
     const target = columns[from + dx]
     if (!target) return
-    const spot = column.tasks.findIndex((row) => row.client_id === task.client_id)
     const to = Math.min(Math.max(spot, 0), target.tasks.length)
     const written = place(task, target, to)
     if (written) {
       announce(`Moved to ${target.label}, position ${to + 1}`)
-      keepFocus(task.client_id, written)
+      await written
     }
   }
 
   /**
-   * Put the focus back on a card the write has just re-created.
+   * The card the keyboard is on, by identity, while the focus is on the card itself.
    *
-   * **Without this the keyboard gives you exactly one move.** A card moved
-   * along its column keeps its element — Svelte moves a node whose key it still
-   * sees — but one moved *across* leaves the source column's `{#each}` and is
-   * built afresh in the target's, so the element the focus was on no longer
-   * exists and the focus falls to `<body>`. The next arrow then does nothing
-   * and you have to Tab back in, in the path the plan calls the version of this
-   * gesture that works.
+   * **A card that moves keeps the focus, whatever moved it.** A node Svelte
+   * moves within a keyed `{#each}` is taken out and put back, and a card that
+   * changes column is a new node altogether; either way an element holding the
+   * focus loses it to `<body>`, and the next key does nothing. An arrow did
+   * this, and so did the two moves nobody's key makes directly — a Space in
+   * Plain settling the card at the done end 1.5s later, and a Space in Kanban
+   * sending it to Done. So rather than each gesture putting the focus back
+   * after its own write, the page remembers which card had it and gives it
+   * back whenever the columns are redrawn with the focus on nothing.
    *
-   * **The write is awaited and not a tick guessed after it.** `saveTodo`
-   * resolves once the intent is durable *and* the store has been told, so this
-   * is the one honest moment to look for the new element: a bare `await tick()`
-   * finds the card still where it was, leaves the focus alone because it is
-   * already on it, and loses it a microtask later when the projection lands.
+   * Only the card itself, never a control inside it: a tickbox pressed with a
+   * mouse is focused by the click, and following that card to the end of Plain
+   * would scroll the page to it. Any focus landing elsewhere forgets it, and so
+   * does a press anywhere outside it, since a click on bare page also leaves the
+   * focus on `<body>` and must not be answered by taking it back. Not reactive:
+   * nothing is drawn from it.
    *
-   * Silent when there is nothing to focus: a sideways move in the pager lands
-   * the card in a column that is not on screen, and there is genuinely no
-   * element to put the focus on.
-   *
-   * @param {string} clientId The moved task's identity.
-   * @param {Promise<unknown>} written The write `place` returned.
+   * @type {string|null}
    */
-  async function keepFocus(clientId, written) {
-    // A refused intent is reported by the toast the drain raises; here it only
-    // means there is no card to aim at.
-    await Promise.resolve(written).catch(() => {})
+  let keyed = null
+
+  $effect(() => {
+    const enter = (event) => {
+      const node = event.target
+      keyed =
+        node instanceof HTMLElement && node.matches('article[data-client-id]')
+          ? node.dataset.clientId
+          : null
+    }
+    const press = (event) => {
+      if (keyed && !event.target?.closest?.(`article[data-client-id="${keyed}"]`)) keyed = null
+    }
+    globalThis.addEventListener('focusin', enter)
+    globalThis.addEventListener('pointerdown', press, true)
+    return () => {
+      globalThis.removeEventListener('focusin', enter)
+      globalThis.removeEventListener('pointerdown', press, true)
+    }
+  })
+
+  // Runs after the redraw a change to the columns causes, in the same flush,
+  // so the focus is back before any further key can be dispatched. Reads the
+  // columns and writes only the document's focus, which nothing here derives
+  // from. Silent when the card is not drawn — a sideways move in the pager
+  // lands it in a column that is not on screen.
+  $effect(() => {
+    columns
+    followFocus()
+  })
+
+  function followFocus() {
+    if (!keyed) return
+    const active = document.activeElement
+    if (active && active !== document.body) return
+    const card = document.querySelector(`article[data-client-id="${keyed}"]`)
+    if (card instanceof HTMLElement) card.focus()
+  }
+
+  /**
+   * Sweep a column from its own confirmation, and put the focus where the tasks went.
+   *
+   * The button that asked and the one that answered both leave with the tasks
+   * — the column has nothing left to sweep — so the focus would otherwise fall
+   * to `<body>`. It goes to the **first moved card** in the column it landed
+   * in, which says where they went, or to that column's tab on the pager, where
+   * the column is not drawn.
+   *
+   * @param {{id: string, sweepTo: {id: string}|null, tasks: Array<object>}} column
+   */
+  async function sweepAndFollow(column) {
+    const first = column.tasks.find((row) => !row.done_at)?.client_id
+    const into = column.sweepTo?.id
+    const written = sweep(column)
+    if (!written) return
+    await written
     await painted()
-    const card = document.querySelector(`article[data-client-id="${clientId}"]`)
-    if (card instanceof HTMLElement && card !== document.activeElement) card.focus()
+    const active = document.activeElement
+    if (active && active !== document.body) return
+    const landed =
+      document.querySelector(`[data-column="${into}"] article[data-client-id="${first}"]`) ??
+      document.querySelector(`[data-tab="${into}"]`)
+    if (landed instanceof HTMLElement) landed.focus()
   }
 
   /** How many keyboard moves have been announced, so the next one differs. */
@@ -855,8 +982,67 @@
    */
   function cleanUp(rows) {
     const into = archiveListId()
-    if (!into || !rows.length) return
-    saveTodos(rows.map((row) => ({ ...row, list_id: into })))
+    if (!into || !rows.length) return false
+    return saveTodos(rows.map((row) => ({ ...row, list_id: into })))
+  }
+
+  /**
+   * Clean up from a question's Archive, and put the focus somewhere that exists.
+   *
+   * The question and the button that raised it both leave with the tasks, so a
+   * keyboard left on Archive fell to `<body>`. It goes to the **quick-add** of
+   * the column that was cleaned — for the toolbar's cleanup, of the first column
+   * drawing one, which on the pager is the column on screen — because the board
+   * has just been emptied of finished work and adding the next thing is what is
+   * left to do there. Where no column draws a quick-add, to the pressed grouping
+   * pill, the nearest stable control above the board.
+   *
+   * **Only for a press from the keyboard** (`detail` is 0 for a click a key or
+   * an assistive tool made). A tap on Archive focusing a text field would open a
+   * phone's keyboard over the board it just tidied, and a mouse needs no help
+   * finding its way back.
+   *
+   * @param {Array<object>} rows The done tasks to take.
+   * @param {string|null} from The column whose own cleanup this was, or null
+   *   for the toolbar's.
+   * @param {MouseEvent} event The Archive press.
+   */
+  async function cleanUpAndFollow(rows, from, event) {
+    if (!cleanUp(rows) || event.detail !== 0) return
+    await painted()
+    const active = document.activeElement
+    if (active && active !== document.body) return
+    const target =
+      document.querySelector(
+        from == null ? '[data-board] [data-quick-add]' : `[data-quick-add="${from}"]`
+      ) ?? document.querySelector('[data-grouping-option][aria-pressed="true"]')
+    if (target instanceof HTMLElement) target.focus()
+  }
+
+  /** The toolbar's Clean up button, and its question's Cancel. */
+  let cleanupButton = $state(null)
+  let cleanupCancel = $state(null)
+
+  /**
+   * Raise or take back the toolbar's cleanup question, keeping the focus on what exists.
+   *
+   * The rule a column's own question follows: asking puts the focus on Cancel,
+   * the answer that changes nothing, and taking it back returns it to the button
+   * that asked.
+   *
+   * @param {boolean} asking
+   */
+  async function askCleanup(asking) {
+    confirmingCleanup = asking
+    await painted()
+    ;(asking ? cleanupCancel : cleanupButton)?.focus()
+  }
+
+  /** Escape on the question's own buttons takes it back. */
+  function onCleanupKey(event) {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    askCleanup(false)
   }
 
   /**
@@ -932,7 +1118,7 @@
 
 </script>
 
-<Frame eyebrow="What you mean to do" title="Tasks">
+<Frame eyebrow="What you mean to do" title="Tasks" column={COLUMN} spread={breakout}>
   <!-- The heading's line carries the one control a *tick* can call up. *Clean
        up N done* arrives with the first done task, and in the toolbar it was a
        row of its own on a phone: ticking the first task moved the whole board
@@ -959,7 +1145,11 @@
              still asks. The question replaces the button that raised it and
              names the count and the destination, because *Clean up 6 done* says
              neither where they go nor that they are going now. -->
-        <div class="flex flex-wrap items-stretch gap-1">
+        <!-- `-my-1`: the buttons are 44px and the heading's line is 36, so the
+             group reaches 4px past the line each way and occupies exactly it.
+             Reserving 44px on the heading row instead would move the first
+             row 8px against Lists and the calendar, which have no aside. -->
+        <div class="-my-1 flex flex-wrap items-stretch gap-1">
           {#if confirmingCleanup}
             <span class="meta self-center whitespace-nowrap" data-cleanup-asking>
               Archive {done.length} done {done.length === 1 ? 'task' : 'tasks'}?
@@ -968,30 +1158,31 @@
               <span class="meta self-center" data-cleanup-elsewhere>{sentence}</span>
             {/each}
             <button
-              class="meta rounded-md border border-ember px-3 py-2 whitespace-nowrap
-                     text-paper transition hover:bg-ember/10"
+              class="btn-danger meta border-ember whitespace-nowrap text-paper select-none [-webkit-touch-callout:none]"
               data-cleanup-confirm
-              onclick={() => {
+              onkeydown={onCleanupKey}
+              onclick={(event) => {
                 confirmingCleanup = false
-                cleanUp(done)
+                cleanUpAndFollow(done, null, event)
               }}
             >
               Archive
             </button>
             <button
-              class="meta rounded-md border border-white/20 px-3 py-2 whitespace-nowrap
-                     hover:border-white/40"
+              class="btn-outline meta whitespace-nowrap select-none [-webkit-touch-callout:none]"
+              bind:this={cleanupCancel}
               data-cleanup-cancel
-              onclick={() => (confirmingCleanup = false)}
+              onkeydown={onCleanupKey}
+              onclick={() => askCleanup(false)}
             >
               Cancel
             </button>
           {:else}
             <button
-              class="meta rounded-md border border-white/15 px-3 py-2 whitespace-nowrap
-                     hover:border-white/40"
+              class="btn-outline meta whitespace-nowrap select-none [-webkit-touch-callout:none]"
+              bind:this={cleanupButton}
               data-cleanup
-              onclick={() => (confirmingCleanup = true)}
+              onclick={() => askCleanup(true)}
             >
               Clean up {done.length} done
             </button>
@@ -1009,7 +1200,7 @@
        **Ordered from stable to conditional, so a view change moves nothing.**
        The grouping pills come first, because every view has them; the list
        selector second, because one grouping replaces it; the layout toggle last
-       and anchored to the frame's right edge, because only some groupings offer
+       and anchored to the column's right edge, because only some groupings offer
        one. A control that can disappear sits after everything that cannot, and
        where one does go its *place* is kept and says why — so on a phone the
        rows below do not climb 46px either. -->
@@ -1041,7 +1232,7 @@
     >
       {#each Object.values(GROUPINGS) as one (one.id)}
         <button
-          class="meta rounded-md border py-2 transition
+          class="meta rounded-md border py-2 transition select-none [-webkit-touch-callout:none]
                  {$wide ? 'shrink-0 px-3 whitespace-nowrap' : 'min-w-0 px-1 text-center break-words'}
                  {showingArchive ? 'invisible' : ''}
                  {one.id === groupingId
@@ -1101,7 +1292,7 @@
         <!-- Only where there is more than one ordinary list to gather, or it
              is a control whose whole effect is already on screen. -->
         <button
-          class="meta rounded-md border py-2 transition
+          class="meta rounded-md border py-2 transition select-none [-webkit-touch-callout:none]
                  {$wide ? 'shrink-0 px-3 whitespace-nowrap' : 'min-w-0 px-1 text-center'}
                  {byList ? 'invisible' : ''}
                  {allSelected && !byList
@@ -1116,8 +1307,8 @@
       {/if}
       {#each chips as one (one.id)}
         <button
-          class="meta flex items-center gap-2 rounded-md border py-2 transition
-                 {$wide ? 'shrink-0 px-3 whitespace-nowrap' : 'min-w-0 justify-center px-1'}
+          class="meta flex items-center gap-2 rounded-md border py-2 transition select-none [-webkit-touch-callout:none]
+                 {$wide ? 'shrink-0 px-3 whitespace-nowrap' : 'relative min-w-0 justify-center px-1'}
                  {byList ? 'invisible' : ''}
                  {listIds.includes(one.id) && !byList
             ? 'border-ember bg-ember/10 text-paper'
@@ -1127,12 +1318,18 @@
           aria-pressed={byList ? undefined : listIds.includes(one.id)}
           onclick={() => toggleList(one)}
         >
+          <!-- Below 48rem the dot sits in the cell's corner rather than beside
+               the label, and the label never breaks inside a word. Beside it,
+               the dot and its gap took 16px of a 90px cell at 390, and
+               *Groceries* split as "GROCERIE / S" through `break-words`. In the
+               corner the label has the whole cell: 82px there for a 67.5px
+               word, which is the 15% a phone's wider monospace needs. -->
           <span
-            class="size-2 shrink-0 rounded-full"
+            class="{$wide ? 'size-2 shrink-0' : 'absolute top-1 left-1 size-1.5'} rounded-full"
             style:background={chipColour(one.colour)}
             aria-hidden="true"
           ></span>
-          <span class="min-w-0 break-words" data-chip-label>{one.name}</span>
+          <span class="min-w-0 text-center [overflow-wrap:normal]" data-chip-label>{one.name}</span>
         </button>
       {/each}
       {#if byList}
@@ -1154,7 +1351,7 @@
       <div class="ml-auto flex items-stretch gap-1" role="group" aria-label="Layout">
         {#each grouping.layouts as one (one)}
           <button
-            class="meta rounded-md border px-3 py-2 whitespace-nowrap transition
+            class="meta rounded-md border px-3 py-2 whitespace-nowrap transition select-none [-webkit-touch-callout:none]
                    {one === layout
               ? 'border-ember bg-ember/10 text-paper'
               : 'border-white/15 hover:border-white/40'}"
@@ -1172,13 +1369,12 @@
     {/if}
   </div>
 
-  <div class={boardWidth}>
+  {#snippet board()}
   {#if loading}
     <p class="meta">Loading your tasks…</p>
   {:else if !lists.length}
     <p class="text-sm text-haze">
-      This account has no lists yet. They are made on the server, so this needs a
-      connection once.
+      No lists yet. Connect once to create them.
     </p>
   {:else}
     <Board
@@ -1187,7 +1383,7 @@
       {today}
       {lists}
       {listsById}
-      {layout}
+      layout={arrangement}
       {into}
       showList={showingArchive || (several && !byList)}
       me={username}
@@ -1198,13 +1394,16 @@
       ontoggle={toggle}
       onopen={openTask}
       onnudge={nudge}
-      oncleanup={byList ? (column) => cleanUp(column.tasks.filter((row) => row.done_at)) : null}
-      onsweep={sweep}
+      oncleanup={byList
+        ? (column, event) =>
+            cleanUpAndFollow(column.tasks.filter((row) => row.done_at), column.id, event)
+        : null}
+      onsweep={sweepAndFollow}
       onolder={showOlder}
       {loadingOlder}
     />
   {/if}
-  </div>
+  {/snippet}
 
   <!-- The keyboard's only feedback. `aria-live` rather than a toast: it is
        about a card that has already moved, and a reader who can see it move

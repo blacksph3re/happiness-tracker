@@ -9,6 +9,7 @@ import {
   overlayEntries,
   overlayPomodoros,
   overlayTodos,
+  unconfirmed,
   withScores,
 } from './projection.js'
 import { nowUtc } from './clock.js'
@@ -167,6 +168,18 @@ export const archive = writable([])
 export const archiveNext = writable(null)
 
 /**
+ * Whether a read has confirmed the newest page of the archive on this page.
+ *
+ * `archive` holding nothing means nothing until this is true: the archive is
+ * never in the snapshot, so after an offline reload it is empty because it was
+ * never read, and a column drawing it as *0 / Nothing here yet* was claiming
+ * the server's archive was empty. Stays true when a cleanup marks the page
+ * stale — a stale read still describes real tasks — and goes back to false
+ * only with the account.
+ */
+export const archiveRead = writable(false)
+
+/**
  * Which local days `timeEntries` is known to hold every session for.
  *
  * Sessions are read by range, so the cache has to remember the range as well as
@@ -247,8 +260,14 @@ async function localSummary({ start, end, by, as_of }) {
  * @returns {Promise<unknown|null>} Null when it did not arrive.
  */
 async function quietly(call) {
+  // Whose read this is. A reply for an account that has since signed out is
+  // not news about anybody on this device now: landing after a sign-in as
+  // somebody else, it was put in their store and written to their snapshot.
+  // Treated as a read that never arrived, which every loader already handles.
+  const asked = tokenHolder()
   try {
     const answer = await unwrap(call)
+    if (tokenHolder() !== asked) return null
     connection.set('online')
     return answer
   } catch (failure) {
@@ -379,6 +398,54 @@ function answerKey(row) {
   return `${row.day}:${row.question_id}`
 }
 
+/**
+ * Which answer a queued intent writes, for `unconfirmed`.
+ *
+ * @param {{kind: string, payload?: object}} intent
+ * @returns {string|undefined}
+ */
+function answerIntentKey(intent) {
+  return intent.kind === 'answer.put' ? answerKey(intent.payload) : undefined
+}
+
+/**
+ * Which session a queued intent writes, for `unconfirmed`.
+ *
+ * @param {{kind: string, client_id?: string}} intent
+ * @returns {string|undefined}
+ */
+function entryIntentKey(intent) {
+  return intent.kind.startsWith('entry.') ? intent.client_id : undefined
+}
+
+/**
+ * Which pomodoro a queued intent writes, for `unconfirmed`.
+ *
+ * @param {{kind: string, client_id?: string}} intent
+ * @returns {string|undefined}
+ */
+function pomodoroIntentKey(intent) {
+  return intent.kind.startsWith('pomodoro.') ? intent.client_id : undefined
+}
+
+/**
+ * Which task a queued intent writes, for `unconfirmed`.
+ *
+ * A step is carried by its parent in `todosWroteDuringRead`, so a step's
+ * intent answers with the parent. `step.delete` names the step alone, which is
+ * why it answers `true`: it cannot say which entry it needs, so it keeps them
+ * all until it has drained.
+ *
+ * @param {{kind: string, client_id?: string, payload?: object}} intent
+ * @returns {string|true|undefined}
+ */
+function todoIntentKey(intent) {
+  if (intent.kind.startsWith('todo.')) return intent.client_id
+  if (intent.kind === 'step.upsert') return intent.payload.todo_client_id
+  if (intent.kind === 'step.delete') return true
+  return undefined
+}
+
 let projecting = false
 
 /** Lay the queue over the server's answers again, whatever just changed. */
@@ -395,20 +462,78 @@ function reproject() {
 let hydrating = null
 
 /**
- * Restore the snapshot, once per page load.
+ * The account the last hydration was for, or `undefined` before the first.
+ *
+ * Null is a real value here — a hydration while signed out — so "never" needs a
+ * spelling of its own.
+ */
+let hydratedFor = undefined
+
+/**
+ * The account the device snapshot is being written for, or null for nobody.
+ *
+ * **Every snapshot write is gated on this matching the token.** The snapshot is
+ * one account's at a time, and `hydrate` is the only thing that decides whose:
+ * it checks the stored owner, clears what belongs to somebody else, and only
+ * then says whose writes may land. Before this, the owner was checked once per
+ * page load and every store change was written regardless — so a sign-out and a
+ * sign-in as somebody else without a reload wrote the second account's data
+ * into a snapshot still marked as the first's, and the next reload threw it all
+ * away: the second account's offline reload came up empty.
+ *
+ * Null while signed out, which is also what keeps a sign-out from emptying the
+ * snapshot: `resetStore` clears every store, and those clears used to be
+ * written straight to disk.
+ */
+let persistFor = null
+
+let persisting = false
+
+/**
+ * Restore the snapshot, once per account.
  *
  * Awaited by every loader rather than gating the first paint, so a route that
  * mounts before the disk answers is correct rather than blank — it simply
  * fetches, as it always did.
  *
+ * Once per *account*, not once per page load: an account change without a
+ * reload re-checks the snapshot's owner exactly as a page load does. A change
+ * straight from one account to another, with no signed-out hydration between,
+ * also resets what is held in memory — `App.svelte` resets on a sign-out, but
+ * nothing may rely on having seen one.
+ *
  * @returns {Promise<void>}
  */
 export function ready() {
-  if (!hydrating) hydrating = hydrate()
+  const holder = tokenHolder()
+  if (!hydrating || holder !== hydratedFor) {
+    if (hydrating && hydratedFor !== null && holder !== null) resetStore()
+    hydratedFor = holder
+    hydrating = hydrate(holder)
+  }
   return hydrating
 }
 
-async function hydrate() {
+/**
+ * Make the snapshot the signed-in account's own, and restore it.
+ *
+ * @param {number|null} holder The account the token names as this began.
+ * @returns {Promise<void>}
+ */
+async function hydrate(holder) {
+  // Nothing is written while this decides whose snapshot it is.
+  persistFor = null
+  if (!persisting) {
+    persisting = true
+    // Subscribed before the restore now, which used to write every restored
+    // value straight back: the gate above is what stops that.
+    for (const [name, store] of Object.entries(PERSISTED)) {
+      store.subscribe((value) => schedule(name, value))
+    }
+    queued.subscribe(reproject)
+    catalogueDetails.subscribe(reproject)
+  }
+
   // The queue first, and before any fetch can resolve: every loader awaits this
   // function, and every one of them lays what it fetched over the queue. A
   // projection run against a queue not yet read from disk erases exactly the
@@ -419,40 +544,65 @@ async function hydrate() {
   // after the account is known would mean undoing a restore already in
   // progress, which races every loader running alongside it — and losing that
   // race shows one account another's data.
-  const holder = tokenHolder()
-  const owner = await snapshotOwner()
-  if (owner !== null && holder !== null && owner !== holder) {
-    await clearSnapshot()
-    // Somebody else has signed in on this device. Their data is gone from the
-    // snapshot above; the *subscription* has to go too, or the browser keeps
-    // the previous account's enrolment and shows their pomodoro notifications
-    // to whoever is holding the phone now.
-    //
-    // The local unsubscribe is what actually stops delivery — the row the old
-    // account left on the server can no longer be deleted with this token, and
-    // is pruned instead the next time something is sent to a dead endpoint.
-    await purgePush()
-  } else if (holder !== null) {
-    const stored = await readSnapshot()
-    for (const [name, store] of Object.entries(PERSISTED)) {
-      if (stored[name] !== undefined) store.set(stored[name])
+  if (holder !== null) {
+    const owner = await snapshotOwner()
+    // Superseded: the account changed while the disk was answering, and the
+    // hydration started for the new one decides instead.
+    if (tokenHolder() !== holder) return
+    if (owner !== null && owner !== holder) {
+      await clearSnapshot()
+      // Somebody else has signed in on this device. Their data is gone from the
+      // snapshot above; the *subscription* has to go too, or the browser keeps
+      // the previous account's enrolment and shows their pomodoro notifications
+      // to whoever is holding the phone now.
+      //
+      // The local unsubscribe is what actually stops delivery — the row the old
+      // account left on the server can no longer be deleted with this token, and
+      // is pruned instead the next time something is sent to a dead endpoint.
+      await purgePush()
+    } else {
+      const stored = await readSnapshot()
+      if (tokenHolder() !== holder) return
+      for (const [name, store] of Object.entries(PERSISTED)) {
+        if (stored[name] !== undefined) store.set(stored[name])
+      }
+      if (stored.loadedRange !== undefined) loadedRange = stored.loadedRange
     }
-    if (stored.loadedRange !== undefined) loadedRange = stored.loadedRange
-  }
-  if (holder !== null) await rememberOwner(holder)
-
-  // Persist from here on. Subscribing after the restore rather than before it
-  // keeps the hydration itself from writing every value straight back.
-  for (const [name, store] of Object.entries(PERSISTED)) {
-    store.subscribe((value) => schedule(name, value))
+    if (tokenHolder() !== holder) return
+    await rememberOwner(holder)
+    if (tokenHolder() !== holder) return
+    // Persist from here on, starting with what is held now — the restore, or
+    // the empty stores a cleared snapshot leaves.
+    persistFor = holder
+    for (const [name, store] of Object.entries(PERSISTED)) schedule(name, get(store))
   }
 
   // What was restored is the last projection, which stands in for the server's
   // copy until a fetch replaces it.
   fromServer = get(answers)
   projecting = true
-  queued.subscribe(reproject)
-  catalogueDetails.subscribe(reproject)
+}
+
+/**
+ * Whether a snapshot write may land now.
+ *
+ * Read again at the moment of writing as well as when a write is queued: the
+ * token can change between the two.
+ *
+ * @returns {boolean}
+ */
+function mayPersist() {
+  return persistFor !== null && tokenHolder() === persistFor
+}
+
+/**
+ * Write one value outside the store subscriptions, behind the same gate.
+ *
+ * @param {string} key
+ * @param {unknown} value
+ */
+function persist(key, value) {
+  if (mayPersist()) writeSnapshot(key, value)
 }
 
 const pendingWrites = new Map()
@@ -473,6 +623,7 @@ let writeTimer = null
  * @param {unknown} value
  */
 function schedule(name, value) {
+  if (!mayPersist()) return
   pendingWrites.set(name, value)
   if (writeTimer) return
   // A microtask, not a timer. Delaying by even a few hundred milliseconds trades
@@ -483,7 +634,9 @@ function schedule(name, value) {
   writeTimer = true
   queueMicrotask(() => {
     writeTimer = null
-    for (const [key, held] of pendingWrites) writeSnapshot(key, snapshotOf(held))
+    if (mayPersist()) {
+      for (const [key, held] of pendingWrites) writeSnapshot(key, snapshotOf(held))
+    }
     pendingWrites.clear()
   })
 }
@@ -590,12 +743,13 @@ export async function ensureAnswers({ force = false } = {}) {
   if (!force && get(answers).length && fetched.has('answers')) return get(answers)
   return once('answers', async () => {
     // Anything written from here until the reply lands outran this request and
-    // has to survive it — see `wroteDuringRead`.
-    wroteDuringRead = new Map()
+    // has to survive it — see `wroteDuringRead`. So does anything still on its way to
+    // the server when it began, which `unconfirmed` keeps.
+    wroteDuringRead = unconfirmed(wroteDuringRead, get(queued), answerIntentKey)
     const loaded = await quietly(() => listAnswers())
     if (!loaded) return get(answers)
     const mine = wroteDuringRead
-    wroteDuringRead = new Map()
+    wroteDuringRead = unconfirmed(mine, get(queued), answerIntentKey)
     fromServer = mergeDuringRead(loaded, mine, answerKey)
     // Returned, not just stored: callers read the value this hands back — the
     // record builds its rows from it — so handing back the server's array while
@@ -966,8 +1120,13 @@ export async function ensureTimeEntries({ start, end, force = false } = {}) {
     if (wanted.start) query.start = wanted.start
     if (wanted.end) query.end = wanted.end
     // Anything written from here until the reply lands outran this request and
-    // has to survive it — see `entriesWroteDuringRead`.
-    entriesWroteDuringRead = new Map()
+    // has to survive it — see `entriesWroteDuringRead`. So does anything still on its way to
+    // the server when it began, which `unconfirmed` keeps.
+    entriesWroteDuringRead = unconfirmed(
+      entriesWroteDuringRead,
+      get(queued),
+      entryIntentKey
+    )
     const fresh = await quietly(() => listTimeEntries({ query }))
     // Unreachable: keep what the device holds. The queue is still laid over it,
     // because a session recorded here is not waiting on anybody. The map is
@@ -979,7 +1138,7 @@ export async function ensureTimeEntries({ start, end, force = false } = {}) {
       return held
     }
     const mine = entriesWroteDuringRead
-    entriesWroteDuringRead = new Map()
+    entriesWroteDuringRead = unconfirmed(mine, get(queued), entryIntentKey)
     // Projected from the merged baseline and never from `fresh`: the two are
     // the same array except when a write or a delete outran this read, which is
     // the one case the merge exists for and so the one case this must not undo.
@@ -990,7 +1149,7 @@ export async function ensureTimeEntries({ start, end, force = false } = {}) {
     fetched.add('time')
     // Kept beside the rows: a snapshot of sessions means nothing without the
     // range it covers, or the next visit would take a fortnight for the lot.
-    writeSnapshot('loadedRange', wanted)
+    persist('loadedRange', wanted)
     return loaded
   })
 }
@@ -1259,8 +1418,13 @@ export async function applyChanges(moved) {
 export function resetStore() {
   // The snapshot is deliberately left alone: signing out must not throw away
   // what the device holds, because a queue of offline writes will live beside
-  // it. Only signing in as someone else clears it — see `ensureMe`.
+  // it. Only signing in as someone else clears it — see `hydrate`. Every clear
+  // below is kept off the disk by `persistFor`, which a sign-out takes away.
   fetched.clear()
+  // The answers' baseline too: it is not a store, so nothing below reaches it,
+  // and the next account's first reprojection would otherwise lay its queue
+  // over the previous account's answers.
+  fromServer = []
   me.set(null)
   catalogues.set([])
   answers.set([])
@@ -1277,6 +1441,7 @@ export function resetStore() {
   todoLists.set(null)
   archive.set([])
   archiveNext.set(null)
+  archiveRead.set(false)
   todosWroteDuringRead = new Map()
   entriesWroteDuringRead = new Map()
   pomodorosWroteDuringRead = new Map()
@@ -1330,8 +1495,13 @@ export async function ensurePomodoros({ start, end, force = false } = {}) {
     if (wanted.start) query.start = wanted.start
     if (wanted.end) query.end = wanted.end
     // Anything written from here until the reply lands outran this request and
-    // has to survive it — see `pomodorosWroteDuringRead`.
-    pomodorosWroteDuringRead = new Map()
+    // has to survive it — see `pomodorosWroteDuringRead`. So does anything still on its way to
+    // the server when it began, which `unconfirmed` keeps.
+    pomodorosWroteDuringRead = unconfirmed(
+      pomodorosWroteDuringRead,
+      get(queued),
+      pomodoroIntentKey
+    )
     const fresh = await quietly(() => listPomodoros({ query }))
     // Unreachable: keep what the device holds, with the queue still laid over
     // it. A pomodoro started here is not waiting on anybody. The map is left
@@ -1342,7 +1512,7 @@ export async function ensurePomodoros({ start, end, force = false } = {}) {
       return held
     }
     const mine = pomodorosWroteDuringRead
-    pomodorosWroteDuringRead = new Map()
+    pomodorosWroteDuringRead = unconfirmed(mine, get(queued), pomodoroIntentKey)
     // From the merged baseline and never from `fresh`, for the reason
     // `ensureTimeEntries` gives.
     const baseline = mergeDuringRead(fresh, mine, (row) => row.client_id)
@@ -1350,7 +1520,7 @@ export async function ensurePomodoros({ start, end, force = false } = {}) {
     pomodoros.set(loaded)
     pomodoroRange = wanted
     fetched.add('pomodoros')
-    writeSnapshot('pomodoroRange', wanted)
+    persist('pomodoroRange', wanted)
     return loaded
   })
 }
@@ -1535,8 +1705,13 @@ export async function ensureTodos({ force = false } = {}) {
   if (!force && fetched.has('todos')) return get(todos)
   return once('todos', async () => {
     // Anything written from here until the reply lands outran this request and
-    // has to survive it — see `todosWroteDuringRead`.
-    todosWroteDuringRead = new Map()
+    // has to survive it — see `todosWroteDuringRead`. So does anything still on its way to
+    // the server when it began, which `unconfirmed` keeps.
+    todosWroteDuringRead = unconfirmed(
+      todosWroteDuringRead,
+      get(queued),
+      todoIntentKey
+    )
     const loaded = await quietly(() => listTodos())
     // Unreachable: keep what the device holds, with the queue still laid over
     // it. A task written here is not waiting on anybody.
@@ -1546,7 +1721,7 @@ export async function ensureTodos({ force = false } = {}) {
       return held
     }
     const mine = todosWroteDuringRead
-    todosWroteDuringRead = new Map()
+    todosWroteDuringRead = unconfirmed(mine, get(queued), todoIntentKey)
     // Projected from the merged baseline and never from `loaded`: the two are
     // the same array except when a write or a delete outran this read, which is
     // the one case the merge exists for and so the one case this must not undo.
@@ -1768,7 +1943,10 @@ export async function ensureArchive({ before = null, force = false } = {}) {
     archiveNext.set(page.next)
     // Only a first page is a complete read of the newest end. A later page
     // extends what is held and says nothing about whether the top is fresh.
-    if (!before) fetched.add('archive')
+    if (!before) {
+      fetched.add('archive')
+      archiveRead.set(true)
+    }
     return get(archive)
   })
 }

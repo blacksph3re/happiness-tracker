@@ -110,11 +110,12 @@ test.describe('at phone width', () => {
     // not fit a phone, and the answer is to draw one of them rather than to
     // draw both narrower.
     await expect(page.locator('[data-column]')).toHaveCount(1)
-    await expect(page.locator('[data-column="done"]')).toBeVisible()
+    // The first column holding a task, not the first column: Done is empty.
+    await expect(page.locator('[data-column="planned"]')).toBeVisible()
     // And no layout toggle: below 48rem the pager is not a third option
     // somebody picks, it is what `columns` *is* here.
     await expect(page.locator('[data-layout]')).toHaveCount(0)
-    await expect(shownTab(page)).toHaveAttribute('data-tab', 'done')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'planned')
   })
 
   test('a tap on a tab jumps to that column', async ({ page, account }) => {
@@ -133,19 +134,20 @@ test.describe('at phone width', () => {
     await makeTodos(account, [{ title: 'here now', rank: 'b' }])
     await page.goto('/todos')
     await groupBy(page, 'board', 'planned')
-    await expect(shownTab(page)).toHaveAttribute('data-tab', 'done')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'planned')
 
     // Right to left is "onwards", the way a photo viewer behaves.
     await swipeBody(page, 300, 60)
-    await expect(shownTab(page)).toHaveAttribute('data-tab', 'active')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'backlog')
 
     await swipeBody(page, 60, 300)
-    await expect(shownTab(page)).toHaveAttribute('data-tab', 'done')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'planned')
 
     // And it stops at the end rather than wrapping, which would lose your place
     // in a picture whose whole job is to say where you are.
-    await swipeBody(page, 60, 300)
-    await expect(shownTab(page)).toHaveAttribute('data-tab', 'done')
+    await swipeBody(page, 300, 60)
+    await swipeBody(page, 300, 60)
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'backlog')
   })
 
   test('a card held at the screen edge turns the page and lands in the new column', async ({
@@ -227,6 +229,145 @@ test.describe('at phone width', () => {
   })
 })
 
+/**
+ * The pager opens on the first column that holds a task.
+ *
+ * Measured before the rule, at 390 across three ordinary boards and every paged
+ * grouping: the column a grouping opened on was empty while another held tasks
+ * in 7 of 15 openings — Date opened on Past, Kanban on Done and Eisenhower on
+ * *Do first* in every board they could. A page with
+ * nothing on it and a count somewhere else is a hunt.
+ */
+test.describe('the pager lands where the tasks are', () => {
+  test.use({ viewport: PHONE })
+
+  /** Store a grouping and its layout, then open the board on them. */
+  async function openPaged(page, account, grouping, layout) {
+    const held = await (await account.api.get('/api/me/preferences')).json()
+    const put = await account.api.put('/api/me/preferences', {
+      data: { ...held, todos: { ...(held.todos ?? {}), grouping, layout } },
+    })
+    expect(put.ok(), await put.text()).toBeTruthy()
+    await page.goto('/todos')
+    // The pill, not the tabs: a snapshot of the grouping before this one also
+    // draws tabs, and would satisfy a wait for them.
+    await expect(page.locator(`[data-grouping-option="${grouping}"]`)).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    await expect(page.locator('[data-pager-tabs]')).toBeVisible()
+  }
+
+  /** Every tab's id and count, and which one is showing, from one read. */
+  async function landing(page) {
+    return page.locator('[data-pager-tabs] [role="tab"]').evaluateAll((tabs) => ({
+      tabs: tabs.map((tab) => [tab.dataset.tab, Number(tab.querySelector('[data-tab-count]').textContent)]),
+      shown: tabs.find((tab) => tab.getAttribute('aria-selected') === 'true')?.dataset.tab,
+    }))
+  }
+
+  const BOARDS = {
+    'a morning list': [
+      { title: 'Feed the cat', rank: 'b' },
+      { title: 'Call the bank', rank: 'c' },
+      { title: 'Water the plants', rank: 'd' },
+    ],
+    'a week ahead, estimated': [
+      { title: 'Draft the report', rank: 'b', duration_minutes: 30 },
+      { title: 'Book the dentist', rank: 'c', duration_minutes: 30 },
+      { title: 'Read chapter two', rank: 'd', planned_on: '2026-06-16', duration_minutes: 90 },
+      { title: 'Pay rent', rank: 'e', planned_on: '2026-06-20', due_on: '2026-06-17' },
+    ],
+    'yesterday left over': [
+      { title: 'Left over', rank: 'b', planned_on: '2026-06-14', priority: 'very_high' },
+      { title: 'Done already', rank: 'c', done_at: '2026-06-15T08:00:00' },
+      { title: 'Next week', rank: 'd', planned_on: '2026-06-22' },
+    ],
+  }
+
+  for (const [name, rows] of Object.entries(BOARDS)) {
+    test(`every paged grouping opens on a column with tasks: ${name}`, async ({ page, account }) => {
+      const inbox = await systemList(account, 'inbox')
+      await makeTodos(account, rows)
+      const empty = []
+      for (const [grouping, layout] of [
+        ['date', 'columns'],
+        ['board', 'columns'],
+        ['size', 'columns'],
+        ['matrix', 'quadrants'],
+        ['list', 'columns'],
+      ]) {
+        await openPaged(page, account, grouping, layout)
+        if (grouping === 'list') await expect(page.locator(`[data-tab="${inbox.id}"]`)).toBeVisible()
+        // The counts are the positive claim, polled until the tasks are drawn.
+        await expect
+          .poll(async () => (await landing(page)).tabs.reduce((sum, [, n]) => sum + n, 0))
+          .toBeGreaterThan(0)
+        const { tabs, shown } = await landing(page)
+        const first = tabs.find(([, n]) => n > 0)?.[0]
+        if (shown !== first) empty.push(`${grouping} opened on ${shown}, tasks first in ${first}`)
+      }
+      expect(empty).toEqual([])
+    })
+  }
+
+  test('switching grouping lands again, on the new grouping’s first column with tasks', async ({
+    page,
+    account,
+  }) => {
+    await makeTodos(account, BOARDS['a morning list'])
+    await openPaged(page, account, 'board', 'columns')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'planned')
+    // Done, the first index, so the choice carried over by position would land
+    // somewhere other than the matrix's own landing, which is its last quadrant.
+    await page.locator('[data-tab="done"]').click()
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'done')
+    await groupBy(page, 'matrix', 'not-important-not-urgent')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'not-important-not-urgent')
+  })
+
+  test('each grouping keeps the column it was steered to', async ({ page, account }) => {
+    // Only one steered choice used to be kept at a time, so steering Eisenhower
+    // made Kanban forget its own and land afresh on Planned.
+    await makeTodos(account, BOARDS['a morning list'])
+    await openPaged(page, account, 'board', 'columns')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'planned')
+    await page.locator('[data-tab="done"]').click()
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'done')
+
+    await groupBy(page, 'matrix', 'not-important-not-urgent')
+    await page.locator('[data-tab="important-urgent"]').click()
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'important-urgent')
+
+    await groupBy(page, 'board', 'done')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'done')
+    await groupBy(page, 'matrix', 'important-urgent')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'important-urgent')
+  })
+
+  test('ticking the last task on the landing column does not move the pager', async ({
+    page,
+    account,
+  }) => {
+    // The tick moves the task to Done, which is *before* Planned — so a rule
+    // re-applied on every change would jump the reader back to it.
+    await makeTodos(account, [{ title: 'Feed the cat', rank: 'b' }])
+    await openPaged(page, account, 'board', 'columns')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'planned')
+    await taskCard(page, 'Feed the cat').locator('[data-tick]').click()
+    await expect(page.locator('[data-tab-count="done"]')).toHaveText('1')
+    for (let sample = 0; sample < 6; sample += 1) {
+      await expect(shownTab(page)).toHaveAttribute('data-tab', 'planned')
+      await page.waitForTimeout(150)
+    }
+  })
+
+  test('a board with nothing on it keeps its first column', async ({ page, account }) => {
+    await openPaged(page, account, 'board', 'columns')
+    await expect(shownTab(page)).toHaveAttribute('data-tab', 'done')
+  })
+})
+
 test.describe('at 320px, where a row runs out of room', () => {
   test.use({ viewport: NARROW })
 
@@ -261,9 +402,11 @@ test.describe('at 320px, where a row runs out of room', () => {
     ])
     await page.goto('/todos')
 
+    // Each names the column the pager lands on, which is the first one holding
+    // a task: neither seed is done or has a priority.
     for (const [grouping, column] of [
-      ['board', 'done'],
-      ['matrix', 'important-urgent'],
+      ['board', 'planned'],
+      ['matrix', 'not-important-not-urgent'],
       ['list', null],
       ['date', 'today'],
       ['size', 'none'],
@@ -402,7 +545,7 @@ test.describe('what the pager says about itself', () => {
       // Double-digit counts, the realistic worst for a cell's width.
       await makeTodos(
         account,
-        Array.from({ length: 12 }, (_, n) => ({ title: `task ${n}`, rank: `b${n}` }))
+        Array.from({ length: 12 }, (_, n) => ({ title: `task ${n}`, rank: `b${String.fromCharCode(98 + n)}` }))
       )
       await page.goto('/todos')
 
@@ -552,7 +695,7 @@ test.describe('moving the past on a phone', () => {
     await page.locator('[data-tab="past"]').click()
     await page.locator('[data-sweep="past"]').click()
     await expect(page.locator('[data-sweep-asking="past"]')).toHaveText(
-      'Move 1 past task to Later? They will be planned for Wed, Jun 17.'
+      'Move 1 past task to Later (Wed, Jun 17)?'
     )
     await page.locator('[data-sweep-confirm="past"]').click()
 
@@ -592,7 +735,7 @@ test.describe('a phone column never hides a card', () => {
         account,
         Array.from({ length: 20 }, (_, n) => ({
           title: `task ${String(n).padStart(2, '0')}`,
-          rank: `b${String(n).padStart(2, '0')}`,
+          rank: `b${String.fromCharCode(98 + n)}`,
         }))
       )
       await page.goto('/todos')
@@ -691,7 +834,7 @@ test.describe('a long press on a card lifts it and selects nothing', () => {
     const quickAdd = page.locator('[data-quick-add]').first()
     expect(await quickAdd.evaluate((node) => getComputedStyle(node).userSelect)).not.toBe('none')
     await card.locator('[data-title]').click()
-    const titleField = page.locator('input[data-field="title"]')
+    const titleField = page.locator('[data-field="title"]')
     await expect(titleField).toBeVisible()
     expect(await titleField.evaluate((node) => getComputedStyle(node).userSelect)).not.toBe('none')
 
@@ -720,5 +863,57 @@ test.describe('a long press on a card lifts it and selects nothing', () => {
     await expect(card).toHaveAttribute('data-carrying', 'true')
     expect(await page.evaluate(() => getSelection().toString())).toBe('')
     await chip.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 9, isPrimary: true, ...at })
+  })
+})
+
+/**
+ * The controls a long press lands on select nothing either.
+ *
+ * Measured before the fix: cards, blocks and ticks computed `user-select: none`,
+ * while the grouping pills, list chips, pager tabs, *Clean up*, the menu's rows
+ * and the layout toggle computed `auto` — so a held pill selected its label.
+ */
+test.describe('a long press on a board control selects nothing', () => {
+  test('pills, chips, tabs, cleanup, the menu and the layout toggle; fields still select', async ({
+    page,
+    account,
+  }) => {
+    await makeTodoList(account, 'Errands', 'rose')
+    await makeTodos(account, [
+      { title: 'Feed the cat', rank: 'b', done_at: '2026-06-15T08:00:00Z' },
+      { title: 'Ring the vet', rank: 'c' },
+    ])
+    const read = (selector) =>
+      page.locator(selector).first().evaluate((node) => getComputedStyle(node).userSelect)
+
+    await page.setViewportSize(PHONE)
+    await openTasks(page, account, 'board')
+    await expect(page.locator('[data-pager-tabs]')).toBeVisible()
+    await expect(page.locator('[data-cleanup]')).toBeVisible()
+    const seen = {
+      pill: await read('[data-grouping-option]'),
+      chip: await read('[data-list]'),
+      tab: await read('[data-tab]'),
+      cleanup: await read('[data-cleanup]'),
+    }
+
+    await resizeTo(page, { width: 1280, height: 900 })
+    // Kanban offers one layout, so the toggle is read under Date.
+    await groupBy(page, 'date', 'today')
+    await expect(page.locator('[data-layout]').first()).toBeVisible()
+    seen.layout = await read('[data-layout]')
+    await taskCard(page, 'Ring the vet').locator('[data-title]').click({ button: 'right' })
+    await expect(page.locator('[data-task-menu]')).toBeVisible()
+    seen.menu = await read('[data-task-menu] button')
+
+    expect(seen).toEqual({
+      pill: 'none',
+      chip: 'none',
+      tab: 'none',
+      cleanup: 'none',
+      layout: 'none',
+      menu: 'none',
+    })
+    expect(await read('[data-quick-add]'), 'a field you type into').not.toBe('none')
   })
 })

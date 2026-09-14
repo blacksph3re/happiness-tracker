@@ -444,3 +444,18 @@ def test_and_the_next_one_finds_it_clean(client):
     # Not `totp_required`: the database is this test's own, and an enrolment
     # from the test above would mean they are sharing one.
     assert body.json()["status"] == "complete"
+
+
+def test_a_lockout_says_roughly_how_long_it_lasts(client):
+    for _ in range(5):
+        client.post("/api/login", json={"username": "admin", "password": "wrong"})
+    locked = client.post(
+        "/api/login", json={"username": "admin", "password": "admin-password"}
+    )
+
+    assert locked.status_code == 429
+    # The default window is fifteen minutes, and the first failure was a moment
+    # ago, so the whole of it is still to run.
+    assert locked.json()["detail"] == (
+        "Too many attempts. Try again in about 15 minutes."
+    )

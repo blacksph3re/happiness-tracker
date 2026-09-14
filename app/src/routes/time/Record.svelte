@@ -1,4 +1,6 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/time/column.js'
   import { save, toCsv, toZip } from '../../lib/download.js'
   import { tick } from 'svelte'
 
@@ -480,7 +482,19 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
     }
   }
 
-  function startAdding() {
+  /** The button that opens the add panel, and the panel's first field. */
+  let addButton = $state(null)
+  let addDay = $state(null)
+
+  /**
+   * Open the add panel.
+   *
+   * A keyboard press — a click with no pointer behind it, `detail` 0 — moves
+   * focus into the first field, or the reader is left on a button whose panel
+   * opened somewhere they cannot see. A mouse click leaves focus alone, as it
+   * always did.
+   */
+  async function startAdding(event) {
     editing = null
     adding = {
       day: today(),
@@ -488,6 +502,16 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
       startClock: '09:00',
       endClock: '17:00',
     }
+    if (event?.detail === 0) {
+      await tick()
+      addDay?.focus()
+    }
+  }
+
+  /** Close the add panel, handing focus back to its button when a key closed it. */
+  function stopAdding(byKey) {
+    adding = null
+    if (byKey) addButton?.focus()
   }
 
   /**
@@ -590,7 +614,8 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
   }
 </script>
 
-<section class="mx-auto w-full max-w-4xl px-5 py-8">
+<Frame column={COLUMN}>
+<section>
   <div class="mb-6 flex flex-wrap items-end justify-between gap-3">
     <div>
       <p class="meta">Every session you have tracked</p>
@@ -601,16 +626,16 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
            is no "current" day for the form to belong to, so the day it writes
            became a field. -->
       <button
-        class="flex items-center gap-2 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
-               hover:bg-dusk-lift"
+        class="btn-filled flex items-center gap-2"
         data-add-session
+        bind:this={addButton}
         onclick={startAdding}
       >
         <IconPlus class="size-4" />
         Add a session
       </button>
       <button
-        class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+        class="btn-outline meta"
         onclick={download}
       >
         Download CSVs
@@ -652,7 +677,15 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
   </div>
 
   {#if adding}
-    <div class="mb-4 rounded-xl border border-white/10 bg-ink-soft px-5 py-4" data-adding>
+    <!-- Escape bubbles here from whichever field has focus. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="mb-4 rounded-xl border border-white/10 bg-ink-soft px-5 py-4"
+      data-adding
+      onkeydown={(event) => {
+        if (event.key === 'Escape' && !event.defaultPrevented) stopAdding(true)
+      }}
+    >
       <div class="flex flex-wrap items-end gap-3">
         <div class="flex flex-col gap-1.5">
           <span class="meta">Day</span>
@@ -660,6 +693,7 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
             type="date"
             aria-label="Day"
             max={today()}
+            bind:this={addDay}
             bind:value={adding.day}
             class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
           />
@@ -683,21 +717,24 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
           <span class="meta">To</span>
           <TimeField label="To" bind:value={adding.endClock} />
         </div>
-        <button
-          class="flex items-center gap-2 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
-                 hover:bg-dusk-lift disabled:opacity-30"
-          disabled={!adding.project_id || !adding.day || adding.day > today()}
-          onclick={() => saveNew()}
-        >
-          <IconPlus class="size-4" />
-          Add session
-        </button>
-        <button
-          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-          onclick={() => (adding = null)}
-        >
-          Cancel
-        </button>
+        <!-- One group, so the pair wraps together: loose in the row, Cancel
+             alone went to a second line under Day at 1280. -->
+        <div class="flex gap-3">
+          <button
+            class="btn-filled flex items-center gap-2 disabled:opacity-30"
+            disabled={!adding.project_id || !adding.day || adding.day > today()}
+            onclick={() => saveNew()}
+          >
+            <IconPlus class="size-4" />
+            Add session
+          </button>
+          <button
+            class="btn-outline meta"
+            onclick={(event) => stopAdding(event.detail === 0)}
+          >
+            Cancel
+          </button>
+        </div>
       </div>
       {#if adding.day > today()}
         <!-- The record is what was tracked. A day that has not happened cannot
@@ -715,13 +752,12 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
     <div class="rounded-xl border border-white/10 bg-ink-soft p-6" data-no-projects>
       <h2 class="font-semibold">Nothing to record yet</h2>
       <p class="mt-1 mb-4 text-sm text-haze">
-        A session is recorded against a project. Add one and its days appear here.
+        Add a project to start recording.
       </p>
       <a
         href="/time/projects"
         use:link
-        class="meta inline-block rounded-md border border-white/15 px-4 py-2.5
-               hover:border-white/40"
+        class="btn-outline meta inline-block"
       >
         Manage projects →
       </a>
@@ -906,8 +942,8 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
                                offering what the row cannot honestly do. -->
                           {#if workable}
                             <button
-                              class="meta rounded-md border border-white/15 p-2
-                                     hover:border-white/40"
+                              class="meta flex size-11 items-center justify-center rounded-md
+                                     border border-white/15 hover:border-white/40"
                               aria-label="Edit"
                               title="Edit"
                               onclick={() => startEditing(only)}
@@ -925,42 +961,55 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
                               row.crosses && !row.whole
                                 ? `Delete ${shown.name} on ${dayLabel(day)}`
                                 : `Delete ${shown.name} session`}
-                            {#if confirming === `${only.client_id}|${day}`}
-                              <!-- In place of the row's controls, the way Focus
-                                   asks: the question and its answers do not sit
-                                   beside the buttons that raised it. -->
-                              <span class="meta hidden normal-case sm:inline">Delete it?</span>
-                              <button
-                                data-delete-confirm
-                                class="meta rounded-md border border-alarm px-3 py-2 text-paper
-                                       hover:bg-alarm/10"
-                                onclick={() => remove(only, day)}
-                              >
-                                Delete
-                              </button>
-                              <button
-                                class="meta rounded-md border border-white/20 px-3 py-2
-                                       hover:border-white/40"
-                                onclick={() => (confirming = null)}
-                              >
-                                Cancel
-                              </button>
-                            {:else}
-                              <!-- Opens the question rather than deleting, so it
-                                   hovers white like any outlined control. -->
-                              <button
-                                class="meta rounded-md border border-white/15 p-2
-                                       hover:border-white/40"
-                                aria-label={cut}
-                                title={cut}
-                                onclick={() => (confirming = `${only.client_id}|${day}`)}
-                              >
-                                <IconBin />
-                              </button>
-                            {/if}
+                            <!-- Opens the question rather than deleting, so it
+                                 hovers white like any outlined control. It
+                                 stays put while the question is open: swapping
+                                 it for the question shoved the row's own
+                                 duration 198px left. -->
+                            <button
+                              class="meta flex size-11 items-center justify-center rounded-md
+                                     border hover:border-white/40
+                                     {confirming === `${only.client_id}|${day}`
+                                ? 'border-white/40'
+                                : 'border-white/15'}"
+                              aria-label={cut}
+                              aria-expanded={confirming === `${only.client_id}|${day}`}
+                              title={cut}
+                              onclick={() =>
+                                (confirming =
+                                  confirming === `${only.client_id}|${day}`
+                                    ? null
+                                    : `${only.client_id}|${day}`)}
+                            >
+                              <IconBin />
+                            </button>
                           {/if}
                         </div>
                       </div>
+
+                      {#if workable && only && confirming === `${only.client_id}|${day}`}
+                        <!-- Under the row rather than inside it: a confirmation
+                             opened by a press may take room, but it takes it
+                             below, so nothing the row already drew moves
+                             sideways. -->
+                        <div class="mt-2 flex items-center justify-end gap-2">
+                          <span class="meta normal-case">Delete it?</span>
+                          <button
+                            data-delete-confirm
+                            class="meta inline-flex min-h-11 items-center rounded-md border
+                                   border-alarm px-3 text-paper hover:bg-alarm/10"
+                            onclick={() => remove(only, day)}
+                          >
+                            Delete
+                          </button>
+                          <button
+                            class="btn-outline meta"
+                            onclick={() => (confirming = null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      {/if}
 
                       {#if only && editing?.client_id === only.client_id}
                         <div
@@ -1007,15 +1056,13 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
                             <p class="meta pb-2 normal-case">Still running — stop it on Track.</p>
                           {/if}
                           <button
-                            class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
-                                   hover:bg-dusk-lift"
+                            class="btn-filled"
                             onclick={() => saveEdit()}
                           >
                             Save
                           </button>
                           <button
-                            class="meta rounded-md border border-white/15 px-3 py-2
-                                   hover:border-white/40"
+                            class="btn-outline meta"
                             onclick={() => (editing = null)}
                           >
                             Cancel
@@ -1042,3 +1089,4 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
     </div>
   {/if}
 </section>
+</Frame>

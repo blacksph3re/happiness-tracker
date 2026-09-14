@@ -455,18 +455,65 @@ test('the archive prints no count, and the inbox says what the board counts', as
   await expect(page.locator(`[data-list-badge="${archive.id}"]`)).toHaveText('Archive')
 })
 
-test('the lists caption is prose rather than capitals', async ({ page }) => {
-  // Six lines of capitals at 320. `.meta` is unlayered apart from its colour,
-  // so the `normal-case` beside it was dead CSS — and a long sentence of prose
-  // should not be a `.meta` at all.
-  await page.setViewportSize({ width: 320, height: 844 })
+test("the delete question leaves the row's own controls where they were", async ({
+  page,
+  account,
+}) => {
+  // Measured before the fix at 1280, in both themes: the name field went full
+  // width, the swatches and buttons dropped to a second line, and the page grew
+  // from 755px to 863px. A confirmation opened by a press may take room; it may
+  // not rebuild the row around itself.
+  const errands = await makeTodoList(account, 'Errands')
+  await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto('/todos/lists')
-  const caption = page.locator('[data-lists-caption]')
-  await expect(caption).toBeVisible()
-  const type = await caption.evaluate((node) => {
-    const style = getComputedStyle(node)
-    return { transform: style.textTransform, family: style.fontFamily }
-  })
-  expect(type.transform).toBe('none')
-  expect(type.family).not.toMatch(/mono/i)
+  await expect.poll(() => drawn(page), { timeout: 15_000 }).toEqual([
+    'Inbox',
+    'Errands',
+    'Archive',
+  ])
+
+  const measure = () =>
+    page.evaluate((id) => {
+      const row = document.querySelector(`[data-list-row="${id}"]`)
+      const at = (selector) => {
+        const node = row.querySelector(selector)
+        if (!node) return null
+        const box = node.getBoundingClientRect()
+        return [Math.round(box.left), Math.round(box.top), Math.round(box.width)]
+      }
+      return {
+        controls: {
+          name: at('[data-list-name]'),
+          swatch: at('[data-list-colour]'),
+          up: at('[data-list-up]'),
+          share: at('[data-list-share]'),
+          delete: at('[data-list-delete]'),
+        },
+        page: document.documentElement.scrollHeight,
+      }
+    }, errands.id)
+
+  for (const scheme of ['dark', 'light']) {
+    await page.emulateMedia({ colorScheme: scheme })
+    await page.waitForTimeout(100)
+    const before = await measure()
+
+    await page.locator(`[data-list-delete="${errands.id}"]`).click()
+    await expect(page.locator(`[data-list-confirm="${errands.id}"]`)).toBeVisible()
+    const after = await measure()
+
+    expect(after.controls, `the row moved its controls in ${scheme}`).toEqual(before.controls)
+    // One line for the question and its two buttons: 44px and the gap above.
+    expect(after.page - before.page, `the page grew in ${scheme}`).toBeLessThanOrEqual(60)
+    for (const control of [
+      page.locator(`[data-list-delete-confirm="${errands.id}"]`),
+      page.locator(`[data-list-row="${errands.id}"]`).getByRole('button', { name: 'Cancel' }),
+    ]) {
+      expect(await control.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
+    }
+
+    await page.locator(`[data-list-row="${errands.id}"]`).getByRole('button', { name: 'Cancel' }).click()
+    await expect(page.locator(`[data-list-confirm="${errands.id}"]`)).toHaveCount(0)
+    expect(await measure()).toEqual(before)
+  }
 })

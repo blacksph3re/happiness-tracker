@@ -203,7 +203,9 @@ test('a broken run says where it stands rather than vanishing', async ({
   await page.goto('/')
   await expect(page.locator('[data-card="wellbeing"]')).toContainText('Answer')
   await expect(page.locator('[data-habit="tracking"]')).toHaveAttribute('data-run', '0')
-  await expect(page.locator('[data-habit="tracking"] [data-streak]')).toContainText('🔥 —')
+  await expect(page.locator('[data-habit="tracking"] [data-streak]')).toHaveText(
+    '🔥 0 of 1 today'
+  )
 })
 
 test('one day reads as a day, not as days', async ({ page, account }) => {
@@ -361,4 +363,26 @@ test('a card with nothing to report says nothing about lists', async ({ page, ac
   await makeTodo(account, { title: 'later', planned_on: '2026-06-20' })
   await page.goto('/')
   await expect(page.locator('[data-todo-reading]')).toHaveText('Nothing planned')
+})
+
+test('the todo card label breaks as a phrase, never inside itself', async ({ page, account }) => {
+  // At 1280, four cards across, "2 overdue across your lists" left "lists" alone
+  // on a line. The label may move to its own line; its words stay together.
+  await makeTodos(account, [
+    { title: 'late one', planned_on: '2026-06-10', due_on: '2026-06-10' },
+    { title: 'late two', planned_on: '2026-06-11', due_on: '2026-06-11' },
+  ])
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/')
+    const reading = page.locator('[data-todo-reading]')
+    await expect(reading).toHaveText('2 overdue across your lists')
+    const lines = await reading.evaluate((node) => {
+      const label = [...node.querySelectorAll('*')].find((el) => el.textContent.trim() === 'across your lists')
+      const range = document.createRange()
+      range.selectNodeContents(label)
+      return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size
+    })
+    expect(lines, `the label split across lines at ${width}px`).toBe(1)
+  }
 })

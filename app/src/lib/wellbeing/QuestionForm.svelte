@@ -68,9 +68,10 @@
       class="rounded-lg border border-white/15 bg-ink px-4 py-3"
     />
     <span class="meta normal-case">
-      {(draft.prompt ?? '').length}/{PROMPT_MAX_LENGTH} characters — the
-      questionnaire reserves room for this much, so longer questions would shift
-      the answers down the page.
+      <!-- The questionnaire reserves room for this much, so a longer question
+           would push the answers down the page: that is the reason for the cap,
+           and the counter is all the field needs to say. -->
+      {(draft.prompt ?? '').length}/{PROMPT_MAX_LENGTH} characters
     </span>
   </label>
 
@@ -119,7 +120,7 @@
           {#if !frozen && draft.options.length > 2}
             <button
               type="button"
-              class="meta rounded-md border border-white/15 px-3 hover:border-white/40"
+              class="btn-outline meta"
               aria-label={`Remove option ${position + 1}`}
               onclick={() => (draft.options = draft.options.filter((_, i) => i !== position))}
             >
@@ -131,8 +132,7 @@
       <button
         type="button"
         disabled={frozen}
-        class="meta self-start rounded-md border border-white/15 px-3 py-2
-               hover:border-white/40 disabled:opacity-30"
+        class="btn-outline meta self-start disabled:opacity-30"
         onclick={() => (draft.options = [...draft.options, ''])}
       >
         Another option
@@ -236,13 +236,13 @@
   {/if}
 
   <div class="mt-5 flex items-center gap-3">
-    <button type="submit" class="rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift">
+    <button type="submit" class="btn-filled">
       {submitLabel}
     </button>
     {#if oncancel}
       <button
         type="button"
-        class="meta rounded-md border border-white/15 px-4 py-3 hover:border-white/40"
+        class="btn-outline meta"
         onclick={oncancel}
       >
         Cancel

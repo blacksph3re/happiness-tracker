@@ -864,6 +864,16 @@ COLOUR_PATTERN = "^[a-z][a-z0-9-]{0,15}$"
 """Shape of a palette token. A name, not a hex value, so the two halves of the
 app cannot drift apart on what "the fourth colour" is."""
 
+RANK_PATTERN = "^[a-z]+$"
+"""Shape of an ordering key: lowercase letters and nothing else.
+
+The alphabet `between` in `services/todos.py` computes in, mirrored by `isRank`
+in `lib/todos/rank.js`. A key outside it cannot be placed next to, so the server
+refused nothing and then raised on the next insert beside it — and the board
+threw on its next drop there. Refused here, it is a per-intent conflict naming
+the field, like any other payload the server cannot read.
+"""
+
 
 class TagOut(BaseModel):
     """A label over projects, as exposed by the API."""
@@ -1579,7 +1589,9 @@ class TodoListCreate(BaseModel):
     colour: str = Field(default="tide", pattern=COLOUR_PATTERN)
     """A chip palette token."""
 
-    rank: str | None = Field(default=None, max_length=RANK_MAX_LENGTH)
+    rank: str | None = Field(
+        default=None, max_length=RANK_MAX_LENGTH, pattern=RANK_PATTERN
+    )
     """Where it sorts, or null to append after the last list before the archive."""
 
 
@@ -1594,7 +1606,9 @@ class TodoListUpdate(BaseModel):
     colour: str | None = Field(default=None, pattern=COLOUR_PATTERN)
     """New chip palette token."""
 
-    rank: str | None = Field(default=None, max_length=RANK_MAX_LENGTH)
+    rank: str | None = Field(
+        default=None, max_length=RANK_MAX_LENGTH, pattern=RANK_PATTERN
+    )
     """New column order."""
 
     kind: ListKind | None = None
@@ -1662,7 +1676,9 @@ class SyncTodoPayload(BaseModel):
     of taking a colour off and none of `model_fields_set` is involved.
     """
 
-    rank: str | None = Field(default=None, max_length=RANK_MAX_LENGTH)
+    rank: str | None = Field(
+        default=None, max_length=RANK_MAX_LENGTH, pattern=RANK_PATTERN
+    )
     """Order within its column, or null to append at the end of the list.
 
     The client computes this, because only the client knows where the card was
@@ -1709,7 +1725,9 @@ class SyncStepPayload(BaseModel):
     icon: str | None = Field(default=None, max_length=ICON_MAX_LENGTH)
     """An emoji drawn in place of the tickbox."""
 
-    rank: str | None = Field(default=None, max_length=RANK_MAX_LENGTH)
+    rank: str | None = Field(
+        default=None, max_length=RANK_MAX_LENGTH, pattern=RANK_PATTERN
+    )
     """Order within its task, or null to append after the last step."""
 
     done_at: UtcInstant | None = None

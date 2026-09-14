@@ -332,3 +332,169 @@ test.describe('with the transitions the app actually ships', () => {
       .toEqual({ x: 0, y: 0 })
   })
 })
+
+/**
+ * Record where a card is drawn on every frame from its release until it settles.
+ *
+ * Sampled inside the page by `requestAnimationFrame`, because the claim is about
+ * the **path** — a card that ends in its slot having flown in from the top edge
+ * passes every assertion about where it ends. Started before the release and
+ * read back afterwards, so the first frames after the pointer lets go are in it.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {string} title The card to follow.
+ * @param {() => Promise<void>} release Lets go of the card.
+ * @returns {Promise<{release: number, slot: number, tops: number[], left: number[]}>}
+ *   The carried card's top at the moment of release, its slot's top once
+ *   settled, and every drawn top and left after the release.
+ */
+async function settlePath(page, title, release) {
+  const id = await taskCard(page, title).getAttribute('data-client-id')
+  // Two frames, so the last pointer move has been drawn before it is read.
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
+  const releaseTop = await page.evaluate(
+    (clientId) => document.querySelector(`article[data-client-id="${clientId}"]`).getBoundingClientRect().top,
+    id
+  )
+  await page.evaluate((clientId) => {
+    window.__path = []
+    window.__released = false
+    const until = { at: null }
+    const frame = () => {
+      const node = document.querySelector(`article[data-client-id="${clientId}"]`)
+      if (window.__released && node && !node.hasAttribute('data-carrying')) {
+        const box = node.getBoundingClientRect()
+        window.__path.push({ top: box.top, left: box.left })
+        until.at ??= performance.now() + 900
+      }
+      if (until.at === null || performance.now() < until.at) requestAnimationFrame(frame)
+      else window.__pathDone = true
+    }
+    window.__pathDone = false
+    requestAnimationFrame(frame)
+  }, id)
+  await page.evaluate(() => {
+    window.__released = true
+  })
+  await release()
+  await page.waitForFunction(() => window.__pathDone === true, null, { timeout: 5_000 })
+  const path = await page.evaluate(() => window.__path)
+  const slot = await page.evaluate(
+    (clientId) =>
+      document.querySelector(`article[data-client-id="${clientId}"]`).parentElement.getBoundingClientRect().top,
+    id
+  )
+  return { release: releaseTop, slot, tops: path.map((one) => one.top), left: path.map((one) => one.left) }
+}
+
+/** Switch transitions on for this page, and prove they are on. */
+async function motionOn(page) {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(false)
+}
+
+/**
+ * Every drawn top stays between where the card was let go and where it belongs.
+ *
+ * A negative claim, so it is asserted on the worst frame rather than on any.
+ */
+function expectSettlesBetween(path, label) {
+  const low = Math.min(path.release, path.slot) - 3
+  const high = Math.max(path.release, path.slot) + 3
+  const worst = path.tops.reduce(
+    (far, top) => (Math.max(low - top, top - high) > Math.max(low - far, far - high) ? top : far),
+    path.tops[0]
+  )
+  console.log(label, JSON.stringify({ release: path.release, slot: path.slot, tops: path.tops.map(Math.round) }))
+  expect(path.tops.length, `${label}: no frames sampled`).toBeGreaterThan(0)
+  expect(worst, `${label}: a frame drawn outside ${low}..${high}`).toBeGreaterThanOrEqual(low)
+  expect(worst, `${label}: a frame drawn outside ${low}..${high}`).toBeLessThanOrEqual(high)
+  expect(Math.abs(path.tops.at(-1) - path.slot), `${label}: did not end in its slot`).toBeLessThanOrEqual(1)
+}
+
+test.describe('the settle, with motion on', () => {
+  const three = [
+    { title: 'first', rank: 'b' },
+    { title: 'second', rank: 'c' },
+    { title: 'third', rank: 'd' },
+  ]
+
+  for (const grouping of ['plain', 'date', 'board']) {
+    test(`a card dropped back on its own slot settles from the release point, in ${grouping}`, async ({
+      page,
+      account,
+    }) => {
+      await makeTodos(account, three)
+      await openTasks(page, account, grouping)
+      await motionOn(page)
+      await expect(taskCard(page, 'third')).toBeVisible()
+
+      const held = await liftByCentre(page, taskCard(page, 'second'))
+      // A little off its slot, and still over it.
+      await page.mouse.move(held.x + 14, held.y + 9, { steps: 4 })
+      await expect(carried(page)).toHaveCount(1)
+      const path = await settlePath(page, 'second', () => page.mouse.up())
+      expectSettlesBetween(path, `same slot, ${grouping}`)
+      // Nothing was written, so nothing moved.
+      await expect(page.locator('[data-title]')).toHaveText(['first', 'second', 'third'])
+    })
+  }
+
+  test('a card let go of exactly over its own slot stays there, in plain', async ({ page, account }) => {
+    // `liftByCentre` takes the grip at the lift, so a release without moving
+    // again is a release in the slot itself: nothing to animate, and the carry
+    // that was being eased away must not be left to fly the card in.
+    await makeTodos(account, three)
+    await openTasks(page, account, 'plain')
+    await motionOn(page)
+    await expect(taskCard(page, 'third')).toBeVisible()
+
+    await liftByCentre(page, taskCard(page, 'second'))
+    await expect(carried(page)).toHaveCount(1)
+    const path = await settlePath(page, 'second', () => page.mouse.up())
+    expectSettlesBetween(path, 'in place, plain')
+    await expect(page.locator('[data-title]')).toHaveText(['first', 'second', 'third'])
+  })
+
+  test('a card dropped one slot away settles from the release point, in plain', async ({ page, account }) => {
+    await makeTodos(account, three)
+    await openTasks(page, account, 'plain')
+    await motionOn(page)
+    await expect(taskCard(page, 'third')).toBeVisible()
+
+    const below = centre(await taskCard(page, 'third').boundingBox())
+    await liftByCentre(page, taskCard(page, 'first'))
+    // Above the third card's midpoint, so the drop is the slot between second and third.
+    await page.mouse.move(below.x, below.y - 8, { steps: 8 })
+    await expect(carried(page)).toHaveCount(1)
+    const path = await settlePath(page, 'first', () => page.mouse.up())
+    expectSettlesBetween(path, 'moved, plain')
+    // It flew from the release point, rather than snapping into the slot.
+    expect(Math.abs(path.tops[0] - path.release), 'the first frame after release is not at the release point').toBeLessThanOrEqual(
+      Math.max(4, Math.abs(path.release - path.slot) / 2)
+    )
+    await expect(page.locator('[data-title]')).toHaveText(['second', 'first', 'third'])
+  })
+
+  test.describe('at phone width, by touch', () => {
+    test.use({ viewport: { width: 390, height: 844 } })
+
+    test('a card dropped back on its own slot settles from the release point, in plain', async ({ page, account }) => {
+      await makeTodos(account, three)
+      await openTasks(page, account, 'plain')
+      await motionOn(page)
+      const card = taskCard(page, 'second')
+      await expect(taskCard(page, 'third')).toBeVisible()
+      const box = await card.boundingBox()
+      const start = { pointerType: 'touch', pointerId: 31, isPrimary: true, button: 0, clientX: box.x + 60, clientY: box.y + box.height / 2 }
+      await card.dispatchEvent('pointerdown', start)
+      // A touch press lifts on its own timer, and a move before it fires is a
+      // scroll that cancels the press — so wait for the lift, never for a delay.
+      await expect(carried(page)).toHaveCount(1)
+      const over = { ...start, clientX: start.clientX + 10, clientY: start.clientY + 8 }
+      await card.dispatchEvent('pointermove', over)
+      const path = await settlePath(page, 'second', () => card.dispatchEvent('pointerup', over))
+      expectSettlesBetween(path, 'same slot, plain, touch')
+    })
+  })
+})

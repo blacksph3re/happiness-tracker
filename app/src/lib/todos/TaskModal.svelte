@@ -1,4 +1,6 @@
 <script>
+  import { onDestroy, tick as painted } from 'svelte'
+
   import ColourPicker from '../ColourPicker.svelte'
   import IconPicker from '../IconPicker.svelte'
   import { formatDuration, formatRunning, nowUtc } from '../clock.js'
@@ -14,6 +16,7 @@
     todoLists,
     todos as todoStore,
   } from '../store.js'
+  import { openLayer } from '../router.js'
   import { pushToast } from '../toasts.js'
   import { PRIORITIES, PRIORITY_LABELS } from '../todo-settings.js'
   import {
@@ -27,7 +30,7 @@
   } from './fields.js'
   import { listOrder } from './groupings.js'
   import { renderMarkdown } from './markdown.js'
-  import { between, compareRank } from './rank.js'
+  import { between, compareRank, isRank } from './rank.js'
   import { startFocus } from './start-focus.js'
   import { justTicked, markTicked } from './tick.js'
   import TickMark from './TickMark.svelte'
@@ -71,6 +74,17 @@
     onclose = () => {},
   } = $props()
 
+  /**
+   * The history entry that makes Back close the modal rather than leave the page.
+   *
+   * Pushed as the modal opens; every other way out gives it back through
+   * `release`, or the next Back would land on the same page and do nothing.
+   * Starting a pomodoro needs no release: its navigation takes the entry's
+   * place, and the page going takes the modal with it.
+   */
+  const releaseHistory = openLayer(() => close())
+  onDestroy(releaseHistory)
+
   /** How long typing stops before it becomes a write. As debounced as preferences. */
   const TYPING_DELAY = 600
 
@@ -81,6 +95,31 @@
   let previewing = $state(false)
   /** Whether Delete has asked its question. */
   let confirming = $state(false)
+
+  /** Delete, and the confirmation's Cancel, for the focus to move between. */
+  let deleteButton = $state(null)
+  let keepButton = $state(null)
+
+  /**
+   * Ask before deleting, with the focus on the answer that keeps the task.
+   *
+   * The question replaces the button that raised it, so a press from the
+   * keyboard left the focus on nothing — and Escape then closed the whole
+   * modal rather than the question. Cancel rather than the confirming Delete,
+   * so a second Enter is the safe one.
+   */
+  async function askDelete() {
+    confirming = true
+    await painted()
+    keepButton?.focus()
+  }
+
+  /** Take the question back, and give the focus back to the Delete that asked it. */
+  async function keepTask() {
+    confirming = false
+    await painted()
+    deleteButton?.focus()
+  }
   /** A new step's title, the only thing on this screen that is not a field. */
   let stepTitle = $state('')
   /** Now, in epoch milliseconds, republished while something is running. */
@@ -165,6 +204,40 @@
   })
 
   /**
+   * Grow a textarea to hold its whole value, and shrink it back.
+   *
+   * Refitted on every keystroke, on a value arriving from elsewhere (the
+   * action's parameter), and when the box changes *width* — which is when the
+   * words rewrap, and also how the first fit happens: the modal is laid out
+   * after this mounts. Width only, because the fit itself changes the height,
+   * and an observer reacting to that would be answering its own write.
+   *
+   * @param {HTMLTextAreaElement} node
+   */
+  function grow(node) {
+    let width = -1
+    const fit = () => {
+      node.style.height = 'auto'
+      node.style.height = `${node.scrollHeight + node.offsetHeight - node.clientHeight}px`
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === width) return
+      width = entry.contentRect.width
+      fit()
+    })
+    observer.observe(node)
+    node.addEventListener('input', fit)
+    fit()
+    return {
+      update: fit,
+      destroy() {
+        observer.disconnect()
+        node.removeEventListener('input', fit)
+      },
+    }
+  }
+
+  /**
    * Write the whole task with one field changed.
    *
    * The whole row, not a patch: `todo.upsert` is a statement of what the task
@@ -236,6 +309,7 @@
    */
   async function close() {
     await Promise.all(Object.keys(typed).map(commit))
+    releaseHistory()
     dialog?.close()
     onclose()
   }
@@ -253,6 +327,20 @@
     if (task) await startFocus(task)
   }
 
+  /**
+   * A neighbour's key if the encoding can read it, or no bound at all.
+   *
+   * A step ranked by an older write outside the alphabet (`m9`) would make
+   * `between` throw on the press; passed over, the step still moves and the
+   * key it writes is well-formed.
+   *
+   * @param {string|null} key
+   * @returns {string|null}
+   */
+  function readable(key) {
+    return isRank(key) ? key : null
+  }
+
   /** Move a step one place up or down, which is a rank between its new neighbours. */
   function reorder(step, delta) {
     const at = steps.findIndex((one) => one.client_id === step.client_id)
@@ -260,7 +348,7 @@
     if (to < 0 || to >= steps.length) return
     const before = delta < 0 ? (steps[to - 1]?.rank ?? null) : steps[to].rank
     const after = delta < 0 ? steps[to].rank : (steps[to + 1]?.rank ?? null)
-    saveStep(task.client_id, { ...step, rank: between(before, after) })
+    saveStep(task.client_id, { ...step, rank: between(readable(before), readable(after)) })
   }
 
   function addStep() {
@@ -269,7 +357,7 @@
     stepTitle = ''
     saveStep(task.client_id, {
       title,
-      rank: between(steps.at(-1)?.rank ?? null, null),
+      rank: between(readable(steps.at(-1)?.rank ?? null), null),
     })
   }
 
@@ -325,6 +413,7 @@
     for (const handle of timers.values()) clearTimeout(handle)
     timers.clear()
     await removeTodo(id)
+    releaseHistory()
     dialog?.close()
     onclose()
   }
@@ -349,13 +438,21 @@
   oncancel={(event) => {
     // The default would close the dialog before anything pending is written.
     event.preventDefault()
+    // Escape while Delete is asking takes back the question, not the modal.
+    if (confirming) {
+      keepTask()
+      return
+    }
     close()
   }}
 >
   {#if task}
     <div class="flex flex-col gap-5 p-5">
-      <header class="flex items-start gap-3">
-        <div class="min-w-0 flex-1">
+      <!-- The title takes the modal's whole width, and Close sits on the kind's
+           line above it. Beside the title, Close took 90px of a 254px row at
+           320 and a 138-character title ran to ten lines in a 178px column. -->
+      <header class="flex flex-col gap-1">
+        <div class="flex items-center justify-between gap-3">
           <!-- The word and nothing else. It used to carry the step counter,
                which read as `TASK 3/10` — *task 3 of 10*, which is not a thing
                this app has — while the same number sat under a heading reading
@@ -363,25 +460,42 @@
                two numbers on one screen come to disagree, and this was the one
                lying about what it counted. -->
           <p class="meta" data-task-kind>{done ? 'Done' : 'Task'}</p>
-          <input
+          <button
+            data-close
+            aria-label="Close"
+            class="btn-outline meta shrink-0"
+            onclick={close}
+          >
+            Close
+          </button>
+        </div>
+          <!-- A textarea so a long title wraps rather than scrolling sideways
+               inside one line; it is still one line of *text*. Enter adds
+               nothing, as it did in the input, and a pasted line break
+               becomes a space — replaced one character for one, so the caret
+               stays where it was. -->
+          <textarea
             data-field="title"
             aria-label="Task title"
+            rows="1"
             value={typed.title ?? task.title}
-            oninput={(event) => type('title', event.currentTarget.value)}
+            use:grow={typed.title ?? task.title}
+            onkeydown={(event) => {
+              if (event.key === 'Enter' && !event.isComposing) event.preventDefault()
+            }}
+            oninput={(event) => {
+              const node = event.currentTarget
+              if (node.value.includes('\n')) {
+                const caret = node.selectionStart
+                node.value = node.value.replaceAll('\n', ' ')
+                node.setSelectionRange(caret, caret)
+              }
+              type('title', node.value)
+            }}
             onblur={() => commit('title')}
-            class="mt-1 w-full rounded-lg border border-white/15 bg-ink-soft px-3 py-2
-                   text-lg font-semibold tracking-tight"
-          />
-        </div>
-        <button
-          data-close
-          aria-label="Close"
-          class="meta shrink-0 rounded-md border border-white/15 px-3 py-2
-                 hover:border-white/40"
-          onclick={close}
-        >
-          Close
-        </button>
+            class="block w-full resize-none overflow-hidden rounded-lg border border-white/15
+                   bg-ink-soft px-3 py-2 text-lg font-semibold tracking-tight"
+          ></textarea>
       </header>
 
       <!-- Markdown, written in a textarea and read through `marked` and
@@ -409,7 +523,7 @@
               <!-- eslint-disable-next-line svelte/no-at-html-tags -->
               {@html renderMarkdown(description)}
             {:else}
-              <span class="meta text-haze">Nothing written yet.</span>
+              <span class="meta text-haze">No notes.</span>
             {/if}
           </div>
         {:else}
@@ -433,7 +547,11 @@
            each field states its own value underneath it in the app's spelling,
            which is `dayLabel`, the function the cards use. Two readings of one
            value, from one function, so they cannot appear to disagree. -->
-      <div class="grid gap-3 sm:grid-cols-2">
+      <!-- `grid-cols-1` is `minmax(0, 1fr)`, and `min-w-0` on every field: a grid
+           item and a flex item both default to their content's minimum, and a
+           native date input at the coarse pointer's 16px has one wider than a
+           320px modal — five fields ended 32px past its edge. -->
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label class="flex flex-col gap-1.5">
           <span class="meta">Planned</span>
           <input
@@ -452,7 +570,7 @@
               }
               write({ planned_on: value })
             }}
-            class="rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+            class="w-full min-w-0 rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
           />
           <span class="meta" data-reads="planned_on">{dayLabel(task.planned_on)}</span>
         </label>
@@ -465,7 +583,7 @@
               data-field="planned_at"
               value={wallClock(task.planned_at) ?? ''}
               onchange={(event) => write({ planned_at: event.currentTarget.value || null })}
-              class="flex-1 rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+              class="min-w-0 flex-1 rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
             />
             {#if task.planned_at}
               <button
@@ -491,7 +609,7 @@
               data-field="due_on"
               value={task.due_on ?? ''}
               onchange={(event) => write({ due_on: event.currentTarget.value || null })}
-              class="flex-1 rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+              class="min-w-0 flex-1 rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
             />
             {#if task.due_on}
               <button
@@ -515,7 +633,7 @@
             data-field="priority"
             value={task.priority ?? ''}
             onchange={(event) => write({ priority: event.currentTarget.value || null })}
-            class="rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+            class="w-full min-w-0 rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
           >
             <option value="">None</option>
             {#each PRIORITIES as priority (priority)}
@@ -543,7 +661,7 @@
               value={typed.duration_minutes ?? task.duration_minutes ?? ''}
               oninput={(event) => type('duration_minutes', event.currentTarget.value)}
               onblur={() => commit('duration_minutes')}
-              class="flex-1 rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+              class="min-w-0 flex-1 rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
             />
             <span class="meta self-center">minutes</span>
           </span>
@@ -555,16 +673,12 @@
             data-field="list_id"
             value={task.list_id}
             onchange={(event) => moveTo(Number(event.currentTarget.value))}
-            class="rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
+            class="w-full min-w-0 rounded-lg border border-white/15 bg-ink-soft px-3 py-2 text-sm"
           >
             {#each listOptions as one (one.id)}
               <option value={one.id}>{one.name}</option>
             {/each}
           </select>
-          <!-- Said rather than prevented: choosing the archive here is the same
-               move *Won't do* makes, and a control that quietly means something
-               else is worse than one that says what it means. -->
-          <span class="meta normal-case">Choosing the archive is the same as won’t do.</span>
         </label>
       </div>
 
@@ -796,21 +910,21 @@
         <div class="flex flex-wrap items-center gap-2">
         <button
           data-tick-task
-          class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift"
+          class="btn-filled"
           onclick={() => write(done ? untick(task) : tick(task, now))}
         >
           {done ? 'Untick' : 'Tick'}
         </button>
         <button
           data-wont-do
-          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+          class="btn-outline meta"
           onclick={wontDo}
         >
           Won’t do
         </button>
         <button
           data-start-pomodoro
-          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+          class="btn-outline meta"
           onclick={beginFocus}
         >
           Start a pomodoro
@@ -823,23 +937,25 @@
           <span class="meta hidden normal-case sm:inline">Delete it?</span>
           <button
             data-delete-confirm
-            class="meta rounded-md border border-alarm px-3 py-2 text-paper
-                   transition hover:bg-alarm/10"
+            class="btn-danger meta border-alarm text-paper"
             onclick={remove}
           >
             Delete
           </button>
           <button
-            class="meta rounded-md border border-white/20 px-3 py-2 hover:border-white/40"
-            onclick={() => (confirming = false)}
+            bind:this={keepButton}
+            data-delete-cancel
+            class="btn-outline meta"
+            onclick={keepTask}
           >
             Cancel
           </button>
         {:else}
           <button
+            bind:this={deleteButton}
             data-delete
-            class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
-            onclick={() => (confirming = true)}
+            class="btn-danger meta"
+            onclick={askDelete}
           >
             Delete
           </button>
@@ -869,7 +985,7 @@
       <p class="text-sm text-haze">This task is no longer on this device.</p>
       <button
         data-close
-        class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+        class="btn-outline meta"
         onclick={close}
       >
         Close

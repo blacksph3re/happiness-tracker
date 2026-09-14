@@ -1,8 +1,10 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/wellbeing/column.js'
+  import { get } from 'svelte/store'
   import * as echarts from 'echarts'
   import { chart as chartAction } from '../../lib/chart-action.js'
   import {
-    PALETTE,
     boxOptions,
     lineOptions,
     radarOptions,
@@ -26,6 +28,8 @@
     preferenceSection,
     ensureVariables,
     persistPreferences,
+    preferences,
+    ready as hydrated,
     variables as variableStore,
   } from '../../lib/store.js'
   import { dayLabel, today } from '../../lib/day.js'
@@ -187,8 +191,24 @@
     load()
   })
 
+  /**
+   * Which controls the reader has already moved, so the load leaves them.
+   *
+   * **A choice made while the preferences read is outstanding is a real
+   * choice.** `load` assigns after several awaits, so Totals picked in that
+   * gap went back to Over time when the stored view landed. Per control, as on
+   * the todo board. Not `$state`: it is read after an await, by code that must
+   * not re-run because of it.
+   */
+  const steered = new Set()
+
   /** Load the plottable variables and the raw answers behind them. */
   async function load() {
+    // The device's own copy first, so a slow start paints the remembered view
+    // rather than the default; the confirmed read goes over it below.
+    await hydrated()
+    const held = get(preferences)
+    if (held) apply(preferenceSection(held, 'stats'))
     // Awaited for the defaults below, which are chosen once from what is there
     // at the time. Neither result is assigned to component state — `variables`
     // and `rows` read the stores, and assigning here is exactly what used to
@@ -201,23 +221,37 @@
     // `habits` reads the store, so a later change redraws the rows.
     ensureAllCatalogues()
     const axes = loadedVariables.filter((v) => v.roles.includes('axis'))
-    chosen = new Set(axes.filter((v) => v.origin === 'asked').map((v) => v.key))
+    if (!steered.has('chosen') && !Array.isArray(held && preferenceSection(held, 'stats').chosen)) {
+      chosen = new Set(axes.filter((v) => v.origin === 'asked').map((v) => v.key))
+    }
 
-    const stored = preferenceSection(await ensurePreferences(), 'stats')
-    if (stored.view) view = stored.view
+    apply(preferenceSection(await ensurePreferences(), 'stats'))
+    loaded = true
+    ready = true
+  }
+
+  /**
+   * Take one stored view, leaving every control the reader has already moved.
+   *
+   * @param {object} stored The `stats` section of the preferences document.
+   */
+  function apply(stored) {
+    const free = (key) => !steered.has(key)
+    if (free('view') && stored.view) view = stored.view
     // A view named in the URL wins over the stored one, and is applied after it
     // so arriving from a habit chip lands on the streaks whatever was last left
-    // open. Read once here rather than as a `$derived`: it is a starting point,
-    // not a binding, so tapping another tab afterwards has to stick.
-    const asked = $query.get('view')
-    if (asked && VIEWS.some(([key]) => key === asked)) view = asked
-    if (Array.isArray(stored.chosen)) chosen = new Set(stored.chosen)
-    if (Number.isFinite(stored.windowDays)) windowDays = stored.windowDays
-    if (Number.isFinite(stored.smoothing)) smoothing = stored.smoothing
+    // open. Read here rather than as a `$derived`: it is a starting point, not
+    // a binding, so tapping another tab afterwards has to stick — which is what
+    // `steered` now says.
+    const asked = get(query).get('view')
+    if (free('view') && asked && VIEWS.some(([key]) => key === asked)) view = asked
+    if (free('chosen') && Array.isArray(stored.chosen)) chosen = new Set(stored.chosen)
+    if (free('windowDays') && Number.isFinite(stored.windowDays)) windowDays = stored.windowDays
+    if (free('smoothing') && Number.isFinite(stored.smoothing)) smoothing = stored.smoothing
     // A stored 52 is what an account that used the old control has; it is
     // clamped rather than ignored, so the page opens on the nearest thing
     // to what was left rather than silently on the default.
-    if (Number.isFinite(stored.streakSpan)) {
+    if (free('streakSpan') && Number.isFinite(stored.streakSpan)) {
       streakSpan = SPANS.includes(stored.streakSpan)
         ? stored.streakSpan
         : SPANS.reduce((best, span) =>
@@ -226,15 +260,13 @@
               : best
           )
     }
-    if (stored.filters && typeof stored.filters === 'object') {
+    if (free('filters') && stored.filters && typeof stored.filters === 'object') {
       filters = Object.fromEntries(
         Object.entries(stored.filters)
           .filter(([, values]) => Array.isArray(values) && values.length)
           .map(([key, values]) => [key, new Set(values)])
       )
     }
-    loaded = true
-    ready = true
   }
 
   /** The view state worth remembering, in a stable shape for comparison. */
@@ -360,6 +392,7 @@
 
   /** Add or remove one choice from one filter dimension. */
   function toggleFilter(key, choiceId) {
+    steered.add('filters')
     const next = new Set(filters[key] ?? [])
     if (next.has(choiceId)) next.delete(choiceId)
     else next.add(choiceId)
@@ -524,6 +557,7 @@
   })
 
   function toggle(key) {
+    steered.add('chosen')
     const next = new Set(chosen)
     if (next.has(key)) next.delete(key)
     else next.add(key)
@@ -554,7 +588,8 @@
   })
 </script>
 
-<section class="mx-auto w-full max-w-5xl px-5 py-8">
+<Frame column={COLUMN}>
+<section>
   <header class="mb-6">
     <p class="meta">{allDays.length} {allDays.length === 1 ? 'day' : 'days'} recorded</p>
     <h1 class="mt-1 text-3xl font-bold tracking-tight">Patterns</h1>
@@ -579,7 +614,11 @@
                  {activeView === key
             ? 'border-ember bg-ember/10 text-paper'
             : 'border-white/15 hover:border-white/40'}"
-          onclick={() => (view = key)}
+          aria-pressed={activeView === key}
+          onclick={() => {
+            steered.add('view')
+            view = key
+          }}
         >
           {label}
         </button>
@@ -618,6 +657,7 @@
                 aria-pressed={streakSpan === span}
                 data-span={span}
                 onclick={() => {
+                  steered.add('streakSpan')
                   streakSpan = span
                   // Back to the present on a change of span: a window measured
                   // in periods means a different stretch of calendar at each
@@ -692,13 +732,19 @@
               <span class="flex gap-3">
                 <button
                   class="meta underline underline-offset-4 hover:text-paper"
-                  onclick={() => (chosen = new Set(numeric.map((v) => v.key)))}
+                  onclick={() => {
+                    steered.add('chosen')
+                    chosen = new Set(numeric.map((v) => v.key))
+                  }}
                 >
                   All
                 </button>
                 <button
                   class="meta underline underline-offset-4 hover:text-paper"
-                  onclick={() => (chosen = new Set())}
+                  onclick={() => {
+                    steered.add('chosen')
+                    chosen = new Set()
+                  }}
                 >
                   None
                 </button>
@@ -728,7 +774,10 @@
               {#if activeFilters.length > 0}
                 <button
                   class="meta underline underline-offset-4 hover:text-paper"
-                  onclick={() => (filters = {})}
+                  onclick={() => {
+                    steered.add('filters')
+                    filters = {}
+                  }}
                 >
                   Clear all
                 </button>
@@ -796,7 +845,10 @@
             min="1"
             max={maxWindow}
             value={windowLength}
-            oninput={(event) => (windowDays = Number(event.currentTarget.value))}
+            oninput={(event) => {
+              steered.add('windowDays')
+              windowDays = Number(event.currentTarget.value)
+            }}
             class="h-2 w-full cursor-pointer appearance-none rounded-full bg-dusk-deep accent-ember"
           />
         </label>
@@ -818,6 +870,7 @@
               min="1"
               max={maxSmoothing}
               bind:value={smoothing}
+              oninput={() => steered.add('smoothing')}
               class="h-2 w-full cursor-pointer appearance-none rounded-full bg-dusk-deep accent-ember"
             />
           </label>
@@ -896,9 +949,7 @@
         </ul>
         {#if ranked.some((pair) => !pair.ranked)}
           <p class="meta mt-2 normal-case text-haze">
-            Dimmed pairs were answered together on fewer than {MINIMUM_OVERLAP} days,
-            or one of them never varied. They are still plottable; the number under
-            them is not worth ranking.
+            Dimmed: fewer than {MINIMUM_OVERLAP} shared days, or no variation.
           </p>
         {/if}
       {/if}
@@ -946,7 +997,7 @@
             <li class="flex min-w-0 items-baseline gap-2 text-sm">
               <span
                 class="numeral inline-block w-5 shrink-0 text-right"
-                style:color={PALETTE[index % PALETTE.length]}
+                style:color="var(--color-chart-{(index % 6) + 1})"
               >
                 {index + 1}
               </span>
@@ -960,3 +1011,4 @@
     {/if}
   {/if}
 </section>
+</Frame>

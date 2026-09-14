@@ -1,4 +1,6 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/time/column.js'
   import { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
   import ProjectCard from '../../lib/time/ProjectCard.svelte'
@@ -215,7 +217,8 @@ import { elapsed } from '../../lib/time/duration.js'
   }
 </script>
 
-<section class="mx-auto w-full max-w-3xl px-5 py-8">
+<Frame column={COLUMN}>
+<section>
   <p class="meta">What the hours went to</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">Track</h1>
 
@@ -242,8 +245,7 @@ import { elapsed } from '../../lib/time/duration.js'
           type="submit"
           disabled={offline || !newName.trim()}
           title={hint}
-          class="flex items-center gap-2 rounded-lg bg-dusk px-5 py-3 font-semibold
-                 hover:bg-dusk-lift disabled:cursor-not-allowed disabled:opacity-30"
+          class="btn-filled flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-30"
         >
           <IconPlus class="size-4" />
           Add project
@@ -294,7 +296,7 @@ import { elapsed } from '../../lib/time/duration.js'
       <a
         href="/time/projects"
         use:link
-        class="meta rounded-md border border-white/15 px-4 py-2.5 hover:border-white/40"
+        class="btn-outline meta"
       >
         Manage projects →
       </a>
@@ -307,3 +309,4 @@ import { elapsed } from '../../lib/time/duration.js'
     {/if}
   {/if}
 </section>
+</Frame>

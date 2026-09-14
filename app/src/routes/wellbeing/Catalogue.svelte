@@ -1,4 +1,6 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/wellbeing/column.js'
   import AdminOffline, { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
@@ -445,11 +447,12 @@
   }
 </script>
 
-<section class="mx-auto w-full max-w-4xl px-5 py-8">
-  <p class="meta">What everyone answers</p>
+<Frame column={COLUMN}>
+<section>
+  <p class="meta">What you answer</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">Questions</h1>
 
-  <AdminOffline does="Questions are the same for everyone who answers them" />
+  <AdminOffline />
 
   {#if loading}
     <p class="meta">Loading…</p>
@@ -467,8 +470,7 @@
           class="rounded-md border border-ember bg-ink-soft px-3 py-2 text-sm"
         />
         <button
-          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                 disabled:opacity-30"
+          class="btn-outline meta disabled:opacity-30"
           disabled={offline || !renameValue.trim()}
           title={hint}
           onclick={renameCatalogue}
@@ -476,7 +478,7 @@
           Save
         </button>
         <button
-          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+          class="btn-outline meta"
           onclick={() => (renaming = false)}
         >
           Cancel
@@ -498,8 +500,7 @@
             <button
               disabled={offline}
               title={hint}
-              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                     disabled:cursor-not-allowed disabled:opacity-40"
+              class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-40"
               onclick={startRename}
             >
               Rename
@@ -553,8 +554,7 @@
           <div class="flex shrink-0 items-stretch gap-2">
             <span class="flex items-stretch gap-1">
               <button
-                class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
-                       disabled:cursor-not-allowed disabled:opacity-30"
+                class="btn-outline meta w-11 px-0 disabled:cursor-not-allowed disabled:opacity-30"
                 aria-label="Move {question.prompt} earlier"
                 disabled={offline || position === 0}
                 title={hint}
@@ -563,8 +563,7 @@
                 ↑
               </button>
               <button
-                class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
-                       disabled:cursor-not-allowed disabled:opacity-30"
+                class="btn-outline meta w-11 px-0 disabled:cursor-not-allowed disabled:opacity-30"
                 aria-label="Move {question.prompt} later"
                 disabled={offline || position === questions.length - 1}
                 title={hint}
@@ -577,8 +576,8 @@
               disabled={offline}
               title={hint || 'Edit'}
               aria-label="Edit"
-              class="meta rounded-md border border-white/15 p-2 hover:border-white/40
-                     disabled:cursor-not-allowed disabled:opacity-40"
+              class="meta flex w-11 items-center justify-center rounded-md border border-white/15
+                     hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-40"
               onclick={() => edit(question)}
             >
               <IconPencil />
@@ -586,8 +585,7 @@
             <button
               disabled={offline}
               title={hint}
-              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                     disabled:cursor-not-allowed disabled:opacity-40"
+              class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-40"
               onclick={() => setActive(question, !question.active)}
             >
               {question.active ? 'Deactivate' : 'Reactivate'}
@@ -607,7 +605,7 @@
         </li>
       {:else}
         <li class="rounded-lg border border-white/10 bg-ink-soft px-5 py-8 text-haze">
-          No questions yet. Add the first one below.
+          No questions yet.
         </li>
       {/each}
     </ul>
@@ -615,8 +613,7 @@
     <div class="mt-10">
       <h2 class="font-semibold">Scores</h2>
       <p class="mt-1 mb-3 text-sm text-haze">
-        A score is worked out from the answers above rather than asked, so changing
-        one applies to every day already recorded.
+        Calculated from your answers; changes apply to past days too.
       </p>
 
       <ul class="flex flex-col gap-2">
@@ -647,8 +644,7 @@
               <button
                 disabled={offline}
                 title={hint}
-                class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                     disabled:cursor-not-allowed disabled:opacity-40"
+                class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-40"
                 onclick={() => setScoreActive(score, !score.active)}
               >
                 {score.active ? 'Deactivate' : 'Reactivate'}
@@ -689,8 +685,7 @@
         </div>
       {:else}
         <button
-          class="meta mt-3 flex items-center gap-2 rounded-md border border-white/15 px-4
-                 py-2 hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-30"
+          class="btn-outline meta mt-3 flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-30"
           disabled={offline || scorable.length === 0}
           title={hint}
           onclick={() => {
@@ -714,3 +709,4 @@
     </div>
   {/if}
 </section>
+</Frame>

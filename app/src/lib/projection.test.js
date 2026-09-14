@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest'
 import {
   archivedAway,
   mergeDuringRead,
+  unconfirmed,
   overlayAnswers,
   overlayEntries,
   overlayTodos,
@@ -501,5 +502,40 @@ describe('what outran a read of a range', () => {
       'earlier',
       'now',
     ])
+  })
+})
+
+describe('unconfirmed', () => {
+  const keyOf = (intent) => (intent.kind.startsWith('pomodoro.') ? intent.client_id : undefined)
+  const mine = new Map([
+    ['sent', { client_id: 'sent' }],
+    ['waiting', { client_id: 'waiting' }],
+    ['gone', null],
+  ])
+
+  test('keeps a write whose intent is still queued, and drops what has drained', () => {
+    // `waiting` is still in the outbox, so a reply may have been read before the
+    // server committed it; `sent` and the tombstone have both been confirmed.
+    const queue = [{ kind: 'pomodoro.upsert', client_id: 'waiting' }]
+    expect([...unconfirmed(mine, queue, keyOf).keys()]).toEqual(['waiting'])
+  })
+
+  test('a queued tombstone is kept as a tombstone', () => {
+    const queue = [{ kind: 'pomodoro.delete', client_id: 'gone' }]
+    expect([...unconfirmed(mine, queue, keyOf)]).toEqual([['gone', null]])
+  })
+
+  test('an intent about another collection keeps nothing', () => {
+    const queue = [{ kind: 'entry.upsert', client_id: 'waiting' }]
+    expect(unconfirmed(mine, queue, keyOf).size).toBe(0)
+  })
+
+  test('an intent that cannot name its row keeps the whole map', () => {
+    const queue = [{ kind: 'pomodoro.upsert', client_id: 'other' }, { kind: 'step.delete' }]
+    const kept = unconfirmed(mine, queue, (intent) =>
+      intent.kind === 'step.delete' ? true : keyOf(intent)
+    )
+    expect([...kept.keys()]).toEqual(['sent', 'waiting', 'gone'])
+    expect(kept).not.toBe(mine)
   })
 })

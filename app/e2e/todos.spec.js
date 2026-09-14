@@ -705,7 +705,7 @@ test('moving the past to later takes the open tasks, in one request, to the end 
 
   await sweep.click()
   await expect(page.locator('[data-sweep-asking="past"]')).toHaveText(
-    'Move 3 past tasks to Later? They will be planned for Wed, Jun 17.'
+    'Move 3 past tasks to Later (Wed, Jun 17)?'
   )
 
   const posts = syncPosts(page)
@@ -768,7 +768,7 @@ test('the move asks first, and cancelling moves nothing', async ({ page, account
   await openTasks(page, account, 'date')
   await page.locator('[data-sweep="past"]').click()
   await expect(page.locator('[data-sweep-asking="past"]')).toHaveText(
-    'Move 1 past task to Later? They will be planned for Wed, Jun 17.'
+    'Move 1 past task to Later (Wed, Jun 17)?'
   )
   await page.locator('[data-sweep-cancel="past"]').click()
   await expect(page.locator('[data-sweep-asking="past"]')).toHaveCount(0)

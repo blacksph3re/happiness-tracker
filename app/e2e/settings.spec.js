@@ -8,8 +8,9 @@ import { expect, installed, test } from './fixtures.js'
 async function controls(page) {
   return page.locator('main').evaluate((main) =>
     [...main.querySelectorAll('input, select, textarea, button')]
-      // Reloading to update is the one control that needs no server answer.
-      .filter((node) => !node.closest('[data-about]'))
+      // Reloading to update and the appearance are the controls that need no
+      // server answer: both sit outside the fieldset on purpose.
+      .filter((node) => !node.closest('[data-about], [data-appearance]'))
       .map((node) => ({
         name:
           node.getAttribute('aria-label') ||

@@ -259,3 +259,37 @@ test('an admin clears a lost second factor from People', async ({
   ).json()
   expect(after.status).toBe('complete')
 })
+
+test('the second factor returns to the page that was asked for', async ({ page, account }) => {
+  const secret = await enrol(account)
+  await page.addInitScript(() => localStorage.clear())
+  await page.goto('/todos/lists')
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+
+  await page.getByLabel('Username').fill(account.username)
+  await page.getByLabel('Password').fill(account.password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByRole('heading', { name: 'One more thing' })).toBeVisible()
+
+  await insideAStep()
+  await page.locator('[data-totp-code]').fill(codeFor(secret))
+  await page.getByRole('button', { name: 'Sign in' }).click()
+
+  await expect(page.locator('[data-area]')).toHaveText('Todos')
+  await expect(page).toHaveURL(/\/todos\/lists$/)
+})
+
+test('a toast does not follow a sign-out onto the form', async ({ page }) => {
+  await page.goto('/settings')
+  await page.locator('[data-totp-begin]').click()
+  await expect(page.locator('[data-qr]')).toBeVisible()
+  await page.locator('[data-totp-code]').fill('000000')
+  await page.getByRole('button', { name: 'Turn it on' }).click()
+  await expect(page.locator('[data-toast]')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+  // Read once, not polled: a toast times itself out after five seconds, so a
+  // poll for none passes against a toast that followed the sign-out.
+  expect(await page.locator('[data-toast]').count(), 'a toast survived the sign-out').toBe(0)
+})

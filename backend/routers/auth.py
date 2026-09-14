@@ -36,6 +36,7 @@ from security import (
     get_login_throttle,
     hash_password,
     issue_tokens,
+    lockout_message,
     new_totp_secret,
     open_totp_secret,
     seal_totp_secret,
@@ -117,10 +118,10 @@ def login(payload: LoginRequest, db: DbSession) -> LoginResult:
     throttle = get_login_throttle()
     try:
         throttle.check(payload.username)
-    except LoginLocked:
+    except LoginLocked as locked:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many attempts. Try again later.",
+            detail=lockout_message(locked.retry_after),
         ) from None
 
     user = db.execute(
@@ -204,10 +205,10 @@ def login_totp(payload: TotpChallenge, db: DbSession) -> TokenPair:
     throttle = get_login_throttle()
     try:
         throttle.check(user.username)
-    except LoginLocked:
+    except LoginLocked as locked:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many attempts. Try again later.",
+            detail=lockout_message(locked.retry_after),
         ) from None
 
     secret = open_totp_secret(user.totp_secret)

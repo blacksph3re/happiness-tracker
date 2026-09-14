@@ -1,4 +1,4 @@
-import { resizeTo, slotFromPointer } from './calendar.js'
+import { minutesOf, resizeTo, slotFromPointer } from './calendar.js'
 
 /**
  * Carrying a block around a time grid, with a pointer.
@@ -315,9 +315,30 @@ export function calendarDrag({ hourHeight, anytimeHeight, onDrop, onResize = () 
     return {
       day: column.getAttribute('data-body-day'),
       kind: 'grid',
-      minutes: slotFromPointer(point.clientY - rect.top - anytimeHeight(), hourHeight),
+      minutes: slotFromPointer(point.clientY - grip() - rect.top - anytimeHeight(), hourHeight),
       width: Math.round(rect.width),
     }
+  }
+
+  /**
+   * How far below the carried block's top the pointer is holding it.
+   *
+   * **A drop lands where the block's top is drawn, not where the pointer is.**
+   * The carried copy is drawn with its top at the pointer less this grip, so
+   * that top is what the reader is placing — and aiming the pointer instead
+   * meant a two-hour block picked up by its middle and moved up half an hour
+   * promised 09:30 from 09:00: later, for a gesture that moved it earlier. The
+   * same `grabOffset` the copy is drawn with, so the copy, the shadow and the
+   * stored time are one number.
+   *
+   * Zero for a task lifted out of the anytime row. Its row is 22px of a
+   * half-hour block, so its grip says nothing about a clock, and the pointer is
+   * the honest aim there — as it is for the anytime row and a strip chip, which
+   * are named targets rather than positions.
+   */
+  function grip() {
+    if (!press || !dragging || minutesOf(press.task.planned_at) === null) return 0
+    return grabOffset.y
   }
 
   /**
@@ -402,7 +423,7 @@ export function calendarDrag({ hourHeight, anytimeHeight, onDrop, onResize = () 
     if (!press || !lifted() || !scroller) return
     const { top, bottom } = visible()
     const direction = at < top + SCROLL_EDGE ? -1 : at > bottom - SCROLL_EDGE ? 1 : 0
-    if (!direction) {
+    if (!direction || roomLeft(direction) <= 1) {
       stopScroll()
       return
     }
@@ -411,8 +432,8 @@ export function calendarDrag({ hourHeight, anytimeHeight, onDrop, onResize = () 
     press.scrollDir = direction
     press.scroll = setInterval(() => {
       if (!press || !lifted() || !scroller) return
-      const before = scroller.scrollTop
-      scroller.scrollTop = before + direction * SCROLL_STEP
+      if (ownScroll()) scroller.scrollTop += direction * SCROLL_STEP
+      else globalThis.scrollBy(0, direction * SCROLL_STEP)
       // Aimed again before deciding whether to stop, or the step that reaches
       // the end of the day would leave the shadow one step behind the pointer
       // until the hand moved again. A resize needs it for the same reason from
@@ -428,12 +449,43 @@ export function calendarDrag({ hourHeight, anytimeHeight, onDrop, onResize = () 
       // board's stall appeared: `scrollHeight` held at 1248 on every tick of
       // both a carry and a resize, and the room stayed 0 after the stop. That
       // is why the two loops do not share a stop rule.
-      const left =
-        direction < 0
-          ? scroller.scrollTop
-          : scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
-      if (left <= 1) stopScroll()
+      if (roomLeft(direction) <= 1) stopScroll()
     }, SCROLL_MS)
+  }
+
+  /**
+   * Whether the body is its own scroll box, or flows in the page.
+   *
+   * Under 30rem tall it flows (see `Calendar.svelte`), and then the auto-scroll
+   * moves the window. Read off the computed style rather than the media query,
+   * so the drag cannot disagree with what the component actually drew.
+   */
+  function ownScroll() {
+    return /(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
+  }
+
+  /**
+   * How far the hours can still be scrolled towards `direction`, in pixels.
+   *
+   * In a box, the room the box has. In the page, the lesser of the room the
+   * window has and how much of the body is still hidden past that edge — so a
+   * block held over a body whose top is already on screen does not scroll the
+   * page up past the controls above it, and one held at midnight's foot stops.
+   *
+   * @param {number} direction `-1` up, `1` down.
+   */
+  function roomLeft(direction) {
+    if (ownScroll()) {
+      return direction < 0
+        ? scroller.scrollTop
+        : scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+    }
+    const page = document.scrollingElement
+    const rect = scroller.getBoundingClientRect()
+    const height = globalThis.innerHeight ?? 0
+    return direction < 0
+      ? Math.min(page.scrollTop, -rect.top)
+      : Math.min(page.scrollHeight - page.clientHeight - page.scrollTop, rect.bottom - height)
   }
 
   function onMove(event) {

@@ -1,6 +1,8 @@
 # Nothing moves when you change view — proposal
 
-***Built.** The frame, the four phone additions below and the Plain view that followed are in the tree, and what is still true is in `CLAUDE.md` under *The todo half has one frame, and content anchors left inside it*, so this document can go. One departure from the decisions: the scrollbar gutter is reserved app-wide from 48rem rather than at every width, because headless Chromium reserved 15px on phone layouts for a scrollbar it hides and a real phone overlays.*
+*Round eight: the frame is no longer the todo half's alone. `lib/Frame.svelte` now wraps every page of every half and the header shares its cap and gutter, so headings hold still between every half's tabs. Round nine, at the owner's request: only multi-column todo views stay anchored left; every other page is centred again, a half centring one column as wide as its widest page. What is load-bearing lives in CLAUDE.md under "The app has one frame; a half centres one column inside it".*
+
+***Built.** The frame, the four phone additions below and the Plain view that followed are in the tree, and what is still true is in `CLAUDE.md` under *The app has one frame; a half centres one column inside it*, so this document can go. One departure from the decisions: the scrollbar gutter is reserved app-wide from 48rem rather than at every width, because headless Chromium reserved 15px on phone layouts for a scrollbar it hides and a real phone overlays.*
 
 *Second draft, and **decided**. Asked for as a concept: "the navigation
 components jump left/right when navigating between task views". The owner

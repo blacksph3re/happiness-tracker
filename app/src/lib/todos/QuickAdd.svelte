@@ -215,8 +215,10 @@
       data-quick-add={column.id}
       type="text"
       autocomplete="off"
-      placeholder={`Add to ${column.label.toLowerCase()}…`}
-      aria-label={`Add a task to ${column.label}`}
+      placeholder={column.addsAs
+        ? `Add ${column.addsAs}…`
+        : `Add to ${column.label.toLowerCase()}…`}
+      aria-label={column.addsAs ? `Add ${column.addsAs}` : `Add a task to ${column.label}`}
       class="{METRICS} relative border-white/10 bg-transparent text-transparent
              caret-paper placeholder:text-haze/60 hover:border-white/30
              focus:border-dusk-lift focus:outline-none"

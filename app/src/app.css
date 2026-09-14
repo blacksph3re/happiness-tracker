@@ -75,23 +75,131 @@
   --color-fern-lift: #5aa869;
   --color-lime: #9fc94a;
 
+  /* Text on an accent fill — a filled button, the hover of one. Light in both
+     themes, because the fills stay saturated in both; `paper` flips with the
+     ground and would put dark text on a dark fill. Applied by rebinding, below,
+     so no button's class string has to name it. */
+  --color-on-accent: #f4f2f7;
+
+  /* A surface that is white whatever the theme: a QR code's quiet zone, which a
+     scanner needs to be light. `bg-white` cannot be it, since `--color-white`
+     is rebound to the ink under the light theme so the hairlines flip. */
+  --color-sheet: #ffffff;
+
+  /* A chart's chrome and series, as tokens so a chart can read them when it
+     draws and draw again when the theme changes. ECharts paints on a canvas,
+     where a `var()` means nothing, so `lib/theme.svelte.js` resolves them. */
+  --color-chart-muted: #b9b3cc;
+  --color-chart-grid: #2a2440;
+  --color-chart-axis: #3a3350;
+  --color-chart-web: #5a5185;
+  --color-chart-1: #6b55b8;
+  --color-chart-2: #e8734a;
+  --color-chart-3: #6f9e8b;
+  --color-chart-4: #b9b3cc;
+  --color-chart-5: #a07ae8;
+  --color-chart-6: #e8b04a;
+
   --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-meta: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace;
 
-  /* The todo half's frame (`lib/todos/Frame.svelte`), capped at what the widest
+  /* The app's frame (`lib/Frame.svelte`), capped at what the widest
      column board measurably needs. Size laid out in five columns, with every
      column heading on one line and the densest card's metadata row - a time, a
      due date, a priority and a list - unwrapped in each of them, measured
      1996px; the four-column boards 1484 and the matrix 846. Below that the
      frame is simply the window less the gutter, so no board is narrower than it
      was at any desktop width up to 1920. The reading width is the 1112px a
-     stack always had, kept inside the frame and anchored to its left edge. */
-  --container-todo-frame: 125rem;
+     stack always had, and the todo half's centred column (`lib/todos/column.js`). */
+  --container-frame: 125rem;
   --container-todo-reading: 69.5rem;
 }
 
 :root {
   color-scheme: dark;
+}
+
+/* The light theme, chosen in Settings and set on `<html>` by `index.html`
+ * before the first paint. The same tokens, rebound — never a second set of
+ * classes — which is how a section already re-themes itself.
+ *
+ * Every value here was measured rather than picked by eye, and
+ * `lib/theme.test.js` holds the floor: `paper`, `haze` and `ember` at 4.5:1 on
+ * both grounds in all four sections, and `on-accent` at 4.5:1 on every fill.
+ * The sections need no light block of their own: `.section-time` rebinds
+ * `dusk` to `var(--color-tide)`, which resolves to whatever `tide` is here.
+ *
+ * `--color-white` is the one Tailwind token rebound. Some five hundred
+ * `border-white/NN`, `bg-white/NN` and `ring-white/NN` compile to
+ * `color-mix(… var(--color-white) NN%, transparent)`, so rebinding it to the
+ * dark ink flips every hairline and every faint wash without touching a class.
+ * Anything that genuinely needs white names `sheet`.
+ *
+ * The `-deep` family is only ever a range track, so under light it is a pale
+ * tint of its accent rather than a darker one. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --color-ink: #f4f2f8;
+  --color-ink-soft: #ffffff;
+  --color-paper: #1d1830;
+  --color-haze: #5b5470;
+  --color-white: #191627;
+
+  --color-dusk-deep: #dcd5f0;
+  --color-dusk-lift: #5a45a8;
+  --color-ember: #b5461c;
+  --color-sage: #3a735d;
+  --color-iris: #6e50c0;
+  --color-rose: #b23f68;
+  --color-alarm: #b93a31;
+
+  --color-tide-deep: #cfe6e9;
+  --color-tide-lift: #185c66;
+  --color-amber: #8a5a00;
+
+  --color-flame: #a84f17;
+  --color-flame-deep: #f3dcc8;
+  --color-flame-lift: #8f4312;
+  --color-gilt: #876200;
+
+  --color-fern: #377246;
+  --color-fern-deep: #d3e7d7;
+  --color-fern-lift: #2a5f37;
+  --color-lime: #4a7212;
+
+  /* The answer ladder's tint (`lib/wellbeing/scale.js`), mixed up to 70% into
+     the ground. `dusk-lift` at 70% put the band's `.meta` label at 1.88:1;
+     this is 4.36:1, no worse than dark's own 4.13. Unset in dark, where the
+     ladder keeps following `dusk-lift`. */
+  --color-band: #bdb2ea;
+
+  --color-chart-muted: #5b5470;
+  --color-chart-grid: #ebe8f1;
+  --color-chart-axis: #cbc5d8;
+  --color-chart-web: #a79fbf;
+  --color-chart-1: #5a45a8;
+  --color-chart-2: #b5461c;
+  --color-chart-3: #3a735d;
+  --color-chart-4: #8a829e;
+  --color-chart-5: #8a64dc;
+  --color-chart-6: #a87414;
+}
+
+/* Text on an accent fill stays light under the light theme.
+ *
+ * A filled button carries `bg-dusk` and usually no text class at all, so its
+ * text is the `paper` it inherited — dark, under light, on a fill that is still
+ * saturated. Rebinding `paper` and `haze` on the fill itself keeps every
+ * `text-paper` and `.meta` inside it light, and `color` covers the inherited
+ * case. In `base`, so a utility beside the fill still decides; scoped to light,
+ * so dark is exactly what it was. */
+@layer base {
+  :root[data-theme='light'] :is(.bg-dusk, .bg-dusk-lift, .hover\:bg-dusk-lift:hover, .btn-filled) {
+    --color-paper: var(--color-on-accent);
+    --color-haze: var(--color-on-accent);
+    color: var(--color-on-accent);
+  }
 }
 
 /* The scrollbar's room is always reserved, app-wide. On a desktop with classic
@@ -113,6 +221,81 @@
     scrollbar-gutter: stable;
   }
 }
+
+/* ---- One frame, one gutter (`lib/Frame.svelte`, and the header in
+   `App.svelte`) --------------------------------------------------------------
+   The side gutter every page and the header share: 12px on a phone, 20px from
+   `sm`. Set once on the root rather than per page, because a gutter chosen per
+   page is the same mistake as a frame chosen per page, one size smaller — the
+   header sat at 20px on a phone over todo pages at 12. A row that bleeds to the
+   screen edge reads the same number (`-mx-(--gutter) px-(--gutter)`). */
+:root {
+  --gutter: 0.75rem;
+}
+
+@media (min-width: 40rem) {
+  :root {
+    --gutter: 1.25rem;
+  }
+}
+/* ---- end of the frame block ---------------------------------------------- */
+
+/* ---- One shape per kind of button ------------------------------------------
+   The three kinds the hover list above names, each defined once. Measured
+   before: filled buttons in three shapes (16px radius at 36px and 48px, and
+   6px at 44px), outlined ones in five heights from 33.5px to 44px. Each kind
+   keeps its dominant radius and type — `rounded-lg` and semibold `text-sm`
+   filled, `rounded-md` and `.meta` outlined — and all three take one height,
+   44px, because the dominant 36px and 34.5px both fall short of a thumb's
+   target. The height is a minimum with the label centred, never vertical
+   padding: `.meta` text, a 14px label and an arrow glyph have three different
+   line boxes, so equal padding does not make equal buttons.
+
+   In `components`, so a layout utility beside one (`w-full`, `mt-3`, `flex`)
+   still applies. Colour comes from the section's tokens, as everything else. */
+@layer components {
+  .btn-filled,
+  .btn-outline,
+  .btn-danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding-block: 0;
+  }
+
+  .btn-filled {
+    border-radius: var(--radius-lg);
+    background-color: var(--color-dusk);
+    padding-inline: 1rem;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .btn-outline,
+  .btn-danger {
+    border-radius: var(--radius-md);
+    border: 1px solid color-mix(in oklab, var(--color-white) 15%, transparent);
+    padding-inline: 0.75rem;
+  }
+
+  @media (hover: hover) {
+    .btn-filled:hover {
+      background-color: var(--color-dusk-lift);
+    }
+
+    .btn-outline:hover {
+      border-color: color-mix(in oklab, var(--color-white) 40%, transparent);
+    }
+
+    .btn-danger:hover {
+      border-color: var(--color-ember);
+    }
+  }
+}
+/* ---- end of the button block --------------------------------------------- */
 
 body {
   background-color: var(--color-ink);
@@ -280,6 +463,82 @@ input[type='range']::-moz-range-thumb {
 }
 input[type='range']:disabled {
   cursor: not-allowed;
+}
+
+/* One shape for every text field: the corners, the border, the fill and the
+   focus ring. Measured before across twelve pages at 1280 and 390, in both
+   themes — sixty fields in seven variants. Projects drew white and nearly a
+   pill, Settings and Focus grey, *New list* a white rectangle, the task modal
+   white and rounded, the quick-add no fill at all. The dominant shape is kept:
+   `rounded-lg` (16px in Flowbite's theme) on 51 fields, `border-white/15` on
+   54, `bg-ink` on 43 — `ink` rather than `ink-soft` because a field sitting in
+   a card or the modal then reads as a well cut into it, and on the page ground
+   it is the border that draws the field, as it already was on Settings.
+
+   **Unlayered**, like the checkbox box above, because the variants are the
+   utilities on each field, and a layered rule loses to every one of them. So
+   it only names what a field looks like and never what it measures: padding,
+   height, border width and type are untouched, and `[data-quick-add-overlay]`
+   still shares every metric with the input in front of it. A consequence worth
+   knowing: `hover:border-*` and `focus:border-*` beside a field do nothing,
+   because the border is decided here in every state.
+
+   The quick-add's input is transparent so the layer colouring its words shows
+   through, which makes that layer the one to fill. A field that is the middle
+   of a joined group — `TimeField`'s − field + — draws its border on two sides
+   and leaves the corners to the group, so it keeps its square ones.
+
+   The ring is the app's `:focus-visible` outline, alone: Flowbite's forms layer
+   adds a 1px blue `box-shadow` on focus to every input with a `type`, the same
+   off-palette blue the checkbox rule removes, so a typed field wore two rings
+   and a typeless one wore one. */
+:is(
+    input:is([type='text'], [type='search'], [type='number'], [type='email'], [type='password'],
+        [type='date'], [type='time'], [type='url'], [type='tel'], :not([type])),
+    textarea,
+    select
+  ) {
+  border-color: color-mix(in oklab, var(--color-white) 15%, transparent);
+  background-color: var(--color-ink);
+  box-shadow: none;
+}
+:is(
+    input:is([type='text'], [type='search'], [type='number'], [type='email'], [type='password'],
+        [type='date'], [type='time'], [type='url'], [type='tel'], :not([type])),
+    textarea,
+    select
+  ):not(.border-y),
+[data-quick-add-overlay] {
+  border-radius: var(--radius-lg);
+}
+input[data-quick-add] {
+  background-color: transparent;
+}
+[data-quick-add-overlay] {
+  background-color: var(--color-ink);
+}
+
+/* A disabled control is faded, and the same fade is fainter on a light ground.
+ *
+ * Opacity pulls a colour toward what is behind it, and the light theme's text
+ * and ground sit closer together at a given opacity than the dark theme's do:
+ * `haze` at 30% measured 1.9:1 on the dark ground and 1.6:1 on the light one,
+ * so the same disabled Next read as present in one theme and nearly absent in
+ * the other. Each fade is lifted under light — 30 to 45, 40 to 55, 50 to 65 —
+ * which puts the light reading at or above the dark one (2.0:1 for haze at
+ * 45%) while staying well short of an enabled control's 6:1.
+ *
+ * Named by the utilities themselves, so the sixty-odd controls carrying one —
+ * in files other passes own — follow without an edit. Unlayered, so it outranks
+ * `@layer utilities`; `e2e/appearance.spec.js` measures both themes. */
+:root[data-theme='light'] .disabled\:opacity-30:disabled {
+  opacity: 45%;
+}
+:root[data-theme='light'] .disabled\:opacity-40:disabled {
+  opacity: 55%;
+}
+:root[data-theme='light'] .disabled\:opacity-50:disabled {
+  opacity: 65%;
 }
 
 /* A text field under 16px makes iOS Safari zoom the page in when it takes focus,

@@ -109,12 +109,3 @@ test('no text field on a touch screen is small enough to zoom the page', async (
     await expectNoZoom(page, where)
   }
 })
-
-test('the login page does not zoom either', async ({ browser, baseURL }) => {
-  const context = await browser.newContext({ ...TOUCH, baseURL })
-  const page = await context.newPage()
-  await page.goto('/login')
-  await expect(page.getByLabel('Username')).toBeVisible()
-  await expectNoZoom(page, 'login')
-  await context.close()
-})

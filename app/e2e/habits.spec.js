@@ -68,6 +68,37 @@ test('the landing page shows one chip per habit, plus daily tracking', async ({
   await expect(gym).toContainText('🏃')
 })
 
+test('a habit with no run says where it stands in its own period’s words', async ({
+  page,
+  account,
+}) => {
+  // No dash standing in for a run that does not exist, and a daily habit says
+  // "today" rather than "this day". `toHaveText`, so a leftover prefix fails.
+  const daily = await makeHabit(account, {
+    prompt: 'Drank water?',
+    period: 'day',
+    options: [
+      ['Yes', true],
+      ['No', false],
+    ],
+  })
+  const weekly = await makeHabit(account, {
+    prompt: 'Went to gym?',
+    options: [
+      ['Yes', true],
+      ['No', false],
+    ],
+  })
+
+  await page.goto('/')
+  await expect(page.locator(`[data-habit="q${daily.id}"] [data-streak]`)).toHaveText(
+    '🔥 0 of 1 today'
+  )
+  await expect(page.locator(`[data-habit="q${weekly.id}"] [data-streak]`)).toHaveText(
+    '🔥 0 of 1 this week'
+  )
+})
+
 test('a weekly streak counts weeks, not days', async ({ page, account }) => {
   const gym = await makeHabit(account, {
     prompt: 'Went to gym?',

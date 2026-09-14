@@ -3,7 +3,10 @@
   import { get } from 'svelte/store'
 
   import CalendarBody from '../../lib/todos/Calendar.svelte'
-  import Frame from '../../lib/todos/Frame.svelte'
+  import CalendarStepper from '../../lib/todos/CalendarStepper.svelte'
+  import Frame from '../../lib/Frame.svelte'
+  import { wide } from '../../lib/media.js'
+  import { COLUMN } from '../../lib/todos/column.js'
   import TaskMenu from '../../lib/todos/TaskMenu.svelte'
   import { taskMenu } from '../../lib/todos/task-menu.svelte.js'
   import TaskModal from '../../lib/todos/TaskModal.svelte'
@@ -262,7 +265,11 @@
 
 </script>
 
-<Frame eyebrow="Tasks on a clock" title="Calendar">
+<!-- The heading, the span controls and the stepper sit in the half's column. A
+     week of hours is seven columns and fills the frame; a day, or a phone's
+     agenda, is one and fills the column — the board's rule, on a clock. Only the
+     picture spreads: the strip over it and the hours under that. -->
+<Frame eyebrow="Tasks on a clock" title="Calendar" column={COLUMN} spread={$wide && mode === 'week'}>
 
   <!-- One row for both controls, above the picture they change — the same
        reason the board's toolbar is one row: a control that decides what is on
@@ -299,12 +306,19 @@
     </label>
   </div>
 
+  <!-- Navigation, so it holds still with the pills above it; drawn with the
+       grid it jumped from the column's left to the frame's on every switch to
+       Week. Under the same condition as the picture it steps. -->
+  {#if !loading && lists.length}
+    <CalendarStepper {mode} {selected} {today} onselect={(day) => (selected = day)} />
+  {/if}
+
+  {#snippet board()}
   {#if loading}
     <p class="meta">Loading your tasks…</p>
   {:else if !lists.length}
     <p class="text-sm text-haze">
-      This account has no lists yet. They are made on the server, so this needs a
-      connection once.
+      No lists yet. Connect once to create them.
     </p>
   {:else}
     <CalendarBody
@@ -316,12 +330,17 @@
       {listsById}
       {menu}
       onselect={(day) => (selected = day)}
+      onmode={(next) => {
+        mode = next
+        steered.add('calendar_mode')
+      }}
       onopen={(task) => (opened = task.client_id)}
       onadd={add}
       onmove={move}
       onresize={resize}
     />
   {/if}
+  {/snippet}
 </Frame>
 
 <!-- Positioned against the viewport, so it is drawn outside the section that

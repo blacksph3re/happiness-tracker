@@ -1,8 +1,10 @@
 <script>
+  import { tick } from 'svelte'
   import AdminOffline, { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
-  import Frame from '../../lib/todos/Frame.svelte'
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/todos/column.js'
   import { attempt, unwrap } from '../../lib/api.js'
   import {
     createTodoList,
@@ -64,6 +66,17 @@
   /** Which list's share panel is open, by id. */
   let sharing = $state(null)
 
+  /**
+   * Which member's Stop sharing has asked its question, as `listId:username`.
+   *
+   * It takes every task in the list off that member's board, and nothing they
+   * can do brings it back, so it asks as Delete and Leave do.
+   */
+  let unsharing = $state(null)
+
+  /** Each list's Share button, by id, so Escape can hand focus back to it. */
+  const shareButtons = {}
+
   /** The username typed into the open share panel. */
   let invitee = $state('')
 
@@ -101,6 +114,7 @@
     if (offline) {
       confirming = null
       leaving = null
+      unsharing = null
     }
   })
 
@@ -252,11 +266,39 @@
     await save(list, { rank: between(before, after) })
   }
 
-  /** Open or close one list's share panel, starting it empty. */
-  function toggleSharing(list) {
+  /**
+   * Open or close one list's share panel, starting it empty.
+   *
+   * Opening moves focus into the username box, which is the one thing the panel
+   * is opened to do; left on Share, a keyboard reader had a panel on screen and
+   * nothing in it under their focus.
+   */
+  async function toggleSharing(list) {
     sharing = sharing === list.id ? null : list.id
     invitee = ''
     inviteError = null
+    unsharing = null
+    if (sharing !== list.id) return
+    await tick()
+    document.querySelector(`[data-share-username="${list.id}"]`)?.focus()
+  }
+
+  /**
+   * Close the open share panel on Escape and give focus back to its Share.
+   *
+   * An open Stop sharing question is closed first, on its own, because that is
+   * the nearer thing the Escape can mean.
+   */
+  function closeSharingOnEscape(event, list) {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    if (unsharing) {
+      unsharing = null
+      return
+    }
+    sharing = null
+    unsharing = null
+    shareButtons[list.id]?.focus()
   }
 
   /**
@@ -288,6 +330,7 @@
    * @param {string} name
    */
   async function stopSharing(list, name) {
+    unsharing = null
     try {
       await unshareTodoList(list, name)
     } catch (error) {
@@ -315,11 +358,11 @@
 <!-- The gutter is the frame's, and its 12px on a phone was this page's first:
      at 320 the six colour swatches need 264px of the 320 for six 44px targets
      that do not overlap, and a 20px gutter plus a 20px card inset left 238. The
-     rows keep their reading width and start at the frame's left edge. -->
-<Frame eyebrow="Where tasks live" title="Lists">
-<div class="max-w-4xl">
+     rows are one column, so they fill the half's column, and the heading sits
+     where it does on Tasks and Calendar. -->
+<Frame eyebrow="Where tasks live" title="Lists" column={COLUMN}>
 
-  <AdminOffline does="Lists are shared between your devices" />
+  <AdminOffline />
 
   {#if loading}
     <p class="meta">Loading…</p>
@@ -435,15 +478,13 @@
                   <span class="flex items-center gap-2">
                     <button
                       data-list-leave-confirm={list.id}
-                      class="meta min-h-11 rounded-md border border-alarm px-3 text-paper
-                             transition hover:bg-alarm/10"
+                      class="btn-danger meta border-alarm text-paper transition hover:bg-alarm/10"
                       onclick={() => leave(list)}
                     >
                       Leave
                     </button>
                     <button
-                      class="meta min-h-11 rounded-md border border-white/20 px-3
-                             hover:border-white/40"
+                      class="btn-outline meta"
                       onclick={() => (leaving = null)}
                     >
                       Cancel
@@ -454,8 +495,7 @@
                     data-list-leave={list.id}
                     disabled={offline}
                     title={hint}
-                    class="meta min-h-11 rounded-md border border-white/15 px-3
-                           hover:border-ember disabled:cursor-not-allowed disabled:opacity-40"
+                    class="btn-danger meta disabled:cursor-not-allowed disabled:opacity-40"
                     onclick={() => (leaving = list.id)}
                   >
                     Leave
@@ -555,10 +595,10 @@
                 >
                   {#if !system}
                     <button
+                      bind:this={shareButtons[list.id]}
                       data-list-share={list.id}
                       aria-expanded={sharing === list.id}
-                      class="meta flex min-h-11 w-full items-center justify-center rounded-md
-                             border px-3 transition hover:border-white/40
+                      class="btn-outline meta w-full transition
                              {sharing === list.id
                         ? 'border-white/40 bg-dusk/10'
                         : 'border-white/15'}"
@@ -569,71 +609,77 @@
                   {/if}
                 </span>
 
-                {#if confirming === list.id}
-                  <!-- The question names the number it will take with it,
-                       because that is the part somebody cannot see: a list
-                       looks the same whether it holds nothing or forty. Prose,
-                       so it is not a `.meta` — a sentence in capitals ran to
-                       four lines at 320 — and its own group, so the caption may
-                       take a line while the two buttons it labels stay side by
-                       side. -->
-                  <div class="flex basis-full flex-wrap items-center gap-2">
-                    <span class="flex-1 basis-full text-sm text-haze sm:basis-auto"
-                          data-list-confirm={list.id}>
-                      Delete {list.name} and its {held.all}
-                      {held.all === 1 ? 'task' : 'tasks'}?
-                      {#if list.shared}Everyone it is shared with loses it too.{/if}
-                    </span>
-                    <span class="flex items-center gap-2">
-                      <button
-                        data-list-delete-confirm={list.id}
-                        class="meta min-h-11 rounded-md border border-alarm px-3 text-paper
-                               transition hover:bg-alarm/10"
-                        onclick={() => remove(list)}
-                      >
-                        Delete
-                      </button>
-                      <button
-                        class="meta min-h-11 rounded-md border border-white/20 px-3
-                               hover:border-white/40"
-                        onclick={() => (confirming = null)}
-                      >
-                        Cancel
-                      </button>
-                    </span>
-                  </div>
-                {:else}
-                  <span
-                    class="{system ? 'hidden sm:flex' : 'flex'} w-11 shrink-0 items-center
-                           justify-end"
-                  >
-                    {#if !system}
-                      <button
-                        data-list-delete={list.id}
-                        disabled={offline}
-                        title={hint || 'Delete list'}
-                        aria-label={`Delete ${list.name}`}
-                        class="meta flex size-11 items-center justify-center rounded-md border
-                               border-white/15 hover:border-ember
-                               disabled:cursor-not-allowed disabled:opacity-40"
-                        onclick={() => (confirming = list.id)}
-                      >
-                        <IconBin />
-                      </button>
-                    {/if}
-                  </span>
-                {/if}
+                <span
+                  class="{system ? 'hidden sm:flex' : 'flex'} w-11 shrink-0 items-center
+                         justify-end"
+                >
+                  {#if !system}
+                    <button
+                      data-list-delete={list.id}
+                      disabled={offline}
+                      title={hint || 'Delete list'}
+                      aria-label={`Delete ${list.name}`}
+                      aria-expanded={confirming === list.id}
+                      class="meta flex size-11 items-center justify-center rounded-md border
+                             hover:border-ember disabled:cursor-not-allowed disabled:opacity-40
+                             {confirming === list.id ? 'border-ember' : 'border-white/15'}"
+                      onclick={() => (confirming = confirming === list.id ? null : list.id)}
+                    >
+                      <IconBin />
+                    </button>
+                  {/if}
+                </span>
               </div>
             {/if}
           </div>
+
+          {#if confirming === list.id && !system && !foreign}
+            <!-- The question names the number it will take with it, because
+                 that is the part somebody cannot see: a list looks the same
+                 whether it holds nothing or forty. Prose, so it is not a
+                 `.meta` — a sentence in capitals ran to four lines at 320 — and
+                 its own group, so the caption may take a line while the two
+                 buttons it labels stay side by side.
+
+                 Under the row rather than inside its controls: drawn there it
+                 was `basis-full` in a group that shares the name's line, so
+                 the whole row re-laid out around it — the name went full
+                 width, the swatches dropped a line, and the page grew 108px.
+                 Here it costs one line and moves nothing that was on screen. -->
+            <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
+              <span class="flex-1 basis-full text-sm text-haze sm:basis-auto"
+                    data-list-confirm={list.id}>
+                Delete {list.name} and its {held.all}
+                {held.all === 1 ? 'task' : 'tasks'}?
+                {#if list.shared}Everyone it is shared with loses it too.{/if}
+              </span>
+              <span class="flex items-center gap-2">
+                <button
+                  data-list-delete-confirm={list.id}
+                  class="btn-danger meta border-alarm text-paper transition hover:bg-alarm/10"
+                  onclick={() => remove(list)}
+                >
+                  Delete
+                </button>
+                <button
+                  class="btn-outline meta"
+                  onclick={() => (confirming = null)}
+                >
+                  Cancel
+                </button>
+              </span>
+            </div>
+          {/if}
 
           {#if sharing === list.id && !system && !foreign}
             <!-- Under the row it belongs to rather than in a dialog: it is two
                  controls and a short roster, and the row's own name is the
                  heading it needs. -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="mt-3 flex flex-col gap-3 border-t border-white/10 pt-3"
               data-share-panel={list.id}
+              onkeydown={(event) => closeSharingOnEscape(event, list)}
             >
               <form
                 class="flex flex-wrap items-center gap-2"
@@ -658,8 +704,7 @@
                   data-share-add={list.id}
                   disabled={offline || !invitee.trim()}
                   title={hint}
-                  class="meta min-h-11 rounded-md border border-white/15 px-4
-                         hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-30"
+                  class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-30"
                 >
                   Add
                 </button>
@@ -672,30 +717,62 @@
               {#if list.members?.length}
                 <ul class="flex flex-col gap-1">
                   {#each list.members as name (name)}
+                    {@const member = `${list.id}:${name}`}
                     <li
-                      class="flex items-center justify-between gap-2"
-                      data-list-member={`${list.id}:${name}`}
+                      class="flex flex-wrap items-center justify-between gap-2"
+                      data-list-member={member}
                     >
                       <span class="min-w-0 text-sm break-words">{name}</span>
                       <button
-                        data-list-member-remove={`${list.id}:${name}`}
+                        data-list-member-remove={member}
                         aria-label={`Stop sharing “${list.name}” with “${name}”`}
+                        aria-expanded={unsharing === member}
                         disabled={offline}
                         title={hint || 'Stop sharing'}
                         class="meta flex size-11 shrink-0 items-center justify-center rounded-md
-                               border border-white/15 hover:border-ember
-                               disabled:cursor-not-allowed disabled:opacity-40"
-                        onclick={() => stopSharing(list, name)}
+                               border hover:border-ember
+                               disabled:cursor-not-allowed disabled:opacity-40
+                               {unsharing === member ? 'border-ember' : 'border-white/15'}"
+                        onclick={() => (unsharing = unsharing === member ? null : member)}
                       >
                         ✕
                       </button>
+                      {#if unsharing === member}
+                        <!-- Under the member it is about, as Delete asks under
+                             its row, and one string so no clause loses its
+                             space. -->
+                        <div class="flex basis-full flex-wrap items-center justify-end gap-2">
+                          <span
+                            class="flex-1 basis-full text-sm text-haze sm:basis-auto"
+                            data-list-member-ask={member}
+                          >
+                            {`Stop sharing ${list.name} with ${name}? Its tasks leave their board, and only you can share it with them again.`}
+                          </span>
+                          <span class="flex items-center gap-2">
+                            <button
+                              data-list-member-confirm={member}
+                              class="btn-danger meta border-alarm text-paper transition hover:bg-alarm/10"
+                              onclick={() => stopSharing(list, name)}
+                            >
+                              Stop sharing
+                            </button>
+                            <button
+                              data-list-member-cancel={member}
+                              class="btn-outline meta"
+                              onclick={() => (unsharing = null)}
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        </div>
+                      {/if}
                     </li>
                   {/each}
                 </ul>
               {:else}
                 <p class="text-sm text-haze">
-                  Everyone you add sees this list and can add, tick, move and delete its
-                  tasks. Only you rename, recolour or delete it.
+                  Members can edit every task. Only you can rename, recolour, share or
+                  delete the list.
                 </p>
               {/if}
             </div>
@@ -703,8 +780,7 @@
         </li>
       {:else}
         <li class="rounded-lg border border-white/10 bg-ink-soft px-5 py-8 text-haze">
-          This account has no lists yet. They are made on the server, so this
-          needs a connection once.
+          No lists yet. Connect once to create them.
         </li>
       {/each}
     </ul>
@@ -779,16 +855,5 @@
         </span>
       </div>
     </form>
-
-    <!-- Prose, and so not a `.meta`: three sentences came out as six lines of
-         capitals at 320, because `.meta` sets its case unlayered and the
-         `normal-case` beside it was dead CSS. The same treatment every other
-         caption in this app uses for a sentence. -->
-    <p class="mt-4 text-sm text-haze" data-lists-caption>
-      The inbox and the archive cannot be deleted — every account has exactly
-      one of each — but both can be renamed and recoloured. Deleting an ordinary
-      list takes its tasks with it, and leaves anything already archived alone.
-    </p>
   {/if}
-</div>
 </Frame>

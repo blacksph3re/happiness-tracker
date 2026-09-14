@@ -1,4 +1,5 @@
 <script>
+  import Frame from '../lib/Frame.svelte'
   import AdminOffline, { OFFLINE_HINT } from '../lib/AdminOffline.svelte'
   import { attempt, clearTokens, unwrap } from '../lib/api.js'
   import { formatBytes, formatUptime } from '../lib/format.js'
@@ -13,6 +14,7 @@
   import IconBin from '../lib/IconBin.svelte'
   import QrCode from '../lib/QrCode.svelte'
   import { resource } from '../lib/resource.svelte.js'
+  import { APPEARANCES, appearance, chooseAppearance } from '../lib/theme.svelte.js'
   import { forceUpdate } from '../lib/updates.js'
   import {
     disablePush,
@@ -336,11 +338,12 @@
   }
 </script>
 
-<section class="mx-auto w-full max-w-2xl px-5 py-8">
+<Frame column="max-w-2xl">
+<section class="max-w-2xl">
   <p class="meta">Signed in as {loaded.loading ? '…' : (me?.username ?? 'nobody')}</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">Settings</h1>
 
-  <AdminOffline does="Your account settings are kept in one place, on the server" />
+  <AdminOffline />
 
   <!-- One switch for every control below that talks to the server, rather
        than `disabled={offline}` on each: four of twenty-eight carried it, and
@@ -370,8 +373,7 @@
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-focus-settings>
     <h2 class="font-semibold">Focus</h2>
     <p class="mt-1 text-sm text-haze">
-      The lengths a pomodoro runs for, and what it sounds like. Changing them
-      never rewrites a pomodoro already recorded.
+      Changing these does not affect past pomodoros.
     </p>
 
     <div class="mt-4 grid gap-4 sm:grid-cols-2">
@@ -403,7 +405,7 @@
       </div>
     </div>
     <p class="meta mt-2 normal-case text-haze">
-      A break of zero is allowed, and means one pomodoro straight into the next.
+      0 means no break.
     </p>
 
     <label class="meta mt-4 block" for="focus-chime">Sound when a phase ends</label>
@@ -430,17 +432,16 @@
       {/each}
     </select>
     <p class="mt-3 text-sm text-haze">
-      With no focus sound, a pomodoro that finishes while the app is closed is
-      reported when you come back rather than at the moment it ended.
+      With no sound, a pomodoro that ends while the app is closed is reported when
+      you return.
     </p>
   </div>
 
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-todo-settings>
     <h2 class="font-semibold">Todos</h2>
     <p class="mt-1 text-sm text-haze">
-      What the Eisenhower and Size views mean. None of this rewrites a task:
-      they decide which column one falls into, so a split changed today
-      re-groups last month.
+      How tasks fall into the Eisenhower and Size views. Changes apply to every
+      task, past ones included.
     </p>
 
     <!-- Labelled with what it means, which is the smoothing-slider lesson: a
@@ -467,8 +468,7 @@
          `normal-case` beside it was dead CSS, which is three paragraphs of
          prose in capitals on the page this section is read on. -->
     <p class="mt-2 text-sm text-haze" data-todo-note>
-      A task with no priority is not important, always — that is the brief's
-      rule and not a default.
+      A task with no priority is never important.
     </p>
 
     <label class="meta mt-5 block" for="todo-urgent">
@@ -491,16 +491,12 @@
       }}
     />
     <p class="mt-2 text-sm text-haze" data-todo-note>
-      A task with no due date is never urgent. The app is not going to invent a
-      deadline to decide.
+      A task with no due date is never urgent.
     </p>
 
     <p class="meta mt-5">Sizes</p>
     <p class="mt-1 text-sm text-haze" data-todo-note>
-      A drop into a bucket writes its centre, always — the buckets are
-      coarse guesses rather than measurements, so the centre is the more useful
-      number. The upper edge of one bucket is the lower edge of the next, so
-      there is one number for a boundary and no way to leave a gap.
+      Dropping a task into a size sets its estimate to the centre.
     </p>
     <!-- Each bucket is a box of its own, and its hint always takes its own line
          inside it. Under one wrapping row the two shortest hints stayed inline
@@ -534,7 +530,7 @@
             <!-- The bucket that is not a range. Something has to answer "no
                  estimate at all", and it is fixed because it has nothing to
                  configure: no edges, and a drop into it writes no duration. -->
-            <p class="py-2 text-sm text-haze" data-todo-note>No estimate. Nothing to set.</p>
+            <p class="py-2 text-sm text-haze" data-todo-note>No estimate.</p>
           {:else}
             <label class="flex flex-col gap-1.5">
               <span class="meta">From</span>
@@ -614,9 +610,7 @@
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-push>
     <h2 class="font-semibold">Notifications</h2>
     <p class="mt-1 text-sm text-haze">
-      A notification when a focus block ends, so the phone can be in a pocket.
-      Without it the app tells you when you next open it, which may be a while
-      after the fact.
+      Get notified when a focus block ends.
     </p>
 
     {#if pushBlocked}
@@ -629,15 +623,14 @@
       </p>
       <button
         data-push-toggle
-        class="mt-3 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
-               hover:bg-dusk-lift disabled:opacity-40"
+        class="btn-filled mt-3 disabled:opacity-40"
         disabled={pushBusy}
         onclick={togglePush}
       >
         {$pushSupport.subscribed ? 'Stop notifying this device' : 'Notify this device'}
       </button>
       <p class="meta mt-3 normal-case text-haze">
-        Per device, not per account: each browser asks for itself.
+        Applies to this device only.
       </p>
     {/if}
   </div>
@@ -645,8 +638,7 @@
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-totp>
     <h2 class="font-semibold">Second factor</h2>
     <p class="mt-1 text-sm text-haze">
-      A six-digit code from your phone, on top of the password. Nothing else in the
-      app changes — it is asked for at sign-in and nowhere else.
+      A code from your phone, asked for at sign-in.
     </p>
 
     {#if enrolled}
@@ -671,8 +663,7 @@
           <!-- Said before it happens rather than discovered afterwards: this
                signs out every device, including the one asking. -->
           <p class="meta normal-case">
-            Removing it signs you out everywhere. You will sign back in with the
-            password alone.
+            Removing it signs you out everywhere.
           </p>
           <div class="flex flex-wrap gap-2">
             <button
@@ -688,7 +679,7 @@
             </button>
             <button
               type="button"
-              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+              class="btn-outline meta"
               onclick={() => ((removing = false), (code = ''))}
             >
               Cancel
@@ -700,8 +691,7 @@
           data-totp-remove
           disabled={offline}
           title={hint}
-          class="meta mt-4 flex items-center gap-2 rounded-md border border-white/15 px-3
-                 py-2 hover:border-ember disabled:cursor-not-allowed disabled:opacity-40"
+          class="btn-danger meta mt-4 flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-40"
           onclick={() => ((removing = true), (code = ''))}
         >
           <IconBin class="size-3.5" />
@@ -737,15 +727,13 @@
                 type="submit"
                 disabled={offline || !code.trim()}
                 title={hint}
-                class="rounded-lg bg-dusk px-4 py-2 text-sm font-semibold
-                       hover:bg-dusk-lift disabled:cursor-not-allowed disabled:opacity-40"
+                class="btn-filled disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Turn it on
               </button>
               <button
                 type="button"
-                class="meta rounded-md border border-white/15 px-3 py-2
-                       hover:border-white/40"
+                class="btn-outline meta"
                 onclick={() => ((enrolling = null), (code = ''))}
               >
                 Cancel
@@ -758,18 +746,17 @@
            sign-in until a code has been proved, so closing this page now leaves
            the account exactly as it was. -->
       <p class="meta mt-4 normal-case">
-        Nothing changes until you enter a code. Leaving now cannot lock you out.
+        Nothing changes until you enter a code.
       </p>
     {:else}
       <p class="mt-3 text-sm" data-totp-state="off">
-        Off. Your password is the only thing between the internet and this account.
+        Off.
       </p>
       <button
         data-totp-begin
         disabled={offline}
         title={hint}
-        class="mt-4 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift
-               disabled:cursor-not-allowed disabled:opacity-40"
+        class="btn-filled mt-4 disabled:cursor-not-allowed disabled:opacity-40"
         onclick={beginEnrolment}
       >
         Set it up
@@ -797,13 +784,39 @@
       type="submit"
       disabled={offline}
       title={hint}
-      class="mt-4 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift
-             disabled:cursor-not-allowed disabled:opacity-40"
+      class="btn-filled mt-4 disabled:cursor-not-allowed disabled:opacity-40"
     >
       Change password
     </button>
   </form>
   </fieldset>
+
+  <!-- Outside the fieldset: the appearance is kept on this device, so it needs
+       no server and works offline like reloading to update does. -->
+  <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-appearance>
+    <h2 class="font-semibold">Appearance</h2>
+    <p class="mt-1 text-sm text-haze">
+      Applies to this device only.
+    </p>
+    <!-- Equal cells rather than a wrapping row: at 320 the three labels do not
+         fit on one line, and a wrap would leave one alone on the next. -->
+    <div class="mt-4 grid grid-cols-3 gap-2" role="group" aria-label="Appearance">
+      {#each APPEARANCES as [value, label] (value)}
+        <button
+          type="button"
+          class="meta min-h-11 rounded-md border px-2 py-1 leading-tight transition
+                 {appearance.choice === value
+            ? 'border-ember bg-ember/10 text-paper'
+            : 'border-white/15 hover:border-white/40'}"
+          aria-pressed={appearance.choice === value}
+          data-appearance-choice={value}
+          onclick={() => chooseAppearance(value)}
+        >
+          {label}
+        </button>
+      {/each}
+    </div>
+  </div>
 
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-about>
     <h2 class="font-semibold">About</h2>
@@ -831,7 +844,7 @@
            is the page stopping one step short. -->
       <button
         data-force-update
-        class="mt-3 rounded-lg bg-dusk px-4 py-2 text-sm font-semibold hover:bg-dusk-lift"
+        class="btn-filled mt-3"
         onclick={forceUpdate}
       >
         Reload to update
@@ -884,13 +897,14 @@
             {/if}
           </dl>
           <p class="meta mt-3 normal-case">
-            Since this process started, so a deploy resets it.
+            Since the last restart.
           </p>
         {/if}
       </div>
     {/if}
   </div>
 </section>
+</Frame>
 
 <style>
   /* Dimmed the way the controls that carried `disabled:opacity-40` already

@@ -18,9 +18,14 @@ async function upload(page, text, name = 'sessions.csv') {
   })
 }
 
-/** Open the import panel on a project. */
-async function openImport(page, project) {
-  await page.goto('/time/projects')
+/**
+ * Open the import panel on a project.
+ *
+ * @param {{goto?: boolean}} [options] `goto: false` for a page already on
+ *   Projects, whose history a test has built by hand.
+ */
+async function openImport(page, project, { goto = true } = {}) {
+  if (goto) await page.goto('/time/projects')
   await page.click(`[data-import-open="${project.id}"]`)
   await expect(page.locator('[data-import-file]')).toBeVisible()
 }
@@ -357,6 +362,264 @@ test('a range spanning a clock change says so instead of pretending otherwise', 
   await page.click('[data-import-next]')
 
   await expect(page.locator('[data-clock-warning]')).toContainText('an hour out')
+})
+
+test('a binary file is refused before any column is offered', async ({ page, account }) => {
+  const project = await makeProject(account, 'Consulting')
+  await openImport(page, project)
+  // Made here rather than committed: a NUL, high bytes and a few commas and a
+  // quote, which the parser read as "1 rows" with nonsense for column names.
+  await page.locator('[data-import-file]').setInputFiles({
+    name: 'photo.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from([0, 255, 1, 2, 3, 200, 10, 13, 0, 44, 44, 34]),
+  })
+
+  await expect(page.locator('[data-import-refused]')).toHaveText(
+    'That is not a text file. Export the sheet as CSV and choose that.'
+  )
+  await expect(page.locator('[data-map]')).toHaveCount(0)
+  await expect(page.locator('[data-import-file]')).toBeVisible()
+
+  // And a real file chosen next is read as ever, with the refusal gone.
+  await upload(page, TWO_DAYS)
+  await expect(page.locator('[data-map="start"]')).toHaveValue('Start')
+  await expect(page.locator('[data-import-refused]')).toHaveCount(0)
+})
+
+/** A file of `count` half-hour rows an hour apart, none colliding. */
+function hourly(count) {
+  const rows = Array.from({ length: count }, (_, at) => {
+    const started = new Date(Date.parse('2026-01-01T00:00:00Z') + at * 3600_000)
+    const ended = new Date(Date.parse('2026-01-01T00:30:00Z') + at * 3600_000)
+    return `${started.toISOString().slice(0, 19)},${ended.toISOString().slice(0, 19)}`
+  })
+  return ['Start,End', ...rows].join('\n')
+}
+
+/**
+ * Start a 250-row import with `/api/sync` held, so it stops at "Writing 100 of 250…".
+ *
+ * The first chunk is on the device and its `settle()` is waiting for a reply
+ * that does not come until `release` is called.
+ */
+async function stallImport(page, project, { goto = true } = {}) {
+  let held = true
+  const waiting = []
+  await page.route('**/api/sync', async (route) => {
+    if (!held) return route.continue()
+    await new Promise((resolve) => waiting.push(resolve))
+    // Released or not, the page may have gone: nothing to answer then.
+    await route.continue().catch(() => {})
+  })
+  await openImport(page, project, { goto })
+  await upload(page, hourly(250))
+  await toPreview(page)
+  await page.click('[data-import-write]')
+  await expect(page.locator('[data-import-progress]')).toHaveText('Writing 100 of 250…')
+  return () => {
+    held = false
+    for (const resolve of waiting.splice(0)) resolve()
+  }
+}
+
+test('leaving the page mid-import asks first, and staying keeps it writing', async ({
+  page,
+  account,
+}) => {
+  test.slow()
+  const project = await makeProject(account, 'Consulting')
+  const release = await stallImport(page, project)
+
+  const asked = []
+  page.once('dialog', async (dialog) => {
+    asked.push([dialog.type(), dialog.message()])
+    await dialog.dismiss()
+  })
+  await page.locator('header a[href="/"]').click()
+
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0][0]).toBe('confirm')
+  expect(asked[0][1]).toContain('100 of 250')
+  await expect(page).toHaveURL(/\/time\/projects$/)
+  await expect(page.locator('[data-import-progress]')).toBeVisible()
+
+  release()
+  await expect(page.locator('[data-import-done]')).toContainText('250 sessions', {
+    timeout: 30_000,
+  })
+  expect(await sessionsOf(account, project)).toHaveLength(250)
+
+  // Finished, it asks nothing: the next navigation simply goes.
+  let askedAfter = 0
+  page.on('dialog', (dialog) => {
+    askedAfter += 1
+    dialog.dismiss()
+  })
+  await page.locator('header a[href="/"]').click()
+  await expect(page).toHaveURL(/\/$/)
+  expect(askedAfter).toBe(0)
+})
+
+test('an import left in the app stops, and the next visit says how far it got', async ({
+  page,
+  account,
+}) => {
+  test.slow()
+  const project = await makeProject(account, 'Consulting')
+  const release = await stallImport(page, project)
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.locator('header a[href="/"]').click()
+  await expect(page).toHaveURL(/\/$/)
+  release()
+
+  // The chunk already on the device reaches the server; nothing after it is
+  // written, because leaving was the answer to "stop?".
+  await expect.poll(async () => (await sessionsOf(account, project)).length).toBe(100)
+
+  await page.goto('/time/projects')
+  await page.click(`[data-import-open="${project.id}"]`)
+  await expect(page.locator('[data-import-cut-short]')).toHaveText(
+    'An import of sessions.csv was stopped after 100 of 250 sessions. Importing the file again marks those 100 as overlaps.'
+  )
+  await page.waitForTimeout(1500)
+  expect(await sessionsOf(account, project)).toHaveLength(100)
+})
+
+test('Back mid-import asks first, and staying keeps the address and the way forward', async ({
+  page,
+  account,
+}) => {
+  test.slow()
+  const project = await makeProject(account, 'Consulting')
+  // One document throughout, with an entry behind Projects and one ahead of it,
+  // so a refused Back has both a direction to undo and a Forward entry to lose.
+  await page.goto('/')
+  await page.locator('main a[href="/time"]').first().click()
+  await page.locator('header a[href="/time/projects"]').first().click()
+  await expect(page).toHaveURL(/\/time\/projects$/)
+  await page.locator('header a[href="/"]').click()
+  await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/)
+  await page.goBack()
+  await expect(page).toHaveURL(/\/time\/projects$/)
+  const release = await stallImport(page, project, { goto: false })
+  const length = await page.evaluate(() => history.length)
+
+  const asked = []
+  page.once('dialog', async (dialog) => {
+    asked.push(dialog.message())
+    await dialog.dismiss()
+  })
+  await page.goBack()
+
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toContain('100 of 250')
+  await expect(page).toHaveURL(/\/time\/projects$/)
+  await expect(page.locator('[data-import-progress]')).toBeVisible()
+  expect(await page.evaluate(() => history.length)).toBe(length)
+
+  release()
+  await expect(page.locator('[data-import-done]')).toContainText('250 sessions', {
+    timeout: 30_000,
+  })
+  // The entry ahead survived the refusal: Forward still goes where it went.
+  await page.goForward()
+  await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/$/)
+})
+
+/**
+ * Sign out mid-import, which leaves by a `navigate()` from code rather than a link.
+ *
+ * The chunk held on the device makes signing out try to send it first and
+ * then ask, so the router's own question comes after *Sign out anyway*.
+ */
+async function signOutAnyway(page) {
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await page.getByRole('button', { name: 'Sign out anyway' }).click({ timeout: 15_000 })
+}
+
+test('signing out mid-import asks first, and staying keeps it writing', async ({
+  page,
+  account,
+}) => {
+  test.slow()
+  const project = await makeProject(account, 'Consulting')
+  const release = await stallImport(page, project)
+
+  const asked = []
+  page.once('dialog', async (dialog) => {
+    asked.push([dialog.type(), dialog.message()])
+    await dialog.dismiss()
+  })
+  await signOutAnyway(page)
+
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toEqual([
+    'confirm',
+    'This import has written 100 of 250 sessions. Leave and stop it there?',
+  ])
+  // Still signed in, still here, still writing: nothing irreversible happened
+  // before the question was answered.
+  await expect(page).toHaveURL(/\/time\/projects$/)
+  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('ht.access'))).toBeTruthy()
+
+  release()
+  await expect(page.locator('[data-import-done]')).toContainText('250 sessions', {
+    timeout: 30_000,
+  })
+  expect(await sessionsOf(account, project)).toHaveLength(250)
+})
+
+test('signing out mid-import and agreeing to leave stops it there', async ({
+  page,
+  account,
+}) => {
+  test.slow()
+  const project = await makeProject(account, 'Consulting')
+  const release = await stallImport(page, project)
+
+  const asked = []
+  page.once('dialog', async (dialog) => {
+    asked.push(dialog.type())
+    await dialog.accept()
+  })
+  await signOutAnyway(page)
+  await expect(page).toHaveURL(/\/login/)
+  expect(asked).toEqual(['confirm'])
+  release()
+
+  await expect.poll(async () => (await sessionsOf(account, project)).length).toBe(100)
+  await page.waitForTimeout(1500)
+  expect(await sessionsOf(account, project)).toHaveLength(100)
+})
+
+test('closing the tab mid-import is left to the browser to ask about', async ({
+  page,
+  account,
+}) => {
+  test.slow()
+  const project = await makeProject(account, 'Consulting')
+  await stallImport(page, project)
+
+  const kinds = []
+  page.on('dialog', async (dialog) => {
+    kinds.push(dialog.type())
+    await dialog.accept()
+  })
+  await page.close({ runBeforeUnload: true })
+  await expect.poll(() => kinds).toEqual(['beforeunload'])
+  await expect.poll(() => page.isClosed()).toBe(true)
+
+  // A closed tab cannot say which intent it was on when it went, so the count
+  // is the last one known to be on the device: a floor, and said as one.
+  const again = await page.context().newPage()
+  await again.goto('/time/projects')
+  await again.click(`[data-import-open="${project.id}"]`)
+  await expect(again.locator('[data-import-cut-short]')).toHaveText(
+    'An import of sessions.csv was cut short after at least 100 of 250 sessions. Importing the file again marks those as overlaps.'
+  )
 })
 
 // The refusal with no connection is asserted in `offline-walkthrough.spec.js`,

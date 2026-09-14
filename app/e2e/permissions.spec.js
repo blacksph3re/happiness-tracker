@@ -206,3 +206,43 @@ test('a device that is current is offered nothing to fix', async ({
   await expect(page.locator('[data-server-metrics]')).toBeVisible()
   await expect(page.locator('[data-force-update]')).toHaveCount(0)
 })
+
+test.describe('signing in from an address', () => {
+  test('returns to the page that was asked for', async ({ page, account }) => {
+    // Runs after the fixture's own init script, and on every navigation — which
+    // is fine, because signing in does not navigate the document.
+    await page.addInitScript(() => localStorage.clear())
+    await page.goto('/todos/calendar')
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+
+    await page.getByLabel('Username').fill(account.username)
+    await page.getByLabel('Password').fill(account.password)
+    await page.getByRole('button', { name: 'Sign in' }).click()
+
+    await expect(page.locator('[data-area]')).toHaveText('Todos')
+    await expect(page).toHaveURL(/\/todos\/calendar$/)
+  })
+
+  for (const [asked, lands] of [
+    ['/todos/lists', /\/todos\/lists$/],
+    ['//example.com/todos', /127\.0\.0\.1:\d+\/$/],
+    ['https://example.com/', /127\.0\.0\.1:\d+\/$/],
+    ['/\\example.com', /127\.0\.0\.1:\d+\/$/],
+  ]) {
+    test(`a next of ${asked} is ${lands.source.includes('lists') ? 'followed' : 'refused'}`, async ({
+      page,
+      account,
+    }) => {
+      await page.addInitScript(() => localStorage.clear())
+      await page.goto(`/login?next=${encodeURIComponent(asked)}`)
+      await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+
+      await page.getByLabel('Username').fill(account.username)
+      await page.getByLabel('Password').fill(account.password)
+      await page.getByRole('button', { name: 'Sign in' }).click()
+
+      await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+      await expect(page).toHaveURL(lands)
+    })
+  }
+})

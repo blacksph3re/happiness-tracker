@@ -116,7 +116,7 @@ test.describe('at phone width', () => {
     await page.goto('/settings')
     // The filled buttons only: outlined controls are a different kind and the
     // app does not claim they match.
-    const filled = page.locator('button.bg-dusk')
+    const filled = page.locator('button.btn-filled')
     await expect(filled.first()).toBeVisible()
     const tall = await heights(filled)
 

@@ -1,7 +1,17 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import { radarOptions } from './chart-options.js'
+import { contrast as ratio, tokens } from './theme-tokens.testkit.js'
+
+// A chart reads its colours from the resolved tokens when it draws. There is
+// no page here, so the theme module answers from `app.css` instead, under
+// whichever theme a test sets.
+const theme = vi.hoisted(() => ({ current: 'dark' }))
+vi.mock('./theme.svelte.js', async () => {
+  const kit = await import('./theme-tokens.testkit.js')
+  return { themeToken: (name) => kit.tokens(theme.current)[name] }
+})
 
 /**
  * The relative luminance of a hex colour, per WCAG.
@@ -62,5 +72,24 @@ describe('the radar web', () => {
     expect(contrast(radar.splitLine.lineStyle.color, card)).toBeLessThan(
       contrast(color[0], card)
     )
+  })
+})
+
+describe('the radar web in light', () => {
+  const shape = { indicators: [{ name: 'a', max: 5 }], averages: [3] }
+
+  test('reads against the light card, and stays quieter than the shape', () => {
+    theme.current = 'light'
+    try {
+      const card = tokens('light')['ink-soft']
+      const { radar, color } = radarOptions(shape)
+      const web = ratio(radar.splitLine.lineStyle.color, card)
+      expect(web, `the light radar web against ${card}`).toBeGreaterThan(1.8)
+      expect(web).toBeLessThan(ratio(color[0], card))
+      // The labels are text.
+      expect(ratio(radar.axisName.color, card)).toBeGreaterThanOrEqual(4.5)
+    } finally {
+      theme.current = 'dark'
+    }
   })
 })

@@ -1,4 +1,6 @@
 <script>
+  import { untrack } from 'svelte'
+
   import Column from './Column.svelte'
   import { swipe } from '../swipe.js'
   import { tall, wide } from '../media.js'
@@ -68,15 +70,39 @@
   } = $props()
 
   /**
-   * Which column is on screen in the pager.
+   * The column a reader chose in the pager, per grouping.
    *
    * Component state and deliberately **not** remembered: which page you were
    * looking at is a fact about one glance at one screen, not a preference, and
    * an account that opened the board on *Backlog* because a phone was last left
    * there would be answering a question nobody asked. The grouping and the
-   * layout *are* remembered, because those are choices.
+   * layout *are* remembered, because those are choices. Keyed by grouping, and
+   * every grouping keeps its own for the life of the page: holding one choice
+   * at a time meant steering Eisenhower made Kanban forget where it was left,
+   * so which column the pager came back to depended on which grouping had been
+   * steered last. Opening a grouping never steered still lands afresh.
+   *
+   * @type {Record<string, number>}
    */
-  let visible = $state(0)
+  let steered = $state({})
+
+  /**
+   * Where a grouping landed, latched the first time any of its columns held a task.
+   *
+   * **The pager opens on the first column that holds a task**, or on the first
+   * column when none does. Measured before the rule at 390: seven of fifteen
+   * openings across three ordinary boards landed on an empty page while a tab
+   * beside it counted tasks — Date on *Past*, Kanban on *Done*, Eisenhower on
+   * *Do first*. Latched rather than derived for ever, because a column the
+   * reader is on emptying by their own hand — ticking its last task — must not
+   * walk them to another page. Until something is latched the landing follows
+   * the columns, so a board whose tasks arrive a round trip after it painted
+   * still lands where they are. Keyed by grouping for the same reason as
+   * `steered`.
+   *
+   * @type {Record<string, number>}
+   */
+  let landed = $state({})
 
   /**
    * The arrangement actually drawn, which a single column overrules on a phone.
@@ -90,10 +116,62 @@
    */
   const arrangement = $derived(!$wide && columns.length <= 1 ? 'stacked' : layout)
 
-  const paging = $derived(arrangement !== 'stacked' && !$wide)
+  /**
+   * The narrowest a column may be drawn beside others, and the gap between them.
+   *
+   * `min-w-40` below, in pixels. 160 and not the 208 it was: at 844×390 Kanban
+   * needed 904px of an 804px board, so the row became a sideways-scrolling box
+   * with Backlog cut 100px — and nothing in the todo half may need a sideways
+   * scroll. At 160 four columns fit from 768 up.
+   */
+  const COLUMN_FLOOR = 160
+  const COLUMN_GAP = 24
+
+  /** The width the board is laid out in, measured; 0 before the first layout. */
+  let room = $state(0)
+
+  /**
+   * Whether this grouping's columns fit side by side at the floor.
+   *
+   * Where they do not, the pager is drawn instead, at any width — Size's five
+   * columns need 896px, which a 768 or 844 window does not have. Decided from
+   * the frame's width, which the window fixes and the board's content cannot
+   * change, so the pager appearing cannot feed back into this; and from 48rem
+   * the scrollbar's room is always reserved, so a page growing taller does not
+   * move it either. Unknown (0) reads as fitting, which is what the page drew
+   * before this was measured.
+   */
+  const fits = $derived.by(() => {
+    if (!room) return true
+    const across = arrangement === 'quadrants' ? Math.min(columns.length, 2) : columns.length
+    const gap = arrangement === 'quadrants' ? 16 : COLUMN_GAP
+    return across * COLUMN_FLOOR + Math.max(across - 1, 0) * gap <= room
+  })
+
+  const paging = $derived(arrangement !== 'stacked' && (!$wide || !fits))
+
+  /** The first column holding a task, or the first column. */
+  const firstFull = $derived(Math.max(columns.findIndex((one) => one.tasks.length > 0), 0))
 
   /** Clamped rather than reset, so a column disappearing does not blank the page. */
-  const at = $derived(Math.min(visible, Math.max(columns.length - 1, 0)))
+  const at = $derived(
+    Math.min(
+      steered[grouping] ?? landed[grouping] ?? firstFull,
+      Math.max(columns.length - 1, 0)
+    )
+  )
+
+  // Latches the landing. Reads `landed` untracked, so the only thing it writes
+  // is nothing it depends on: it re-runs when the columns or the grouping
+  // change, and writes at most once per grouping opened.
+  $effect(() => {
+    const key = grouping
+    const found = columns.findIndex((one) => one.tasks.length > 0)
+    untrack(() => {
+      if (found < 0 || landed[key] !== undefined) return
+      landed = { ...landed, [key]: found }
+    })
+  })
 
   const shown = $derived(columns[at] ?? null)
 
@@ -134,12 +212,21 @@
   const onScreen = $derived(paging ? [shown, stowed].filter(Boolean) : columns)
 
   /**
+   * Remember the column chosen in this grouping.
+   *
+   * @param {number} index
+   */
+  function steer(index) {
+    steered = { ...steered, [grouping]: index }
+  }
+
+  /**
    * Turn the pager, from a swipe, a tab or a card held at the edge.
    *
    * @param {number} delta `1` towards the later columns, `-1` back.
    */
   function turn(delta) {
-    visible = Math.min(Math.max(at + delta, 0), columns.length - 1)
+    steer(Math.min(Math.max(at + delta, 0), columns.length - 1))
   }
 
   /**
@@ -262,6 +349,10 @@
   const cells = $derived(CELLS[grouping] ?? CELLS.list)
 </script>
 
+<!-- Measures the width the board has, for `fits`. No box of its own: it is
+     not positioned, so the stowed column's `absolute` still resolves where it
+     did, and it adds nothing above or beside the tabs or the board. -->
+<div bind:clientWidth={room}>
 {#if paging}
   <!-- A real tablist: one tab per column, named and counted, because a count is
        what tells you a column off screen has something in it. `data-drop-end`
@@ -285,12 +376,13 @@
         aria-selected={index === at}
         tabindex={index === at ? 0 : -1}
         class="meta flex min-h-11 min-w-0 flex-col items-center justify-center rounded-md
-               border px-0.5 py-1.5 transition min-[24rem]:px-1
+               border px-0.5 py-1.5 transition select-none [-webkit-touch-callout:none]
+               min-[24rem]:px-1
                {index === at
           ? 'border-ember bg-ember/10 text-paper'
           : 'border-white/15 hover:border-white/40'}
                {drag?.dragging && drag.overTab === column.id ? 'ring-2 ring-ember' : ''}"
-        onclick={() => (visible = index)}
+        onclick={() => steer(index)}
       >
         <!-- Wraps between words to a second line rather than losing letters, and
              **never inside a word**: `break-words` split *Tomorrow* at 320 on a
@@ -303,7 +395,10 @@
         >
           {column.label}
         </span>
-        <span class="numeral" data-tab-count={column.id}>{column.tasks.length}</span>
+        <!-- Held invisible for a column that has not been read (the archive
+             offline), so the tab keeps its height and claims no number. -->
+        <span class="numeral {column.unread ? 'invisible' : ''}" data-tab-count={column.id}
+          >{column.tasks.length}</span>
       </button>
     {/each}
   </div>
@@ -327,14 +422,12 @@
        elements. The label still names the quick-add and the keyboard's
        announcement, where it is not restating anything. -->
   {#each onScreen as column (column.id)}
-    <!-- `min-w-52` and not wider: five columns at a 224px floor plus four
-         24px gaps came to 1216px, which no desktop width could show — the row
-         was clipped identically at 1280, 1440 and 1920. The page gives the
-         board the width the screen has now; this is what decides how narrow a
-         column may get before the row scrolls instead. -->
+    <!-- `min-w-40`, which is `COLUMN_FLOOR`: the narrowest a column is drawn
+         beside others. Where a grouping's columns do not fit at it, `fits`
+         draws the pager instead, so the row never scrolls sideways. -->
     <div
       data-quadrant={celled ? column.id : undefined}
-      class="{paging || arrangement === 'stacked' ? '' : 'flex min-w-52 flex-1 basis-0'}
+      class="{paging || arrangement === 'stacked' ? '' : 'flex min-w-40 flex-1 basis-0'}
              {celled ? 'rounded-xl border border-white/10 bg-ink-soft/25 p-4' : ''}
              {stowed?.id === column.id
         ? 'pointer-events-none absolute top-0 left-[-9999px] w-80'
@@ -366,4 +459,5 @@
       />
     </div>
   {/each}
+</div>
 </div>

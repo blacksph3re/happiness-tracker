@@ -716,8 +716,8 @@ test('the Done column’s box says what typing into it does', async ({ page, acc
   await groupBy(page, 'board', 'planned')
 
   const box = page.locator('[data-quick-add="done"]')
-  await expect(box).toHaveAttribute('placeholder', 'Add to something already finished…')
-  await expect(box).toHaveAttribute('aria-label', 'Add a task to something already finished')
+  await expect(box).toHaveAttribute('placeholder', 'Add a done task…')
+  await expect(box).toHaveAttribute('aria-label', 'Add a done task')
   // Every other column still names itself, because there the heading is the
   // whole truth about the gesture.
   await expect(page.locator('[data-quick-add="backlog"]')).toHaveAttribute(

@@ -1,6 +1,10 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/time/column.js'
+  import { get } from 'svelte/store'
   import { answerFacet, earliestHours, matchingDays, systemFacet } from '../../lib/facets.js'
   import { chart } from '../../lib/chart-action.js'
+  import { resolvedTheme } from '../../lib/theme.svelte.js'
   import { resource } from '../../lib/resource.svelte.js'
   import { ensureSummary, summaryRevision } from '../../lib/store.js'
   import { SYSTEM_SPECS, dayLabel, shiftDay, today } from '../../lib/day.js'
@@ -27,6 +31,8 @@
     ensureVariables,
     persistPreferences,
     preferenceSection,
+    preferences,
+    ready as hydrated,
     projects as projectStore,
     tags as tagStore,
     trackedDays,
@@ -218,6 +224,8 @@
    * the very swatch beside it.
    */
   function swatch(token) {
+    // Read first, so a series built from this is built again when the theme changes.
+    resolvedTheme()
     if (typeof document === 'undefined') return undefined
     const scope = document.querySelector('.section-time') ?? document.documentElement
     return getComputedStyle(scope).getPropertyValue(`--color-${token}`).trim() || undefined
@@ -346,31 +354,59 @@
   })
 
   /**
+   * Which controls the reader has already moved, so the restore leaves them.
+   *
+   * **A choice made while the preferences read is outstanding is a real
+   * choice.** `restore` assigns after an await, so a window picked in that
+   * gap was put back by the stored one landing on top of it. Per control, as
+   * on the todo board, or choosing a window would also cost the remembered
+   * grouping. Not `$state`: it is read once, after an await, by code that must
+   * not re-run because of it.
+   */
+  const steered = new Set()
+
+  /**
    * Put the page back the way it was last left.
    *
    * The shape of the view, never the position in it: `anchor` stays at today.
    * Coming back to the app should show the present in the arrangement you chose,
    * not the fortnight you were reading about on Tuesday.
+   *
+   * From the device's own copy first and then from the confirmed read, so a
+   * slow start paints the remembered view rather than the default. Saving waits
+   * for the confirmed read.
    */
   async function restore() {
-    const stored = preferenceSection(await ensurePreferences(), 'time')
-    if (GROUPINGS.includes(stored.by)) by = stored.by
-    if (UNITS.includes(stored.unit)) unit = stored.unit
-    if (Number.isFinite(stored.customDays)) customDays = stored.customDays
-    if (Number.isFinite(stored.smoothing)) smoothing = stored.smoothing
-    if (typeof stored.showGaps === 'boolean') showGaps = stored.showGaps
-    if (typeof stored.fullDay === 'boolean') fullDay = stored.fullDay
-    if (typeof stored.includeUntrackedDays === 'boolean') {
+    await hydrated()
+    const held = get(preferences)
+    if (held) apply(preferenceSection(held, 'time'))
+    apply(preferenceSection(await ensurePreferences(), 'time'))
+    ready = true
+  }
+
+  /**
+   * Take one stored view, leaving every control the reader has already moved.
+   *
+   * @param {object} stored The `time` section of the preferences document.
+   */
+  function apply(stored) {
+    const free = (key) => !steered.has(key)
+    if (free('by') && GROUPINGS.includes(stored.by)) by = stored.by
+    if (free('unit') && UNITS.includes(stored.unit)) unit = stored.unit
+    if (free('customDays') && Number.isFinite(stored.customDays)) customDays = stored.customDays
+    if (free('smoothing') && Number.isFinite(stored.smoothing)) smoothing = stored.smoothing
+    if (free('showGaps') && typeof stored.showGaps === 'boolean') showGaps = stored.showGaps
+    if (free('fullDay') && typeof stored.fullDay === 'boolean') fullDay = stored.fullDay
+    if (free('includeUntrackedDays') && typeof stored.includeUntrackedDays === 'boolean') {
       includeUntrackedDays = stored.includeUntrackedDays
     }
-    if (stored.filters && typeof stored.filters === 'object') {
+    if (free('filters') && stored.filters && typeof stored.filters === 'object') {
       filters = Object.fromEntries(
         Object.entries(stored.filters)
           .filter(([, values]) => Array.isArray(values) && values.length)
           .map(([key, values]) => [key, new Set(values)])
       )
     }
-    ready = true
   }
 
   /** The view state worth remembering, in a stable shape for comparison. */
@@ -429,6 +465,7 @@
   const kept = $derived(matchingDays(days, facets, filters))
 
   function toggleFacet(key, id) {
+    steered.add('filters')
     const held = new Set(filters[key] ?? [])
     if (held.has(id)) held.delete(id)
     else held.add(id)
@@ -498,7 +535,8 @@
   const loading = $derived(summary.loading && rows.length === 0)
 </script>
 
-<section class="mx-auto w-full max-w-5xl px-5 py-8">
+<Frame column={COLUMN}>
+<section>
   <p class="meta">{dayView ? 'When the hours went' : 'Where the hours went'}</p>
   <h1 class="mt-1 mb-6 text-3xl font-bold tracking-tight">Patterns</h1>
 
@@ -511,7 +549,10 @@
             ? 'border-ember bg-ember/10 text-paper'
             : 'border-white/15 hover:border-white/40'}"
           aria-pressed={by === value}
-          onclick={() => (by = value)}
+          onclick={() => {
+            steered.add('by')
+            by = value
+          }}
         >
           {label}
         </button>
@@ -528,7 +569,10 @@
             ? 'border-ember bg-ember/10 text-paper'
             : 'border-white/15 hover:border-white/40'}"
           aria-pressed={unit === value}
-          onclick={() => (unit = value)}
+          onclick={() => {
+            steered.add('unit')
+            unit = value
+          }}
         >
           {label}
         </button>
@@ -547,6 +591,7 @@
           min="1"
           max={maxLength}
           bind:value={customDays}
+          oninput={() => steered.add('customDays')}
           aria-label="Window length"
           class="h-2 w-full cursor-pointer appearance-none rounded-full bg-dusk-deep accent-ember"
         />
@@ -585,14 +630,13 @@
            by its length would be a second way to say the same thing. -->
       {#if unit !== 'custom'}
         <button
-          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40"
+          class="btn-outline meta"
           onclick={() => (anchor = stepPeriod(unit, anchor, -1, customDays))}
         >
           ← Previous
         </button>
         <button
-          class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                 disabled:cursor-not-allowed disabled:opacity-30"
+          class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-30"
           disabled={atLatest}
           onclick={() => (anchor = stepPeriod(unit, anchor, 1, customDays))}
         >
@@ -606,7 +650,10 @@
             ? 'border-ember bg-ember/10 text-paper'
             : 'border-white/15 hover:border-white/40'}"
           aria-pressed={fullDay}
-          onclick={() => (fullDay = !fullDay)}
+          onclick={() => {
+            steered.add('fullDay')
+            fullDay = !fullDay
+          }}
         >
           Full day
         </button>
@@ -638,7 +685,10 @@
                  ones are on, across facets that may be scrolled out of view. -->
             <button
               class="meta self-start underline underline-offset-4 hover:text-paper"
-              onclick={() => (filters = {})}
+              onclick={() => {
+                steered.add('filters')
+                filters = {}
+              }}
             >
               Clear all
             </button>
@@ -677,6 +727,7 @@
               <input
                 type="checkbox"
                 bind:checked={includeUntrackedDays}
+                onchange={() => steered.add('includeUntrackedDays')}
                 class="accent-dusk"
               />
               <span class="meta">Untracked days count toward the average</span>
@@ -705,24 +756,14 @@
   {#if loading}
     <p class="meta">Loading…</p>
   {:else if filed.length === 0}
-    <!-- Every card the window would have, empty. Sliding past the end of the
-         history should not rearrange the page under the control being moved. -->
-    {#if asLine}
-      <div class="rounded-xl border border-white/10 bg-ink-soft p-4">
-        <div class="flex h-80 items-center justify-center text-haze">
-          Nothing tracked in this window.
-        </div>
+    <!-- Said once, in one card. The share and weekday cards used to stand
+         beside it as two tall empty boxes repeating the same sentence, which
+         is three pictures of nothing. The controls that slide the window are
+         all above this, so nothing moves under a pointer dragging one. -->
+    <div class="rounded-xl border border-white/10 bg-ink-soft p-4" data-empty-window>
+      <div class="flex h-80 items-center justify-center text-haze">
+        Nothing tracked in this window.
       </div>
-    {/if}
-    <div class="mt-4 grid gap-4 lg:grid-cols-2">
-      {#each ['Share of tracked time', asLine ? 'Average by weekday' : 'Hours per day'] as title (title)}
-        <div class="min-w-0 rounded-xl border border-white/10 bg-ink-soft p-4">
-          <p class="meta mb-2">{title}</p>
-          <div class="flex h-72 items-center justify-center text-haze">
-            Nothing tracked in this window.
-          </div>
-        </div>
-      {/each}
     </div>
     <!-- The group table's own header, so the page keeps its full height. -->
     <table class="mt-6 w-full">
@@ -749,6 +790,7 @@
               min="1"
               max={MAX_SMOOTHING}
               bind:value={smoothing}
+              oninput={() => steered.add('smoothing')}
               aria-label="Smoothing"
               class="h-2 w-full cursor-pointer appearance-none rounded-full bg-dusk-deep
                      accent-ember"
@@ -762,7 +804,12 @@
                stays a gap where the whole window has nothing. This toggle's
                job ends at the average a neighbour sees. -->
           <label class="flex min-w-0 items-center gap-2">
-            <input type="checkbox" bind:checked={showGaps} class="shrink-0" />
+            <input
+              type="checkbox"
+              bind:checked={showGaps}
+              onchange={() => steered.add('showGaps')}
+              class="shrink-0"
+            />
             <span class="meta">Leave untracked days out of the average</span>
           </label>
         </div>
@@ -892,3 +939,4 @@
     </table>
   {/if}
 </section>
+</Frame>

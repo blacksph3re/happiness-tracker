@@ -167,8 +167,10 @@
   /** The card's own element, for the settle to measure and move. */
   let node = $state(null)
 
-  // Runs once per landing, after the store has moved the card and the DOM with
-  // it: the destination cannot be measured before it exists. It writes nothing
+  // Runs after the render that puts the card down, and again when the store
+  // moves it — the task prop changes — so a moved card is measured in the place
+  // it ends up. Each run starts from the release point, which is what makes the
+  // second one harmless: `settleInto` measures with the transform off. It writes nothing
   // reactive — `settleInto` touches inline styles and nothing else — so this
   // cannot be the effect that reads what it writes.
   $effect(() => {
@@ -307,9 +309,14 @@
   </button>
 
   <div class="min-w-0 flex-1">
-    <!-- One of the card's two actions, and the one that opens the modal. -->
+    <!-- One of the card's two actions, and the one that opens the modal.
+         `overflow-wrap: anywhere` because a title is reading text, not a label:
+         a word with no break in it runs out of the card otherwise, and a
+         160-character one widened the whole page to 1635px at 1280. `anywhere`
+         rather than `break-word` because only `anywhere` also lowers the
+         min-content width, which is what a flex row sizes the card from. -->
     <button
-      class="block w-full text-left text-sm {done ? 'text-haze' : ''}"
+      class="block w-full text-left text-sm [overflow-wrap:anywhere] {done ? 'text-haze' : ''}"
       data-title
       onclick={() => {
         // The release that ended a long press is reported as a click on

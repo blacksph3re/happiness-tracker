@@ -6,9 +6,12 @@ import {
   REBALANCE_AT,
   between,
   compareRank,
+  isRank,
   needsRebalance,
+  placeBetween,
   spread,
 } from './rank.js'
+import { newTaskRank } from './groupings.js'
 
 /**
  * The ordering keys, and the claim the whole drag design rests on.
@@ -225,6 +228,90 @@ describe('the port agrees with the server', () => {
   test('the pairs the server refuses are refused here too', () => {
     for (const one of corpus.refusals) {
       expect(() => between(one.before, one.after), JSON.stringify(one)).toThrow(RankError)
+    }
+  })
+})
+
+describe('a key the rules did not write', () => {
+  // A seed wrote `m9` straight through the API, and the board threw
+  // "m9 is not an ordering key" on the first write into that column.
+  test('only lowercase letters are a rank', () => {
+    expect(['n', 'a', 'zzb'].every(isRank)).toBe(true)
+    expect(['m9', 'M', '', 'n-', null, undefined, 3].some(isRank)).toBe(false)
+  })
+
+  test('a malformed key sorts the same way whichever order the rows arrive in', () => {
+    const rows = [row('n', 'b'), row('m9', 'a'), row('m10', 'c'), row('M', 'd'), row('', 'e')]
+    const forwards = rows.toSorted(compareRank).map((one) => one.client_id)
+    const backwards = rows.toReversed().toSorted(compareRank).map((one) => one.client_id)
+    expect(forwards).toEqual(backwards)
+    for (const left of rows) {
+      for (const right of rows) {
+        // Summed rather than negated: `-0` is not `0` to `toBe`.
+        expect(Math.sign(compareRank(left, right)) + Math.sign(compareRank(right, left))).toBe(0)
+      }
+    }
+  })
+
+  test('a place beside a malformed key re-ranks rather than throwing', () => {
+    expect(() => placeBetween('m9', 'n')).not.toThrow()
+    expect(placeBetween('m9', 'n').rebalance).toBe(true)
+    expect(placeBetween(null, 'M').rebalance).toBe(true)
+    expect(placeBetween('b', 'c')).toEqual({ rank: between('b', 'c'), rebalance: false })
+    expect(placeBetween('b', null)).toEqual({ rank: 'c', rebalance: false })
+  })
+
+  test('a task typed after a malformed key still gets a well-formed one', () => {
+    const column = { tasks: [row('b', 'x'), row('m9', 'y')] }
+    expect(() => newTaskRank(column)).not.toThrow()
+    expect(isRank(newTaskRank(column))).toBe(true)
+  })
+})
+
+describe('every key the app writes is one the server accepts', () => {
+  // A mirror of `RANK_PATTERN` in `backend/schemas.py`. The server refuses a
+  // rank outside it, so a key this module can produce that fails it would be a
+  // drag, a quick-add or a re-rank the server turns away.
+  const SERVER = /^[a-z]+$/
+
+  test('the inbox’s literal rank, and every key the conformance corpus holds', () => {
+    expect(SERVER.test('a')).toBe(true)
+    const keys = corpus.pairs.flatMap((one) => [one.before, one.after, one.expected])
+    const bad = keys.filter((key) => key !== null && !SERVER.test(key))
+    expect(bad).toEqual([])
+  })
+
+  test('every re-rank, from one card to two thousand', () => {
+    const bad = []
+    for (let count = 1; count <= 2000; count += 1) {
+      for (const key of spread(count)) if (!SERVER.test(key)) bad.push([count, key])
+    }
+    expect(bad).toEqual([])
+  })
+
+  test('ten thousand drops into random gaps, including at both ends', () => {
+    let keys = ['n']
+    let seed = 7
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31
+      return seed / 2 ** 31
+    }
+    const bad = []
+    for (let step = 0; step < 10_000; step += 1) {
+      const at = Math.floor(random() * (keys.length + 1))
+      const key = between(keys[at - 1] ?? null, keys[at] ?? null)
+      if (!SERVER.test(key)) bad.push(key)
+      keys.splice(at, 0, key)
+      // The rebalance the board does when a key grows long.
+      if (needsRebalance(key)) keys = spread(keys.length)
+    }
+    expect(bad).toEqual([])
+    expect(keys.every((key) => SERVER.test(key))).toBe(true)
+  })
+
+  test('the server pattern and `isRank` agree', () => {
+    for (const key of ['a', 'n', 'zzb', 'm9', 'M', '', 'n-', ' n']) {
+      expect(isRank(key), key).toBe(SERVER.test(key))
     }
   })
 })

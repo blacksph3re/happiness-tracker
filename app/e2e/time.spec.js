@@ -167,6 +167,45 @@ test('a session added by hand lands in the day total', async ({ page, account })
   await expect(page.locator(`[data-day="${TODAY}"]`)).toContainText(project.name)
 })
 
+test('the add panel is reachable and dismissable by keyboard alone', async ({
+  page,
+  account,
+}) => {
+  await makeProject(account, 'The rewrite')
+  await page.goto('/time/record')
+  const opener = page.locator('[data-add-session]')
+  await expect(opener).toBeVisible()
+
+  // Enter opens it and puts the reader in its first field.
+  await opener.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('[data-adding]')).toBeVisible()
+  await expect(page.getByLabel('Day', { exact: true })).toBeFocused()
+
+  // Escape from a field further in closes it and hands focus back.
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-adding]')).toHaveCount(0)
+  await expect(opener).toBeFocused()
+
+  // Space is the other key that presses a button.
+  await page.keyboard.press('Space')
+  await expect(page.getByLabel('Day', { exact: true })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(opener).toBeFocused()
+})
+
+test('opening the add panel with the mouse leaves focus where the click put it', async ({
+  page,
+  account,
+}) => {
+  await makeProject(account, 'The rewrite')
+  await page.goto('/time/record')
+  await page.locator('[data-add-session]').click()
+  await expect(page.locator('[data-adding]')).toBeVisible()
+  await expect(page.getByLabel('Day', { exact: true })).not.toBeFocused()
+})
+
 test('correcting a session moves the day total', async ({ page, account }) => {
   const project = await makeProject(account, 'The rewrite')
   await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
@@ -2068,4 +2107,129 @@ test('a tag that only adds still reports more than it tracked', async ({
   await page.goto('/time/patterns')
   await page.getByRole('button', { name: 'By tag' }).click()
   await expect(page.locator('[data-period]')).toContainText('4h 00m reported')
+})
+
+/**
+ * Hold the page's first preferences read until released.
+ *
+ * Answered with what the server held before the page loaded, fetched through the
+ * account's own API up front rather than proxied — a fetched response belongs to
+ * the page and is disposed when it navigates.
+ */
+async function holdPreferences(page, account) {
+  const stale = await (await account.api.get('/api/me/preferences')).json()
+  let release
+  const gate = new Promise((resolve) => (release = resolve))
+  let delivered
+  const answered = new Promise((resolve) => (delivered = resolve))
+  let holding = true
+  await page.route('**/api/me/preferences', async (route) => {
+    if (!holding || route.request().method() !== 'GET') return route.continue()
+    holding = false
+    await gate
+    await route.fulfill({ json: stale })
+    delivered()
+  })
+  return { release, answered }
+}
+
+test('a window and a grouping chosen while the preferences read is out are kept', async ({
+  page,
+  account,
+}) => {
+  // Reported from use: with the read held, Month switched to Week a second after
+  // a reload flipped back to Month the moment the read returned, and By tag to
+  // By project. Stored explicitly, so the read has something to put back.
+  await account.api.put('/api/me/preferences', {
+    data: { time: { unit: 'month', by: 'project' } },
+  })
+  const held = await holdPreferences(page, account)
+
+  await page.goto('/time/patterns')
+  const week = page.getByRole('button', { name: 'Week', exact: true })
+  await week.click()
+  await page.getByRole('button', { name: 'By tag', exact: true }).click()
+  await expect(week).toHaveAttribute('aria-pressed', 'true')
+
+  held.release()
+  await held.answered
+  // A negative claim — nothing puts the stored view back — so it is sampled.
+  const seen = new Set()
+  for (let i = 0; i < 10; i += 1) {
+    seen.add(
+      await page.evaluate(() =>
+        [...document.querySelectorAll('main [aria-pressed="true"]')]
+          .map((node) => node.textContent.trim())
+          .sort()
+          .join('|')
+      )
+    )
+    await page.waitForTimeout(100)
+  }
+  expect([...seen]).toEqual(['By tag|Week'])
+  // And the choice is what is saved, rather than the copy that came back.
+  await expect
+    .poll(async () => (await (await account.api.get('/api/me/preferences')).json()).time)
+    .toMatchObject({ unit: 'week', by: 'tag' })
+})
+
+test('asking to delete a session leaves the row where it was', async ({ page, account }) => {
+  // The confirmation replaced a 34px bin with a question and two buttons in the
+  // same row, which shoved the duration 198px left at 1280.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/time/record')
+    const row = page.locator(`[data-day="${TODAY}"] [data-row]`).first()
+    const duration = row.getByText('3h 00m', { exact: true })
+    const name = row.getByText('The rewrite', { exact: true })
+    await expect(duration).toBeVisible()
+    const place = async () => {
+      const [a, b] = [await duration.boundingBox(), await name.boundingBox()]
+      return [a.x, a.y, b.x, b.y]
+    }
+    const before = await place()
+
+    await row.getByRole('button', { name: /^Delete The rewrite/ }).click()
+    await expect(row.locator('[data-delete-confirm]')).toBeVisible()
+    let worst = 0
+    for (let i = 0; i < 8; i += 1) {
+      const now = await place()
+      worst = Math.max(worst, ...now.map((value, index) => Math.abs(value - before[index])))
+      await page.waitForTimeout(50)
+    }
+    expect(worst, `the row's own text moved at ${width}px`).toBeLessThan(1)
+  }
+})
+
+test('the add panel keeps its two actions on one row', async ({ page, account }) => {
+  // At 1280 Cancel wrapped alone onto a second line under the Day field, away
+  // from the Add session it belongs beside.
+  await makeProject(account, 'The rewrite')
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/time/record')
+    await page.locator('[data-add-session]').click()
+    const panel = page.locator('[data-adding]')
+    const add = panel.getByRole('button', { name: 'Add session', exact: true })
+    const cancel = panel.getByRole('button', { name: 'Cancel', exact: true })
+    await expect(cancel).toBeVisible()
+    const [a, c] = [await add.boundingBox(), await cancel.boundingBox()]
+    expect(Math.abs(a.y - c.y), `Cancel left Add session at ${width}px`).toBeLessThan(1)
+    expect(c.x).toBeGreaterThan(a.x)
+  }
+})
+
+test('an empty window says so once, and draws no empty chart cards', async ({ page }) => {
+  // The line card said "Nothing tracked in this window" and the share and
+  // weekday cards stood beside it as two tall empty boxes.
+  await page.goto('/time/patterns')
+  for (const unit of ['Month', 'Week']) {
+    await page.getByRole('button', { name: unit, exact: true }).click()
+    await expect(page.getByText('Nothing tracked in this window.')).toHaveCount(1)
+    await expect(page.getByText('Share of tracked time')).toHaveCount(0)
+    await expect(page.getByText(/^(Average by weekday|Hours per day)$/)).toHaveCount(0)
+  }
 })

@@ -345,3 +345,30 @@ function clockOf24(instant) {
 function nextDay(day) {
   return new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)
 }
+
+/** How much of a file is read to decide whether it is text. */
+export const SNIFF_BYTES = 8192
+
+/**
+ * Decide whether the start of a file is text a spreadsheet could have written.
+ *
+ * By control characters rather than by a failed UTF-8 decode: Excel on Windows
+ * writes CSV in Windows-1252, where an accented letter is not valid UTF-8 and
+ * is still a perfectly good file. A NUL never belongs in one, and more than one
+ * control character in a hundred — tab, line breaks and form feed aside — is a
+ * picture, an archive or a spreadsheet's own binary format, whose "columns"
+ * would be offered as nonsense.
+ *
+ * @param {Uint8Array} bytes The first few kilobytes of the file.
+ * @returns {boolean}
+ */
+export function looksLikeText(bytes) {
+  let controls = 0
+  for (const byte of bytes) {
+    if (byte === 0) return false
+    if (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0c && byte !== 0x0d) {
+      controls += 1
+    }
+  }
+  return controls * 100 <= bytes.length
+}

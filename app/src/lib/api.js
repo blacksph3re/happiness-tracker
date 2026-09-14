@@ -186,7 +186,12 @@ export async function unwrap(call) {
       // Replace rather than push: the expired page must not stay in history, or
       // Back lands on it, 401s again and bounces forward to login for ever.
       clearTokens()
-      window.location.replace('/login')
+      // Carrying where it was, so signing in again returns there rather than
+      // to the landing page. The form checks it is one of this app's own paths.
+      const here = window.location.pathname + window.location.search
+      window.location.replace(
+        window.location.pathname === '/login' ? here : `/login?next=${encodeURIComponent(here)}`
+      )
       throw new Error('Session expired')
     }
   }

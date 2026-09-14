@@ -486,6 +486,183 @@ test('an edit queued against a list you were removed from says why in words a me
   await owner.api.dispose()
 })
 
+test('a refusal re-reads the tasks only once the queue has let the refused write go', async ({
+  page,
+  account,
+  admin,
+  baseURL,
+  context,
+}) => {
+  const owner = await otherAccount(admin, baseURL, 'owner')
+  const groceries = await makeTodoList(owner, 'Groceries')
+  await share(owner, groceries, account)
+  await makeTodos(owner, [{ title: 'Buy milk', rank: 'b', list_id: groceries.id }])
+
+  await openTasks(page, account, 'date')
+  await onlyList(page, groceries.id)
+  await expect(taskCard(page, 'Buy milk')).toBeVisible()
+  await installed(page)
+
+  await context.setOffline(true)
+  await taskCard(page, 'Buy milk').locator('[data-tick]').click()
+  await expect(taskCard(page, 'Buy milk')).toHaveAttribute('data-done', 'true')
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '1')
+  await unshare(owner, groceries, account)
+
+  // Ordered by hand rather than by load. The refusal's own re-read of the lists
+  // is held, so a missing list cannot be what takes the card away; so is every
+  // check of what changed, so no later read can tidy up. What is left is the
+  // re-read of the tasks, and whether the tick it began beside was still queued.
+  const held = { lists: true, changes: true }
+  const hold = (name) => async (route) => {
+    if (route.request().method() !== 'GET') return route.continue()
+    while (held[name]) await new Promise((resolve) => setTimeout(resolve, 50))
+    try {
+      await route.continue()
+    } catch {
+      // Released after the page moved on.
+    }
+  }
+  await page.route((url) => url.pathname === '/api/todos/lists', hold('lists'))
+  await page.route((url) => url.pathname === '/api/changes', hold('changes'))
+  const tasksRead = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/todos' &&
+      response.request().method() === 'GET'
+  )
+
+  await context.setOffline(false)
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await expect(page.locator('[data-toast]')).toContainText(
+    'Groceries is no longer shared with you',
+    { timeout: 15_000 }
+  )
+  await tasksRead
+
+  // The server no longer shows this member the task. A read that began while
+  // the refused tick was still queued took the tick for a write the server had
+  // not confirmed yet, and laid it back over that answer.
+  await expect(taskCard(page, 'Buy milk')).toHaveCount(0, { timeout: 3_000 })
+  expect(held.lists).toBe(true)
+
+  held.lists = false
+  held.changes = false
+  await expect(page.locator(`button[data-list="${groceries.id}"]`)).toHaveCount(0, {
+    timeout: 15_000,
+  })
+  await owner.api.dispose()
+})
+
+/** Reload keeping the tokens the page holds, not the fixture's first account's. */
+async function keepHeldTokens(page) {
+  await page.addInitScript(() => {
+    const access = sessionStorage.getItem('e2e.access')
+    if (access === null) return
+    if (access) localStorage.setItem('ht.access', access)
+    else localStorage.removeItem('ht.access')
+    const refresh = sessionStorage.getItem('e2e.refresh')
+    if (refresh) localStorage.setItem('ht.refresh', refresh)
+    else localStorage.removeItem('ht.refresh')
+  })
+}
+
+async function reloadAsHeld(page) {
+  await page.evaluate(() => {
+    sessionStorage.setItem('e2e.access', localStorage.getItem('ht.access') ?? '')
+    sessionStorage.setItem('e2e.refresh', localStorage.getItem('ht.refresh') ?? '')
+  })
+  await page.reload()
+}
+
+async function switchAccount(page, username, password) {
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+  await page.getByLabel('Username').fill(username)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.locator('[data-card=time]')).toBeVisible()
+}
+
+/**
+ * The worst this device shows about refusals, sampled: whether the badge ever
+ * reads `conflicts`, and whether the panel ever holds the server's sentence.
+ * Negative claims, so sampled and maxed rather than polled.
+ */
+async function refusalsShown(page, samples = 8) {
+  const badge = page.locator('[data-sync]')
+  await badge.locator('button').click()
+  await expect(page.locator('[data-sync-panel]')).toBeVisible()
+  let counted = false
+  let said = false
+  for (let sample = 0; sample < samples; sample += 1) {
+    counted = counted || (await badge.getAttribute('data-sync')) === 'conflicts'
+    said =
+      said ||
+      (await page.locator('[data-sync-panel]').innerText()).includes('no longer exists')
+    await page.waitForTimeout(120)
+  }
+  await page.keyboard.press('Escape')
+  return { counted, said }
+}
+
+test('a refusal is its own account’s: another account signing in here sees none of it', async ({
+  page,
+  account,
+  admin,
+  baseURL,
+  context,
+}) => {
+  const owner = await otherAccount(admin, baseURL, 'owner')
+  const groceries = await makeTodoList(owner, 'Groceries')
+  await share(owner, groceries, account)
+  await makeTodos(owner, [{ title: 'Buy milk', rank: 'b', list_id: groceries.id }])
+  await keepHeldTokens(page)
+
+  await openTasks(page, account, 'date')
+  await onlyList(page, groceries.id)
+  await expect(taskCard(page, 'Buy milk')).toBeVisible()
+  await installed(page)
+
+  await context.setOffline(true)
+  await taskCard(page, 'Buy milk').locator('[data-tick]').click()
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '1')
+  await unshare(owner, groceries, account)
+  await context.setOffline(false)
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-sync', 'conflicts', {
+    timeout: 15_000,
+  })
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0')
+
+  // Somebody else, in the same tab.
+  await switchAccount(page, owner.username, owner.password)
+  expect(await refusalsShown(page)).toEqual({ counted: false, said: false })
+
+  // And across an offline reload, where only the device can answer.
+  await context.setOffline(true)
+  await reloadAsHeld(page)
+  await expect(page.locator('[data-sync]')).toBeVisible()
+  expect(await refusalsShown(page)).toEqual({ counted: false, said: false })
+  await context.setOffline(false)
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+
+  // The refusal stayed on the device for the account whose write it was.
+  await switchAccount(page, account.username, account.password)
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-sync', 'conflicts')
+  await page.locator('[data-sync] button').click()
+  await expect(page.locator('[data-sync-notices]')).toContainText('no longer exists')
+  await page.keyboard.press('Escape')
+
+  await context.setOffline(true)
+  await reloadAsHeld(page)
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-sync', 'conflicts', {
+    timeout: 5_000,
+  })
+  await page.locator('[data-sync] button').click()
+  await expect(page.locator('[data-sync-notices]')).toContainText('no longer exists')
+  await owner.api.dispose()
+})
+
 test('at 320 a shared row and an owned shared row keep a readable name and 44px targets', async ({
   page,
   account,
@@ -540,5 +717,59 @@ test('at 320 a shared row and an owned shared row keep a readable name and 44px 
     await page.waitForTimeout(120)
   }
   expect(worst, 'the lists page scrolls sideways at 320').toBeLessThanOrEqual(1)
+  await friend.api.dispose()
+})
+
+test('the share panel takes the keyboard in, and Escape lets it out', async ({ page, account }) => {
+  const errands = await makeTodoList(account, 'Errands')
+  await page.goto('/todos/lists')
+  const button = page.locator(`[data-list-share="${errands.id}"]`)
+  await button.focus()
+  await page.keyboard.press('Enter')
+
+  // Measured before: the panel opened with focus left on Share, and Escape did
+  // nothing at all.
+  await expect(page.locator(`[data-share-username="${errands.id}"]`)).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.locator(`[data-share-panel="${errands.id}"]`)).toHaveCount(0)
+  await expect(button).toBeFocused()
+  await expect(button).toHaveAttribute('aria-expanded', 'false')
+})
+
+test('stopping sharing asks first, under the member, and only the answer acts', async ({
+  page,
+  account,
+  admin,
+  baseURL,
+}) => {
+  const friend = await otherAccount(admin, baseURL)
+  const errands = await makeTodoList(account, 'Errands')
+  await share(account, errands, friend)
+
+  await page.goto('/todos/lists')
+  await page.locator(`[data-list-share="${errands.id}"]`).click()
+  const member = `${errands.id}:${friend.username}`
+  await page.locator(`[data-list-member-remove="${member}"]`).click()
+
+  const ask = page.locator(`[data-list-member-ask="${member}"]`)
+  await expect(ask).toHaveText(
+    `Stop sharing Errands with ${friend.username}? Its tasks leave their board, and only you can share it with them again.`
+  )
+  // Nothing has happened yet: it acted on the first press before.
+  await page.waitForTimeout(500)
+  expect((await todoLists(account)).find((one) => one.id === errands.id).members).toEqual([
+    friend.username,
+  ])
+
+  await page.locator(`[data-list-member-cancel="${member}"]`).click()
+  await expect(ask).toHaveCount(0)
+  await expect(page.locator(`[data-list-member="${member}"]`)).toBeVisible()
+
+  await page.locator(`[data-list-member-remove="${member}"]`).click()
+  await page.locator(`[data-list-member-confirm="${member}"]`).click()
+  await expect(page.locator(`[data-list-member="${member}"]`)).toHaveCount(0)
+  await expect
+    .poll(async () => (await todoLists(account)).find((one) => one.id === errands.id).members)
+    .toEqual([])
   await friend.api.dispose()
 })

@@ -288,6 +288,35 @@ export async function loadQueue() {
   const ours = (await readIntents()).filter((intent) => intent.account === holder)
   queued.set(ours)
   pending.set(ours.length)
+  if (holder !== verdictsFor) await loadVerdicts()
+}
+
+/**
+ * The account `conflicts` and `notices` currently hold, or `undefined` before
+ * they were first read.
+ *
+ * The queue is re-read whenever the account changes, so the verdicts ride along
+ * with it: only when the account differs from this, never on the ordinary
+ * re-read after a write, which would race a verdict not yet on disk.
+ */
+let verdictsFor = undefined
+
+/**
+ * Read the signed-in account's unread verdicts, and only theirs.
+ *
+ * Another account's stay on the device for their owner, exactly as that
+ * owner's queued writes do. The in-memory copy is emptied first, so a sign-in
+ * as somebody else never shows the last account's count while the disk answers.
+ */
+async function loadVerdicts() {
+  const holder = tokenHolder()
+  verdictsFor = holder
+  conflicts.set([])
+  notices.set([])
+  const held = await readVerdicts(holder)
+  if (tokenHolder() !== holder) return
+  conflicts.set(held.conflicts ?? [])
+  notices.set(held.notices ?? [])
 }
 
 /**
@@ -476,24 +505,53 @@ async function sendChunk(chunk) {
       settled.push(result.seq)
     }
   }
-  if (decided.length) notices.update((all) => [...all, ...decided])
   // Paired with the intent each one refused before anything is said, because
   // the sentence may need to know what the write was about.
   const refused = unsettled.map((result) => ({
     ...result,
     intent: chunk.find((intent) => intent.seq === result.seq),
   }))
-  if (refused.length) announceRefusals(refused)
 
   // A conflict retires from the queue too, or every later flush would send it
   // again and collect the same refusal for ever. It moves to the list the badge
   // counts instead.
   await retireIntents([...settled, ...unsettled.map((result) => result.seq)])
+
+  // **Recorded under the account whose writes these were**, which is the one
+  // the intents carry. The account can change while the request is in the air;
+  // then these are kept on the device for their owner and said to nobody here.
+  const owner = chunk[0]?.account
+  if (owner !== tokenHolder()) {
+    if (decided.length || unsettled.length) {
+      const held = await readVerdicts(owner)
+      await writeVerdicts(owner, {
+        conflicts: [...(held.conflicts ?? []), ...refused],
+        notices: [...(held.notices ?? []), ...decided],
+      })
+    }
+    await loadQueue()
+    return true
+  }
+
+  // Read before appending, never after: a first drain can answer before the
+  // queue's own re-read has fetched this account's verdicts, and that read
+  // would replace what is appended here.
+  if (verdictsFor !== owner) await loadVerdicts()
   if (refused.length) conflicts.update((all) => [...all, ...refused])
   // Per chunk, not once at the end: the badge's count and the projection both
   // read this, and a device sending three chunks should watch the queue empty
   // rather than sit on its opening figure until the last one lands.
   await loadQueue()
+
+  // **Said only once the queue agrees with the reply.** Both start reads — a
+  // merge re-reads the sessions, a refusal about a shared list re-reads the
+  // lists and tasks — and a read that begins while `queued` still names these
+  // intents takes them for writes the server has not confirmed, so `unconfirmed`
+  // lays this device's own version back over the server's decision. Published
+  // before the retire, a session stretched over another read 6h where the
+  // merged union is 7h, until something happened to read again.
+  if (decided.length) notices.update((all) => [...all, ...decided])
+  if (refused.length) announceRefusals(refused)
   if (decided.length || unsettled.length) remember()
   return true
 }
@@ -555,12 +613,12 @@ export function whenRefused(handler) {
 export function dismissConflicts() {
   conflicts.set([])
   notices.set([])
-  writeVerdicts({ conflicts: [], notices: [] })
+  writeVerdicts(verdictsFor, { conflicts: [], notices: [] })
 }
 
 /** Keep what the server decided, so a reload does not throw the notice away. */
 function remember() {
-  writeVerdicts({ conflicts: get(conflicts), notices: get(notices) })
+  writeVerdicts(verdictsFor, { conflicts: get(conflicts), notices: get(notices) })
 }
 
 /**
@@ -578,10 +636,7 @@ export function watch() {
   // from under a queue it is the only copy of.
   whenHoldingWrites(hasPending)
   askToPersist()
-  readVerdicts().then((held) => {
-    conflicts.set(held.conflicts ?? [])
-    notices.set(held.notices ?? [])
-  })
+  // The verdicts are read with the queue, for whoever is signed in.
   loadQueue()
   // The event is a hint to go and look, not an answer in itself — `probe` sets
   // the state from what actually happened to a request. Claiming to be online

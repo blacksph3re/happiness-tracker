@@ -40,19 +40,24 @@ export function weekdayOf(key) {
 /**
  * Render a day key as a short human label, e.g. "Tue 4 Mar".
  *
+ * A day outside the current year always names its year: a card planned for
+ * 2031 or answered in 2019 read exactly like one this year, and "Fri, Mar 1"
+ * is a claim about which March. A day inside it reads as it always has.
+ *
  * @param {string} key A `YYYY-MM-DD` key.
- * @param {{withYear?: boolean}} [options] `withYear` adds it, for the controls
- *   that can slide out of the current one — a window ending "Sat 16 Aug" says
- *   nothing about which August once the slider has gone back far enough to
- *   reach another.
+ * @param {{withYear?: boolean}} [options] `withYear` adds it even inside the
+ *   current year, for the controls that can slide out of it — a window ending
+ *   "Sat 16 Aug" says nothing about which August once the slider has gone back
+ *   far enough to reach another.
  */
 export function dayLabel(key, { withYear = false } = {}) {
   const [year, month, day] = key.split('-').map(Number)
+  const named = withYear || year !== new Date().getFullYear()
   return new Date(year, month - 1, day).toLocaleDateString(undefined, {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
-    ...(withYear ? { year: 'numeric' } : {}),
+    ...(named ? { year: 'numeric' } : {}),
   })
 }
 

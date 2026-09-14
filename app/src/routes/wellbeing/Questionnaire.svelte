@@ -1,4 +1,6 @@
 <script>
+  import Frame from '../../lib/Frame.svelte'
+  import { COLUMN } from '../../lib/wellbeing/column.js'
   import { swipe } from '../../lib/swipe.js'
   import { flush } from '../../lib/sync.js'
   import Ladder from '../../lib/wellbeing/Ladder.svelte'
@@ -213,8 +215,7 @@
   // The question steppers sit at the outer edges of the run, so each is sized
   // to its own label rather than to a shared column.
   const STEPPER =
-    'meta rounded-md border border-white/15 px-4 py-2 transition ' +
-    'hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-30'
+    'btn-outline meta transition disabled:cursor-not-allowed disabled:opacity-30'
 
   // Small enough to read as part of the date line it flanks.
   const DAY_STEP =
@@ -243,12 +244,12 @@
   }
 </script>
 
+<Frame column={COLUMN}>
 <!-- No hint on screen: the arrows and the progress bar already say the run has
      an order, and the gesture is the same one the record uses. See `swipe` for
      why this is ignored rather than given a role. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <section
-  class="mx-auto w-full max-w-5xl px-5 py-8"
   use:swipe={{ onswipe: step, ignore: 'input[type="range"]' }}
 >
   {#if loading}
@@ -257,13 +258,12 @@
     <div class="rounded-xl border border-white/10 bg-ink-soft p-8">
       <h1 class="text-2xl font-bold">No questions yet</h1>
       <p class="mt-2 text-haze">
-        Your questions are yours to shape. Build a set from a starting point, or
-        write your own from scratch.
+        Start from a set, or write your own.
       </p>
       <a
         href="/questions"
         use:link
-        class="mt-5 inline-block rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift"
+        class="btn-filled mt-5 inline-block"
       >
         Set up your questions
       </a>
@@ -272,13 +272,12 @@
     <div class="rounded-xl border border-white/10 bg-ink-soft p-8">
       <h1 class="text-2xl font-bold">Nothing to answer</h1>
       <p class="mt-2 text-haze">
-        This catalogue has no active questions yet. You can add some on the
-        questions page.
+        No active questions yet.
       </p>
       <a
         href="/questions"
         use:link
-        class="mt-5 inline-block rounded-lg bg-dusk px-5 py-3 font-semibold hover:bg-dusk-lift"
+        class="btn-filled mt-5 inline-block"
       >
         Add questions
       </a>
@@ -305,7 +304,7 @@
                  border-dusk-lift/40 bg-dusk/20 px-5 py-3"
         >
           <p class="text-sm">
-            Every question is answered for this day. Tap any value to change it.
+            All answered for this day.
           </p>
           <a
             href="/stats"
@@ -405,20 +404,12 @@
             {answeredCount}<span class="text-haze">/{questions.length}</span>
           </p>
           <p class="max-w-md text-haze">
-            {#if complete}
-              Every question for {day === today() ? 'today' : dayLabel(day)} is
-              answered. Step back to change any of them, or see how the last weeks
-              have gone.
-            {:else}
-              {remaining}
-              {remaining === 1 ? 'question is' : 'questions are'} still open. Step back
-              to answer {remaining === 1 ? 'it' : 'them'}, or leave the day as it is.
-            {/if}
+            {complete ? 'All answered.' : `${remaining} still open.`}
           </p>
           <a
             href="/stats"
             use:link
-            class="rounded-lg bg-dusk px-5 py-3 font-semibold transition hover:bg-dusk-lift"
+            class="btn-filled"
           >
             See patterns →
           </a>
@@ -442,3 +433,4 @@
     </footer>
   {/if}
 </section>
+</Frame>

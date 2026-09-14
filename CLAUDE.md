@@ -156,7 +156,7 @@ The app is four trackers sharing a login, and the code says so. Five zones, and
 | Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `pomodoro.py` | `todos.py` | `auth.py`, `users.py`, `admin.py`, `changes.py`, `sync.py` |
 | Services | `services/wellbeing.py` | `services/timetrack.py` | `services/pomodoro.py` | `services/todos.py` | `services/clock.py`; `services/__init__.py` re-exports all |
 | Routes | `routes/wellbeing/` | `routes/time/` | `routes/pomodoro/` | `routes/todos/` | `routes/` — Landing, Login, Settings, Users |
-| Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/todos/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `day.js`, `period.js`, `habits.js`, `Swimlanes.svelte`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js`, `palette.js`, `icons.js`, `IconPicker.svelte`, `focus-mode.js`, `todo-settings.js` |
+| Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/todos/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `day.js`, `period.js`, `habits.js`, `Swimlanes.svelte`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js`, `palette.js`, `icons.js`, `IconPicker.svelte`, `focus-mode.js`, `todo-settings.js`, `Frame.svelte`, `theme.svelte.js` |
 
 Focus shows the rule working: it needs `saveEntry` and `projects`, both already
 exported from the shared `store.js`, so importing *those* points inward rather
@@ -266,6 +266,35 @@ utility classes carry the type treatment — `.meta` for labels and metadata, `.
 for anything tabular. Add a token to `@theme` rather than reaching for a raw palette
 step like `bg-indigo-600`.
 
+**The light theme is a rebinding, like a section.** Settings → Appearance offers
+Dark, Light and Match device, stored **per device** (`ht.appearance`) and applied
+by a few inline lines in `index.html` before the bundle loads, so a light device
+never flashes dark. `:root[data-theme='light']` in `app.css` redefines the
+tokens, so a new token needs a light value there too or it stays dark. Four
+consequences:
+
+- **`--color-white` is rebound to the dark ink**, which is what flips the ~500
+  `*-white/NN` hairlines without touching a class — so `bg-white` is *not* white
+  under light. Anything that must be white in both themes (the QR code) is
+  `bg-sheet`.
+- **Text on an accent fill is not `paper`.** A filled control inherits its text
+  colour, which under light is dark text on a dark fill. A `@layer base` rule
+  rebinds paper and haze on `.bg-dusk`, `.bg-dusk-lift`, `hover:bg-dusk-lift`
+  and `.btn-filled`; a new kind of filled control needs adding there. That list
+  is exactly what broke when the two landed together: Settings' buttons became
+  `.btn-filled`, the rule still named only `bg-dusk`, and their text measured a
+  luminance of 0.01 on the dark fill until the class was added.
+- **A canvas cannot read `var()`.** Charts take their colours from
+  `themeToken()`, which also reads the theme, so options built in a `$derived`
+  redraw on a switch, and a hex literal in chart options is a chart stuck in one
+  theme. Test a redraw on a page with no one-second tick: the focus week chart
+  redraws every second anyway, and passed with the theme read deleted.
+- **Contrast is a unit test.** `theme.test.js` parses `app.css` and holds 4.5:1
+  for paper, haze and each section's ember in both themes. Dark predates the
+  floor and misses it on some accent fills — text on the focus fill 2.58:1, on
+  the hover fills 1.84 to 2.99 — which is the owner's call rather than a quiet
+  change.
+
 Flowbite v4 dropped the `primary-*` scale used by earlier versions, and a class that
 names a token which does not exist produces **no CSS at all** rather than an error —
 `bg-primary-700` is silently invisible. After adding a class built on a new token,
@@ -357,10 +386,45 @@ opacity lifts it into a layer of its own, so it paints over the enabled neighbou
 and takes that neighbour's taps in the overlap. Gaps between reaches should meet,
 not overlap.
 
+**One text-field shape for the whole app**, as an unlayered rule in `app.css`: the
+dominant 16px radius (`rounded-lg` is 16px here, Flowbite redefines
+`--radius-lg`), a white/15 border, the `ink` fill, no Flowbite focus shadow — which
+only ever reached inputs with a `type` — and the app's own 2px `:focus-visible`
+outline. Sixty fields across twelve pages came in seven variants. Size is left
+alone; the quick-add's input stays transparent over its overlay, and a field
+joined into a stepper keeps the group's square corners. **An unlayered shape rule
+decides every state of the property it sets**, so every `hover:border-*` and
+`focus:border-*` beside a text field now does nothing — the quick-add's lighter
+hover and its green focus border among them.
+
 **One checkbox and one slider for the whole app**, both as unlayered shape rules in
 `app.css`: a 16px box with a 4px radius, and one track with a paper thumb whose
 track takes the section's accent. They reach controls in files nobody else may
 edit, which is the point of putting them there.
+
+**An overlay opened by a press hangs from its anchor and never reflows the page.**
+The phone menu opened in place and pushed every page down 260px; it is
+`absolute top-full` with its own ground now, closes on a tap outside through
+`dismissOn`, and its rows are `min-h-11`. **A confirmation belongs under the row it
+asks about, never inside the row's controls**: a `basis-full` question inside the
+group that shares the name's line forced the group to wrap, and deleting a list
+rebuilt its whole row and grew the page 108px.
+
+**A line beneath a translucent block is still a line through its text.** Moving
+the calendar's now-line under the blocks only hid it once each block's tint was
+mixed *into* the ground token (`color-mix(… 18%, var(--color-ink))`) rather than
+over transparency — identical over the plain ground, and opaque over what lies
+beneath.
+
+**A native date or time input at 16px is wider than a phone modal.** Grid and flex
+items default to their content's minimum, so the modal's fields need `min-w-0`
+and a one-column grid — measured with a touch context, since without one the 16px
+rule never applies and the test passes against the bug.
+
+**A disabled fade is a contrast measurement per theme.** The same opacity reads
+fainter on a light ground — haze at 30% is 1.9:1 in dark and 1.6:1 in light — so
+the light theme lifts `disabled:opacity-*` in `app.css` by naming those utilities,
+and no control's class string changes.
 
 **Toasts sit at the top, under the header.** The bottom of a phone is where the
 quick-add and the on-screen keyboard are, and a toast there covered the field a
@@ -372,6 +436,15 @@ valueless `data-kind` on a modal header gave one name two meanings; renaming the
 newcomer to `data-task-kind` beat loosening the locators that were already
 right. The same lesson as a new `aria-label` making an old `getByLabel`
 ambiguous, one attribute along.
+
+**A button's kind is a class, not a string of utilities.** `.btn-filled`,
+`.btn-outline` and `.btn-danger` in `@layer components` in `app.css` give one radius
+per kind — 16px filled, 6px outlined and destructive, the dominant shapes when 69
+buttons were counted — and one 44px minimum height for all three with the label
+centred, so layout utilities beside them still apply. A button sharing a row with
+pills keeps the pills' height (the streak steps), and one that appears because of
+state keeps the height of the row it joins (*Clean up N done* at 44px moved the
+grouping row 8px). The todo half's own buttons have not been converted yet.
 
 Hover has one answer per kind of control, listed at the top of `app.css`: outlined
 → `border-white/40`, destructive → `border-ember`, filled → `bg-dusk-lift`, card →
@@ -648,6 +721,91 @@ stayed live offline: a priority unticked offline looked applied, said nothing, a
 came back ticked after the next reload. Every control that needs the server now
 sits inside one `<fieldset disabled={offline}>`, so a control added later cannot
 forget to disable itself, and only what works offline stays outside it.
+
+## A page that must ask before leaving asks the router
+
+Leaving the Time import mid-write left a partial import with nothing saying so.
+`beforeNavigate(fn)` in `router.js` guards link clicks, `navigate()` from code and
+Back/Forward alike, and a guard returning `false` cancels. A refused Back or
+Forward is undone by the same distance with `history.go`, which keeps the Forward
+entries, because every entry the router makes carries its position `at`; one made
+outside the router has none and falls back to `pushState`, losing Forward. **A guard
+that runs after the irreversible step guards nothing**: sign-out clears the tokens,
+which swaps the whole app to Login whatever the route, so `leave()` asks
+`mayNavigate(to)` first, and the next `navigate(to)` does not ask again. The import
+keeps `beforeunload` for a closed tab. **A count a closed tab leaves behind is a floor**: progress is saved
+after each chunk lands and called exact only when the loop itself finished
+stopping (*stopped after 100 of 250*, against *cut short after at least 100*).
+A file is refused as binary on a NUL or more than 1% control characters in its
+first 8KB — not on a failed UTF-8 decode, which would refuse the Windows-1252
+CSVs Excel writes.
+
+**Back closes a modal through `openLayer`, and every other close gives the entry
+back.** Opening pushes an entry with the same address; moving between two entries
+of one address is never a navigation; a navigation made from inside the modal
+replaces its entry, so Back from `/focus` reaches the board with the modal closed;
+and a marker whose modal is gone — after a reload — is stepped past, never
+reopened. The entry a close gives back stays as a Forward entry no page can delete,
+so history grows by one on the first open and never again. **`history.back()`
+followed at once by `pushState` is a race** that Chromium lost, ending on the wrong
+entry, so anything changing history while a `back()` is on its way waits for its
+`popstate`. The task modal is the only modal dialog; the menus, the sync panel and
+the sign-out question stay out of history.
+
+**Tell a keyboard press from a click with `event.detail === 0`.** Moving focus
+into a panel on every open changes mouse behaviour; the detail check changes only
+the keyboard path, and a test that clicks and asserts the field is *not* focused
+keeps it that way.
+
+## Signing out never empties the outbox
+
+Queued writes carry the account that made them, and `loadQueue` and `drain` read
+only the signed-in account's — so another account signing in on the device
+neither sees nor sends them, and their own account's next sign-in there does. A
+sign-out with writes waiting therefore **sends them first**, for up to five
+seconds, and only if some are still waiting asks, in words that say exactly that.
+The queue is re-read whenever the account changes, not only on page load: without
+that, a sign-in without a reload kept the previous account's count in the badge.
+**The snapshot is one account's, and hydration is per account, not per page
+load.** `ready()` hydrates again whenever the token names someone new, and no
+snapshot write lands until `hydrate` has checked the owner and set `persistFor`;
+signing out writes nothing. Checked once per load, a sign-in without a reload
+wrote the new account's rows under the old owner's mark, and that account's next
+offline reload came up empty.
+
+**Refusals and notices belong to the account whose write they answered.** They are
+stored under `unread:<account id>` and reloaded with the queue whenever the
+account changes, so another account signing in on the device sees neither the
+count nor a sentence that may name somebody else's list, and the owner's come back
+with them. A reply landing after the account changed is filed for the account the
+refused intents carry and not shown. The single shared record from before carried
+no owner and is deleted unread.
+
+**A reply belongs to the account that sent the request.** `quietly` records
+`tokenHolder()` before the request and returns `null` if the token names someone
+else when the reply lands — the same "a read that never arrived" every loader
+already handles. Clearing `inFlight` at sign-out drops a promise but does not
+cancel its continuation, so a project list sent for one account landed on the
+next account's screen and in its snapshot. Tested by holding the request with
+`page.route` until the other account is signed in; to reload as an account signed
+in through the form, stash its tokens in sessionStorage and restore them in an
+init script added after the fixture's, which otherwise restores its own account.
+
+**A sign-in returns to the address it was drawn at**, through the second factor
+too; a `next` on `/login` is followed only for a same-origin app path (no `//`, no
+backslash, not `/login`). **An unknown address gets a not-found page and keeps the
+address**, because the typo is what the reader needs to see; a trailing slash is
+corrected in the router, and routes match with `Object.hasOwn`, since
+`'toString' in ROUTES` is true.
+
+**A date outside the current year shows its year**, in `dayLabel`, so every caller
+follows — a 2019 card read *FRI, MAR 1*. `weekLabel` in `lib/todos/calendar.js` is
+a separate function and does not yet.
+
+**A keyboard needs one way in per thing, not one per pixel of it.** The calendar
+had twenty-four tabbable hour rows a day; they are out of the tab order now, and
+the day's `+` opens the task where the time is typed. Every signed-in page starts
+with a *Skip to content* link.
 
 ## A write that reads server state drains the queue first
 
@@ -1042,6 +1200,12 @@ here:
   a client-local `day` — "feed the cat tomorrow at nine" means nine o'clock
   wherever you are. Only the columns recording something that *happened* —
   `done_at`, `archived_at`, `active_since` — are UTC instants.
+- **A rank is `^[a-z]+$`, and the server says so.** `RANK_PATTERN` refuses a
+  malformed key per intent, derived from what `between()`, `spread()` and the
+  inbox's literal `a` can produce — checked against ten thousand generated drops
+  rather than against the seeds, which had been writing `b0`…`b19`, keys no
+  client writes. The client never throws on a stored malformed key: a drop beside
+  one re-ranks the column.
 - **Order is a fractional rank string, and `between()` is total.** It always
   returns a key strictly between its two neighbours, including between two equal
   ones, and it **never ends in `a`** — which is what lets the inbox hold the
@@ -1054,11 +1218,25 @@ here:
   in every grouping rather than a special case per view — and it is why
   `place(task, column, index)` is the only way a card moves, whether a pointer,
   an arrow key or a drop on a pager tab moved it.
+- **Whether columns fit is a measurement, not a breakpoint.** A column may narrow
+  to 160px; a grouping whose columns do not fit the frame at that width is drawn
+  as the pager at any window size, decided from the frame's width, which content
+  cannot change. At 844×390 Kanban's fourth column was cut 100px behind a
+  sideways scroll; Size in columns is a pager at 768 and 844 now.
 - **Below 48rem a column layout becomes a pager**, not a squeeze: a tab strip
   with counts, one column on screen, swipe or tap to move. The column is the
   same markup at both widths, so there is one card and one drop handler rather
   than two. A tab is itself a drop target meaning *the end of that column*,
   which is the only honest answer a name can give.
+- **The pager opens on the first column holding a task**, or on the first column
+  when none does — seven of fifteen openings measured landed on an empty column
+  while another held tasks. The landing is decided when a grouping is opened or
+  the board first shown, follows the columns until a task arrives, and is then
+  fixed for that grouping, so emptying the column you are on never turns the
+  page. A tab, a swipe or an edge turn is a choice that wins **within its
+  grouping only**: kept as a bare index it carried into the next grouping's
+  columns by position, and a test could not see that while the index it steered
+  to happened to equal the next landing.
 - **Steps are their own table and their own intent.** Ticking one is one write
   rather than a rewrite of its parent, so a `todo.upsert` payload carries no
   steps at all and the projection keeps whatever steps a task already had. A
@@ -1081,6 +1259,13 @@ here:
   is in. The archive is therefore ordered by something only the server knows,
   which is why a locally archived task is drawn from `todos` alongside the page
   `ensureArchive` read, deduplicated on `client_id`.
+- **A collection not in the snapshot has an unknown count until a read confirms
+  it.** After an offline reload the archive read *0 · Nothing here yet* while the
+  server held three — empty because never read is not empty, and that is the app
+  inventing data. It says *The archive needs a connection* (or *Reading the
+  archive…*) and shows no count until `archiveRead` confirms a read, and the
+  connection is part of its loader's query so a failed read is asked again on
+  reconnect: the change digest cannot report a collection this device never read.
 - **The archive is never in the snapshot.** It is paged, it is read when it is
   looked at, and it is the one collection the queue is not laid over — a task
   *entering* it is an ordinary upsert with the archive's `list_id`. The foot of
@@ -1113,6 +1298,13 @@ here:
   while the network thinks about it, which is the defect this file opens with.
   It cost a test one full parallel run before the test was made to open past the
   window rather than the app made to wait.
+- **Every page that restores a view from preferences needs the per-control steer,
+  not only the todo pages.** Time Patterns and Wellbeing Patterns both assigned
+  the confirmed read over a window, grouping or view chosen while it was out,
+  three runs in three with the read held 4s. And a control bound with
+  `bind:value` or `bind:checked` never passes through a click handler, so it
+  needs `oninput` or `onchange` beside the bind to mark itself — a page that
+  marks only its pills still loses a slider moved during the read.
 - **A choice made while the preferences read is outstanding is a real choice.**
   Both todo pages restore their view after an await, and both used to assign
   over whatever the reader had touched in between — a due-date toggle checked on
@@ -1157,6 +1349,10 @@ here:
   re-rendering while every other column carried on. It reads as "the drag state
   is not reactive", which is the wrong diagnosis entirely. The gap is built as
   one pass over the cards now, so there is nothing to splice.
+- **A task title is a textarea that grows with its text.** As an input a
+  196-character title scrolled 1321px sideways at 320. Enter adds no line and a
+  pasted line break becomes a space — tested with Enter *mid*-title, because at
+  the end the save trims the space away and a broken guard passes.
 - **Typed saves on a debounce; picked saves on `change`.** `change` does not
   fire on a text field until the focus leaves it, so an estimate typed as the
   last thing before closing was never saved. Title, notes, estimate and a step's
@@ -1219,6 +1415,17 @@ here:
     would be two `data-client-id`s for one task, and unmounting it mid-gesture
     would take the pointer capture and the `touchmove` guard down with the node
     they are attached to.
+- **A FLIP measures with the transition already off.** The render that ends a
+  carry removes the carried transform and restores the card's own `transition` in
+  one style change, so the browser eases the old transform away and a box read
+  then includes it. `settleInto` sets `transition: none` first, which cancels the
+  running transition and jumps it to its end. On a drop that writes nothing there
+  is no second render to correct the reading, and a card dropped onto its own
+  slot flew in from the top edge in every grouping; a moved card flashed there for
+  one frame. **A settle is tested by its path, not its end**: sample the card's top
+  every frame from release, with motion on and `matchMedia` asserted, and hold
+  the worst frame to the band between the release top and the slot top — every
+  test that polled the final box passed while the card flew.
 - **The settle is a FLIP, and `prefers-reduced-motion` needs no branch.** On
   release the drag records where the pointer let go; the card is measured in its
   new place *after* the store has moved it, put back at the release point with
@@ -1455,6 +1662,30 @@ pair honest. The clear where a read *begins* is the load-bearing half, since
 without it the map would lay every local write over every later reply for ever —
 and another device's edit arrives precisely *by* a read replacing this one.
 
+**A write made before a read began is not safe either, while its own request is
+still in the air.** The server can answer the read before it commits the write,
+and the write's reply can empty the queue before the read's reply lands — so a
+map emptied where the read begins holds nothing for it, the drained queue holds
+nothing either, and the reply takes the row off the screen. The map therefore
+keeps whatever the queue still names (`unconfirmed` in `projection.js`), both
+where a read begins and where its reply lands, for all four collections; an
+intent that cannot name its row (`step.delete` names only the step) keeps the
+whole map while it is queued. Seen as the focus page's copy button offering
+0h 30m beside an hour of totals — `transferDay` re-reads the pomodoros while the
+next Start is being sent — which failed about once per family run until the
+requests were put in that order by hand, and then failed every run.
+
+**A signal derived from a sync reply is published only once the queue agrees with
+that reply.** `notices` and the refusal toast both start reads, and a read that
+begins while the queue still names the answered intents takes them for
+unconfirmed writes — so `unconfirmed` laid the device's version over the server's
+decision. A session stretched over another read 6h where the merged union is 7h,
+every run, the moment `unconfirmed` landed; `sendChunk` now retires the answered
+intents and reloads the queue before publishing either. The refusal half is held
+by *a refusal re-reads the tasks only once the queue has let the refused write
+go*, which holds the lists read and `/api/changes` so only the tasks re-read can
+decide.
+
 One premise to keep in view if the range machinery is ever repaired: `wanted.start`
 is set only when `loadedRange?.start` and `start` are both truthy, and the first
 read stores both as `undefined`, so every later read is unbounded and shares one
@@ -1484,6 +1715,22 @@ and then a read *starting* would clear a map holding writes the other still need
   read back from layout here, and it decides only *which* text is drawn, never
   where anything goes. Three blocks at 07:00 used to read `07:00 07:00 07:00`,
   which is a picture of nothing.
+- **A carried block lands where its top is drawn, never where the pointer is.**
+  The grid drop is the pointer's y less the grip — the same offset the carried
+  copy is drawn with — so the copy, the shadow and the stored time are one number.
+  Aimed with the pointer, a 2h block picked up by its middle and moved up half an
+  hour promised 09:30 from 09:00, which is how *it lands later* was reported. A task
+  lifted out of the anytime row has no meaningful grip and aims with the pointer,
+  as the row and a strip chip do. A test that grips a block's centre releases at
+  the target line plus half the block (`topAt`).
+- **A phone's Week is an agenda, not one day of hours.** Below 48rem Week lists the
+  strip's seven days, each with its heading, its `+` and its tasks — untimed first,
+  then timed by start with time and estimate — and an empty day reads *Nothing
+  planned*. The hours, dropping at a time and resizing stay Day's; a heading opens
+  its day in Day and the pill follows. A section is a strip chip as a drop target:
+  the day alone, keeping the time. It is never its own scroll box, so the drag
+  scrolls the window, and whether it shows is derived from width and mode, never
+  stored. Until then a phone's Week drew one day of hours identical to Day.
 - **Day mode names a day and steps a day.** The label and the arrows follow the
   mode, never the screen width, so a phone in week mode still steps a week.
 
@@ -1529,8 +1776,9 @@ colour is a 3px edge bar at full strength plus a 12% tint mixed *into*
 `ink-soft` — into the card's surface rather than over transparency, because the
 card-against-page difference is what makes it read as a card. 12% and 16% were
 indistinguishable on screen, so the numbers decided: the due chip's
-`text-alarm` measures 3.18:1 against the card at 12% and 2.95:1 at 16%, worst
-case amber. **A card paints only a colour chosen for the task** and deliberately
+`text-alarm` measured 3.18:1 against an amber card at 12% and 2.95:1 at 16%;
+re-measured across every chip colour the worst case is `haze`, at 3.09:1, and
+4.72:1 in light. **A card paints only a colour chosen for the task** and deliberately
 does not fall back to its list's, or every existing card would arrive tinted in
 a colour nobody picked; a calendar block does fall back, because it has always
 drawn the list's colour. `taskColour` holds that precedence once.
@@ -1588,15 +1836,51 @@ The menu is where the interesting rules are:
   `data-task-colour` on the card rather than `data-colour`, which the picker's
   swatches already use: one name, one meaning.
 
-### The todo half has one frame, and content anchors left inside it
+### The app has one frame; a half centres one column inside it
+
+Every page of every half draws inside `lib/Frame.svelte`, and the header nav uses
+the same cap and gutter, so the logo sits at the frame's left edge everywhere.
+**A half centres one column, and every page of the half is that column's width** —
+`column` on `Frame`, spelled once per zone in `lib/<zone>/column.js` (wellbeing
+`6xl`, time `5xl`, focus `3xl`, todos `todo-reading`), and no page carries a `max-w-*` of its own.
+Centring each page's own width moved Time's heading 128px between its tabs;
+anchoring every page at the frame's left pressed the whole app against the left of
+a wide screen, which the owner reported; and narrow tabs starting at a wide
+column's left edge put Track 256px right of true centre, with no recorded reason
+for the narrow width. Now every tab of a half is one width at one x, truly centred,
+and `e2e/half-width.spec.js` holds it. Landing, Settings and People are tabs of
+nothing and centre at their own width.
+
+**The todo half centres one column too**, `max-w-todo-reading` (1112px) in
+`lib/todos/column.js`. The heading, *Clean up N done*, the pills, the list chips
+and the layout toggle sit in it on Tasks, Calendar and Lists, in every view, so
+nothing a person steers with moves when a view changes. One-column content fills
+it: every stack, Plain, the archive, the calendar's Day on a desktop, and the Lists
+rows. Only a board of several columns, and the calendar's Week, is handed to
+`Frame` as `board` with `spread` and fills the frame from its left edge — a sibling
+of the column rather than a negative margin, because an exact breakout would need
+`container-type`, which makes the frame the containing block of the carried card's
+`position: fixed`; and the same box either way, so switching layout changes a class
+and never remounts the board. **A control that belongs to a picture moves with
+it**: when a picture breaks out of the column, any navigation drawn inside the
+picture's component has to be lifted into the column. The calendar's arrows,
+label and Today live in `CalendarStepper.svelte`, drawn in the column in both
+modes; in Week they had followed the spreading grid 376px left of where Day drew
+them, directly under the Day/Week pills. The day strip stays with the grid,
+because in Week each chip is the header of the hour column beneath it. Centring starts at `md`, so
+a phone is unchanged. `--gutter` is set once on
+`:root`.
 
 `Frame.svelte` is fixed by the window, never by the view: full width less the
-gutter, capped at `max-w-todo-frame` (125rem — what Size in five columns
+gutter, capped at `max-w-frame` (125rem — what Size in five columns
 measured as needing, with the densest card's detail row on one line), and
 centred. It owns the gutter, 12px on a phone and 20px from `sm`, as `--gutter`,
 so rows that bleed to the screen edge use the same number and no page picks its
-own. A column or quadrant board fills the frame; a stack keeps its 1112px
-reading width and starts at the frame's left edge. *Centred* is what moved the
+own. A column or quadrant board fills the frame; a stack fills the half's column, and
+the heading and toolbar stay in that column in every view. **A single column is a stack
+whatever layout is remembered**: the archive reached from a column or quadrant
+grouping used to fill a column row or half a 2×2 grid, and `arrangement` in
+`Tasks.svelte` draws it stacked. *Centred* is what moved the
 heading on every change of view — by 192px at 1280 and 512px at 1920 — not
 *wide*, and a heading still lines up with the first column of a wide board.
 
@@ -1615,7 +1899,12 @@ heading on every change of view — by 192px at 1280 and 512px at 1920 — not
   Size three over two, Lists wrapping — each measured at 320. A column is never
   its own scroll box on a phone, nor on any window under 30rem tall: a phone held
   sideways at 844×390 counts as wide, and its capped columns hid cards behind a
-  fade.
+  fade. **The calendar's hour grid follows the same rule**: under 30rem tall
+  there is no box, the day header sticks to the window, and a drag near an edge
+  scrolls the window. Which of the two applies is read from the grid's computed
+  overflow rather than from the media query, so drawing and dragging cannot
+  disagree. There it opens at midnight rather than scrolled to the hour, because
+  scrolling the window on arrival would take the controls off screen.
 - **An empty-row reserve belongs to the grouping, not to the app.** On the phone
   pager every column's heading row is one height per grouping — a button's height
   if any column of that grouping draws a heading button, one text line otherwise —
@@ -1638,11 +1927,36 @@ heading on every change of view — by 192px at 1280 and 512px at 1920 — not
 
 Four more that came out of using the board rather than reading it:
 
-- **Restoring focus after a write means awaiting the write.** `await tick()`
-  finds the element still in its old column, does nothing because focus is
-  already there, and loses it a microtask later when the projection lands — so
-  a keyboard move worked exactly once and then went silent. `place` returns its
-  write for that one caller.
+- **A card that moves keeps the focus, whatever moved it.** A focused element
+  moved within a keyed `{#each}` loses focus, and a card that changes column is a
+  new element — so an arrow move, Plain's settle after a tick and Kanban's move to
+  Done all dropped it to `<body>`. `Tasks.svelte` remembers the focused *card* and
+  gives the focus back whenever the columns redraw with it on nothing; focus
+  landing elsewhere, or a press outside the card, forgets it. This replaced
+  awaiting the write in `keepFocus`, which the settle and the move to Done had
+  no write for.
+- **Keyboard moves are chained, not fired.** A move reads the column's order, and
+  the order only changes once the write before it lands, so four presses with no
+  pause read one order four times and moved the card one slot. Each move waits
+  for the previous and finds the card again by identity, and the announcement is
+  built from that same read. Test it on ranks the app writes (the quick-add's),
+  not only on one-letter seeds, which hid it one run in two.
+- **After a cleanup is answered, a keyboard press follows it to a quick-add; a
+  pointer press does not.** The archived tasks and the button both go, so focus
+  fell to `<body>`: a column's cleanup now lands on that column's quick-add, the
+  toolbar's on the first quick-add on the board, only when `event.detail === 0` —
+  focusing a text field after a tap opens a phone's keyboard over the board.
+- **A question that replaces the button that raised it takes the focus onto its
+  Cancel**, and Escape or Cancel gives it back to that button — otherwise Enter
+  drops focus to `<body>`, and in the modal Escape then closed the whole dialog.
+- **A menu opened from the keyboard is a real menu**: `role="menu"` with
+  menuitems, arrows that wrap, Home and End, Tab closes it, and closing returns
+  focus to what opened it — except when a press elsewhere or a scroll dismissed it.
+- **A title is reading text, so it may break inside a word**:
+  `overflow-wrap: anywhere`, not `break-word`, because only `anywhere` lowers the
+  minimum width a flex row sizes the card from. A 200-character title with no
+  spaces made the whole todo page 1635px wide at 1280. A *label* still never
+  breaks inside a word.
 - **An auto-scroll zone is measured against the visible part of the box**, on
   the board as in the calendar — and the *test* needs a window short enough that
   the box runs past the fold by more than the zone, or the probe on the clamp
@@ -1718,8 +2032,19 @@ Five rules that came out of reviewing the task modal by using it:
   button says what the press *does* — "Starting one ends a pomodoro already
   running" — unconditionally, rather than hiding or disabling itself, because
   which pomodoro is running is `lib/pomodoro/derive.js`'s rule and the todo zone
-  may neither import it nor re-spell it. Said rather than prevented, like the
-  note under the List select.
+  may neither import it nor re-spell it. Said rather than prevented.
+
+**A sentence on screen earns its place by carrying a fact the screen does not
+otherwise show** — a consequence, a scope, or where something went. Explaining an
+ordinary gesture, restating a label or a heading, and always-on hints that matter
+once were cut on request, forty-odd of them across the four halves, and an empty
+state is one short line. So `AdminOffline` says only *Changes here need a
+connection*, and a quick-add column that cannot be read as *Add to …* names its
+whole gesture with `addsAs` (*Add a done task…*), which drives the placeholder
+and the accessible name together. Two checks before cutting: CLAUDE.md may cite
+the sentence as the example of a rule, and a test may assert a *fragment* of it
+— the habit chip's `🔥 —` was asserted where a search for the whole string found
+nothing.
 
 ## Days, instants and offsets
 
@@ -2090,6 +2415,86 @@ the test name, and do not move on until you can make it fail on demand.
 - **A confirm step makes "the button is gone" prove nothing.** The first click
   already removes the button, before anything is deleted, so a test waits for what
   the delete itself changes before it reads `data-pending`.
+- **Find a control by its hook or role, never by the utility that paints it.**
+  `button.bg-dusk` found nothing the moment the class became `btn-filled`.
+- **"Where content starts" skips invisible padding and negative margins.** A
+  padded wrapper with no border or background, and a 44px control reaching out
+  through a negative margin, both read as content 8–20px left of the real edge.
+- **A position read while something can still be transitioning must hold still
+  across two frames.** The reduced-motion reset gives every element a transition,
+  so a box read straight after its `top` changes is where it was one change ago —
+  the calendar shadow read half an hour row (24px) above where it was drawn, two
+  runs in four under CPU throttling. A plain poll is not enough either: a shadow
+  mutated 24px low passed one, because the stale position plus the mutation
+  equalled the right answer on the first sample.
+- **Before bisecting patches for a regression, compare the failing trace's bundle
+  hash with a fresh build.** The identical bundle passing turned a patch hunt into
+  a timing hunt; a trace's DOM snapshots keep inline styles and scroll offsets,
+  which is enough to tell a wrong aim from a wrong measurement.
+- **A width a page carries beside its half's column is a second source for one
+  number.** Test it against the column `Frame` draws, never against a class name.
+- **A "centred" test measures the column from the widest page, never from the
+  class the fix chose.** Written that way, one test catches both a page anchored
+  left and a tab given its own width.
+- **Switch groupings in a test by clicking pills on one page**, not by reloading
+  per grouping: a reload races the previous page's delayed save of the grouping
+  it was showing.
+- **A helper that stores view state through the API keeps the page's own saves
+  off the server.** A save the previous page already sent survives navigating
+  away, and waiting for quiet only narrows the window: `phoneBoard` answers the
+  page's `PUT /api/me/preferences` in its route, installed once per page.
+- **Playwright's `-g` matches the title joined with spaces, never `›`.** A grep
+  copied from the reporter finds no tests, and so does a title with an unescaped
+  quote — both read as *No tests found*, not as an error.
+- **"Nothing moves" is only as wide as the text it measured.** A control that
+  follows a label of changing text holds still only while every label fits the
+  label's minimum width: Today stays put today because both `MON, JUN 15` and
+  `JUN 15 – 21` fit 112px, and a week spanning two months or two years would still
+  push it. A walk run on one date passes against a label that is longer on another.
+- **After navigating, wait for the grouping pill, not the tabs.** The snapshot of
+  the *previous* grouping also draws tabs and satisfies the wait, so a landing
+  test raced itself. It bit a second helper, `phoneBoard`, which counted Size's
+  five tabs before Lists' three arrived and then waited 120s on a tab that had
+  gone — once per loaded run, and every run with `GET /api/me/preferences`
+  delayed a second, which that helper now does on purpose.
+- **Reproduce a request race by ordering the requests, not by load.** Hold the
+  write, answer the read with what the server holds meanwhile, let the write
+  finish, then fulfil the read. It failed every run where repeated runs had
+  failed about once.
+- **Reach buttons sharing a flex row cover for each other.** The tallest sets the
+  row's height and the rest stretch to it, so removing one button's height
+  passes; a probe breaks every button in the row at once.
+- **Playwright's file arguments are regex filters over the path.** A list of spec
+  names can pull in other specs, so read `Running N tests` before trusting what
+  a run covered.
+- **Build a rule's probe input so every other rule passes first.** A short line
+  with a NUL is also over the control-character budget, so deleting the NUL rule
+  changed nothing until the line was longer than a hundred bytes.
+- **`context.setOffline(false)` drains the queue by itself within half a
+  second**, so a test proving a gesture sends what is queued holds `/api/sync`
+  with a `page.route` that aborts while a flag is set, and clears the flag just
+  before the gesture.
+- **A poll for "no toast" is satisfied by the toast expiring.** Read the count
+  once.
+- **A seed must write what the server would accept from the app.** Tightening a
+  server rule then reads as a regression that is really the fixture's.
+- **Read a button that a confirmation replaces before the press.** An inventory
+  taken after the click never sees it, and a probe on it passes.
+- **A touch press lifts on its own timer, so a test waits for `[data-carrying]`
+  before moving.** A fixed 250ms wait and then a move is a scroll under load, and
+  the scroll cancels the press.
+- **A test about the hour grid on a phone says it is in Day** (`inDay`), because
+  phone width alone no longer names one picture.
+- **A probe's "already mutated" guard needs a marker the original cannot
+  contain.** A mutation that only deletes a line is a substring of the original,
+  so the guard refused to run it.
+- **A "nothing moves" baseline is taken before a question is raised.** A
+  confirmation may take room on a phone; the claim is that the page is back where
+  it started once it has gone.
+- **A tap-outside test must tap where the overlay is not.** The first menu test
+  tapped the heading, which lay under the open menu, and so followed a link.
+- **`pkill -f pattern` matches the shell running it.** Write `pkill -f
+  "[p]attern"`, or the command kills itself before anything else.
 - **One backend per worker.** `--workers=8` on a suite whose `global-setup.js`
   started seven sends the extra worker at a port with nothing on it, and every
   test there fails with `login as … failed`. That is the harness, not the app —

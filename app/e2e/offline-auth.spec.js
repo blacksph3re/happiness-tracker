@@ -214,3 +214,97 @@ test('blocked stops asking, rather than retrying a refresh token that cannot com
 
   expect(asked, 'a dead refresh token was retried on the timer anyway').toBe(0)
 })
+
+test.describe('signing out with writes waiting', () => {
+  test('sends them first, and asks nothing once they land', async ({ page, account, context }) => {
+    const project = await makeProject(account, 'The rewrite')
+    await page.goto('/time')
+    await expect(page.locator(`[data-project="${project.id}"]`)).toBeVisible()
+
+    // Refused at the door rather than offline: lifting `setOffline` drains the
+    // queue on its own within half a second, measured, which would pass this
+    // test against a sign-out that never tried.
+    let refusing = true
+    await page.route('**/api/sync', (route) => (refusing ? route.abort() : route.continue()))
+    await page.getByRole('button', { name: `Start ${project.name}`, exact: true }).click()
+    await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '1')
+    await page.waitForTimeout(1_000)
+    await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '1')
+    expect(await (await account.api.get('/api/time/entries')).json()).toHaveLength(0)
+
+    refusing = false
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+    await expect(page.locator('[data-signout-ask]')).toHaveCount(0)
+    expect(await (await account.api.get('/api/time/entries')).json()).toHaveLength(1)
+  })
+
+  test('that cannot be sent asks first, and keeps them for the same account', async ({
+    page,
+    account,
+    admin,
+    context,
+  }) => {
+    const first = await makeProject(account, 'The rewrite')
+    const second = await makeProject(account, 'The review')
+    const other = `e2e-other-${Date.now()}`
+    const created = await admin.post('/api/users', {
+      data: { username: other, password: 'other-password', is_admin: false },
+    })
+    expect(created.ok(), await created.text()).toBeTruthy()
+
+    await page.goto('/time')
+    await expect(page.locator(`[data-project="${second.id}"]`)).toBeVisible()
+    await context.setOffline(true)
+    await page.getByRole('button', { name: `Start ${first.name}`, exact: true }).click()
+    await page.getByRole('button', { name: `Start ${second.name}`, exact: true }).click()
+    await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '2')
+
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    const ask = page.locator('[data-signout-ask]')
+    await expect(ask).toHaveText(
+      `2 changes have not reached the server. Sign out anyway? They stay on this device and are sent the next time ${account.username} signs in here.`
+    )
+    await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
+
+    // Cancel is a real answer: still signed in, still holding both.
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(ask).toHaveCount(0)
+    await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '2')
+
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await page.getByRole('button', { name: 'Sign out anyway' }).click()
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+    await context.setOffline(false)
+
+    // Somebody else signs in on the device. No reload from here on: the fixture
+    // would put the first account's tokens back.
+    await page.getByLabel('Username').fill(other)
+    await page.getByLabel('Password').fill('other-password')
+    await page.getByRole('button', { name: 'Sign in' }).click()
+    await expect(page.locator('[data-card=time]')).toBeVisible()
+    await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0')
+
+    // Nothing of theirs is waiting, so this one is a single press.
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+    await expect(ask).toHaveCount(0)
+
+    // And the first account signing back in here is what sends them.
+    await page.getByLabel('Username').fill(account.username)
+    await page.getByLabel('Password').fill(account.password)
+    await page.getByRole('button', { name: 'Sign in' }).click()
+    await expect
+      .poll(async () => (await (await account.api.get('/api/time/entries')).json()).length, {
+        timeout: 15_000,
+      })
+      .toBe(2)
+    const theirs = await login(page.request, other, 'other-password')
+    const stored = await (
+      await page.request.get('/api/time/entries', {
+        headers: { Authorization: `Bearer ${theirs.access_token}` },
+      })
+    ).json()
+    expect(stored).toHaveLength(0)
+  })
+})

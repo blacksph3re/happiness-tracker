@@ -11,7 +11,7 @@ import {
   urgentDays,
 } from '../todo-settings.js'
 import { banked } from './fields.js'
-import { between, compareRank } from './rank.js'
+import { between, compareRank, isRank } from './rank.js'
 
 /**
  * What a column of the board means, and what dropping into one does.
@@ -107,6 +107,8 @@ import { between, compareRank } from './rank.js'
  *   creates is a task planned for yesterday and `Add to past…` named a region
  *   rather than the day. The quick-add names the gesture with this where a
  *   column sets it and with the heading otherwise.
+ * @property {string} [addsAs] The whole object of the gesture, where "Add to
+ *   …" does not fit at all: *Done* says `Add a done task…`. Wins over `adds`.
  * @property {string} [sweep] The id of a column this one's **open** tasks can
  *   be moved into in one gesture. Only *Past* declares one, into *Later*. The
  *   grouping names the target and nothing more: what the move *writes* is that
@@ -342,13 +344,11 @@ const board = {
       {
         id: 'done',
         label: 'Done',
-        // What keeps a task here, now that it is not the day: nothing leaves
-        // Done but an untick or the cleanup whose count is this column's.
-        hint: 'Until cleaned up',
+        hint: null,
         // What the quick-add here *does*, which the heading does not say:
         // typing into Done creates a task that is already ticked, and `Add to
         // done…` read as a control pointed at the wrong column.
-        adds: 'something already finished',
+        addsAs: 'a done task',
         // Done spans days, so a card here keeps its date chip: a task finished
         // last week drawn without one would read as today's.
         date: null,
@@ -357,7 +357,7 @@ const board = {
       {
         id: 'active',
         label: 'Active',
-        hint: 'Counting up',
+        hint: null,
         // Active spans days by the decision above, so there is no one date for
         // a card here to leave out.
         date: null,
@@ -1009,7 +1009,10 @@ export function dropNeighbours(column, task, index) {
 export function newTaskRank(column) {
   const rows = column?.tasks ?? []
   const open = typeof column?.doneFrom === 'number' ? rows.slice(0, column.doneFrom) : rows
-  const last = open.toSorted(compareRank).at(-1)
+  // Only keys the encoding can read: a malformed one left by an older write
+  // is sorted where plain string order puts it and passed over here, so a
+  // quick-add beside it never throws. The next drop in the column re-ranks it.
+  const last = open.filter((row) => isRank(row.rank)).toSorted(compareRank).at(-1)
   return between(last?.rank ?? null, null)
 }
 

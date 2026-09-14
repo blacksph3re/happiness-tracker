@@ -2,8 +2,10 @@ import {
   expect,
   installed,
   makeTodo,
+  makeTodos,
   openTasks,
   storedTodos,
+  systemList,
   test,
 } from './fixtures.js'
 
@@ -234,4 +236,49 @@ test('a title edited offline at 390 is the new title, once, on the card and in t
   await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0', { timeout: 15_000 })
   await expect(card(page, 'EDITED 3').locator('[data-title]')).toHaveText('Pay electricity bill EDITED 3')
   expect((await storedTodos(account)).map((one) => one.title)).toEqual(['Pay electricity bill EDITED 3'])
+})
+
+test('an archive this page has not read says it needs a connection, never that it is empty', async ({
+  page,
+  account,
+  context,
+}) => {
+  // Reported: online the archive read "Archive 3", and after an offline reload
+  // "Archive 0 / Nothing here yet" while the server held all three. The
+  // archive is never in the snapshot, so the column cannot know — and says so.
+  const archive = await systemList(account, 'archive')
+  await makeTodos(
+    account,
+    ['Posted the letter', 'Paid the bill', 'Fixed the tap'].map((title) => ({
+      title,
+      list_id: archive.id,
+      done_at: '2026-06-14T08:00:00',
+    }))
+  )
+  const held = await (await account.api.get('/api/me/preferences')).json()
+  const put = await account.api.put('/api/me/preferences', {
+    data: { ...held, todos: { ...(held.todos ?? {}), grouping: 'date', lists: [archive.id] } },
+  })
+  expect(put.ok(), await put.text()).toBeTruthy()
+  await page.goto('/todos')
+  const column = page.locator('[data-column="archive"]')
+  await expect(column.locator('[data-count="archive"]')).toHaveText('3')
+  await expect(column.locator('article[data-client-id]')).toHaveCount(3)
+  await installed(page)
+
+  await context.setOffline(true)
+  await page.reload()
+  await expect(column.locator('[data-archive-unread]')).toBeVisible()
+  // A negative claim, so sampled: no count and no "Nothing here yet" at any point.
+  for (let sample = 0; sample < 6; sample += 1) {
+    expect(await column.locator('[data-count="archive"]').count(), 'a count of an unread archive').toBe(0)
+    expect(await column.locator('[data-empty]').count(), 'an unread archive called empty').toBe(0)
+    await page.waitForTimeout(100)
+  }
+
+  await context.setOffline(false)
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await expect(column.locator('[data-count="archive"]')).toHaveText('3', { timeout: 15_000 })
+  await expect(column.locator('article[data-client-id]')).toHaveCount(3)
+  await expect(column.locator('[data-archive-unread]')).toHaveCount(0)
 })

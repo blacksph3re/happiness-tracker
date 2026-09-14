@@ -26,7 +26,6 @@
    * A notice above a page of live-looking buttons is a notice nobody reads
    * until after they have pressed one.
    */
-  let { does = 'Everything on this page changes the account itself' } = $props()
 </script>
 
 {#if $connection !== 'online'}
@@ -34,6 +33,6 @@
     data-admin-offline
     class="mb-6 rounded-lg border border-white/15 bg-ink-soft px-4 py-3 text-sm text-haze"
   >
-    {does}. Changes here need a connection; tracking and answering do not.
+    Changes here need a connection.
   </p>
 {/if}

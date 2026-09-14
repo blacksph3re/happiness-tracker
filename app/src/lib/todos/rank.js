@@ -42,6 +42,23 @@ export const REBALANCE_AT = 16
  */
 export class RankError extends Error {}
 
+/** What a rank looks like: one or more lowercase letters, and nothing else. */
+const RANK_SHAPE = /^[a-z]+$/
+
+/**
+ * Whether a value is a rank this encoding can compute with.
+ *
+ * The server refuses anything else now (`RANK_PATTERN` in `schemas.py`), but a
+ * row written before it did — a seed wrote `m9` — is still somebody's task, and
+ * the board has to draw it and move it rather than throw.
+ *
+ * @param {unknown} key
+ * @returns {boolean}
+ */
+export function isRank(key) {
+  return typeof key === 'string' && RANK_SHAPE.test(key)
+}
+
 /**
  * Read a rank as its digit values.
  *
@@ -207,6 +224,29 @@ export function between(lower = null, upper = null) {
   if (high === null) return after(low)
   if (low === null) return before(high)
   return midpoint(low, high)
+}
+
+/**
+ * Decide the key a card placed between two neighbours takes, or that it cannot.
+ *
+ * `between` throws on a key it cannot read, which is right for the arithmetic
+ * and wrong for a gesture: a drop next to a malformed key is still a drop. So a
+ * neighbour that is not a rank asks for the column to be **re-ranked** instead,
+ * the same answer a key grown too long gets — and that re-rank is what repairs
+ * the malformed one, in the gesture that met it.
+ *
+ * @param {string|null} lower The key before the slot, or null at the start.
+ * @param {string|null} upper The key after it, or null at the end.
+ * @returns {{rank: string|null, rebalance: boolean}} The key to write, or
+ *   `rebalance: true` (with `rank` null where there is none) when the column
+ *   should be re-ranked with `spread` instead.
+ */
+export function placeBetween(lower = null, upper = null) {
+  if ((lower && !isRank(lower)) || (upper && !isRank(upper))) {
+    return { rank: null, rebalance: true }
+  }
+  const rank = between(lower, upper)
+  return { rank, rebalance: needsRebalance(rank) }
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   makeTodos,
   openTasks,
   outboxEmpty,
+  resizeTo,
   savesView,
   storedTodos,
   systemList,
@@ -64,6 +65,19 @@ test.beforeEach(async ({}, testInfo) => {
 /** A seed's stamped identity, which is what everything here locates by. */
 function own(name) {
   return `${name}-${stamp}`
+}
+
+/**
+ * Put a phone calendar on Day, where its hours are.
+ *
+ * Below 48rem Week is an agenda, so a test about the hour grid on a phone says
+ * which of the two it is about.
+ *
+ * @param {import('@playwright/test').Page} page
+ */
+async function inDay(page) {
+  await page.locator('[data-mode="day"]').click()
+  await expect(page.locator('[data-body-day]')).toHaveCount(1)
 }
 
 /** A block, whether it is in the anytime row or on an hour. */
@@ -132,6 +146,23 @@ async function atTime(page, day, clock) {
     },
     [day, clock]
   )
+}
+
+/**
+ * Where to let go of a timed block gripped in its centre, so its top is at `clock`.
+ *
+ * A drop means where the carried block's top is drawn, which is the pointer
+ * less the grip — so the release point is the time's line plus half the block.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {import('@playwright/test').Locator} from The block `carry` will grip.
+ * @param {string} day
+ * @param {string} clock `HH:MM`, where the block's top should land.
+ */
+async function topAt(page, from, day, clock) {
+  const box = await from.boundingBox()
+  const point = await atTime(page, day, clock)
+  return { x: point.x, y: point.y + box.height / 2 }
 }
 
 /** The middle of a day's anytime row, which is a drop target of its own. */
@@ -409,6 +440,59 @@ test.describe('the week strip', () => {
   })
 })
 
+test.describe('the week label outside the current year', () => {
+  for (const size of [NARROW, PHONE]) {
+    test(`names its years and stays on one line with its arrows at ${size.width}px`, async ({
+      page,
+      account,
+    }) => {
+      // `weekLabel` said `Jun 8 – 14` for a June in any year. It follows
+      // `dayLabel` now, which makes the widest label a week spanning two years
+      // — the one that has to fit the row it sits in.
+      await page.setViewportSize(size)
+      await page.clock.setSystemTime(new Date('2026-12-30T13:00:00Z'))
+      await makeTodo(account, { title: 'Feed the cat', planned_on: '2026-12-30' })
+      await page.goto('/todos/calendar')
+      const label = page.locator('[data-week-label]')
+      await expect(label).toHaveText('Dec 28, 2026 \u2013 Jan 3, 2027')
+
+      /** The label and its arrows, and whether the three share one line inside the page. */
+      const layout = () =>
+        page.evaluate(() => {
+          const box = (node) => node?.getBoundingClientRect()
+          const text = document.querySelector('[data-week-label]')
+          const back = box(document.querySelector('[data-step="-1"]'))
+          const next = box(document.querySelector('[data-step="1"]'))
+          const own = box(text)
+          if (!text || !back || !next) return null
+          const range = document.createRange()
+          range.selectNodeContents(text)
+          const lines = new Set([...range.getClientRects()].map((one) => Math.round(one.top)))
+          return {
+            text: text.textContent.trim(),
+            oneLine: lines.size === 1,
+            between: back.right <= own.left && own.right <= next.left,
+            sameRow: Math.abs(back.top - next.top) < 1,
+            inside: next.right <= document.documentElement.clientWidth,
+            noSideways: document.documentElement.scrollWidth <= innerWidth,
+          }
+        })
+      const fits = { oneLine: true, between: true, sameRow: true, inside: true, noSideways: true }
+
+      await expect.poll(layout).toEqual({ text: 'Dec 28, 2026 \u2013 Jan 3, 2027', ...fits })
+
+      // Inside the current year it is the compact label it always was.
+      await page.locator('[data-step="-1"]').click()
+      await expect.poll(layout).toEqual({ text: 'Dec 21 \u2013 27', ...fits })
+
+      // And a week wholly in the next year names that year once.
+      await page.locator('[data-step="1"]').click()
+      await page.locator('[data-step="1"]').click()
+      await expect.poll(layout).toEqual({ text: 'Jan 4 \u2013 10, 2027', ...fits })
+    })
+  }
+})
+
 test.describe('the controls in Day', () => {
   test('the label names the day and the arrows step one day, while Week still steps a week', async ({
     page,
@@ -421,13 +505,15 @@ test.describe('the controls in Day', () => {
     await page.locator('[data-mode="day"]').click()
 
     // Read against the body's own heading, which names the day through the
-    // same function: one value, two readings from one source.
+    // same function: one value, two readings from one source. Every read is
+    // null-safe: `expect.poll` gives up on a callback that throws, so a sample
+    // taken before the calendar has drawn must come back empty, not raise.
     const read = () =>
       page.evaluate(() => ({
-        label: document.querySelector('[data-span-label]').textContent.trim(),
+        label: document.querySelector('[data-span-label]')?.textContent.trim() ?? null,
         heading: document.querySelector('[data-day-heading]')?.textContent.trim(),
-        body: document.querySelector('[data-body-day]').dataset.bodyDay,
-        next: document.querySelector('[data-step="1"]').getAttribute('aria-label'),
+        body: document.querySelector('[data-body-day]')?.dataset.bodyDay ?? null,
+        next: document.querySelector('[data-step="1"]')?.getAttribute('aria-label') ?? null,
       }))
 
     await expect.poll(async () => {
@@ -506,6 +592,9 @@ test.describe('the plus on a day', () => {
 
         const sizes = await page.evaluate(() =>
           [...document.querySelectorAll('[data-add]')].map((add) => {
+            // On a phone the plus is on every day of a list longer than the
+            // window, and a corner off screen hit-tests to nothing.
+            add.scrollIntoView({ block: 'center' })
             const box = add.getBoundingClientRect()
             const head = add.closest('[data-head-day]').getBoundingClientRect()
             const corners = [
@@ -578,11 +667,10 @@ test.describe('how many days are on screen', () => {
   test.describe('at phone width', () => {
     test.use({ viewport: PHONE })
 
-    test('Week draws one day body and the strip above it', async ({ page, account }) => {
+    test('Day draws one day body and the strip above it', async ({ page, account }) => {
       await makeTodo(account, { title: 'Feed the cat' })
       await page.goto('/todos/calendar')
-
-      await expect(page.locator('[data-mode="week"]')).toHaveAttribute('aria-pressed', 'true')
+      await inDay(page)
       await expect
         .poll(() =>
           page.evaluate(() => ({
@@ -606,6 +694,7 @@ test.describe('how many days are on screen', () => {
         { title: 'Dentist', planned_on: '2026-06-16' },
       ])
       await page.goto('/todos/calendar')
+      await inDay(page)
       await expect(page.locator(`[data-body-day="${TODAY}"]`)).toBeVisible()
 
       // Leftwards is forwards, the same direction every record in this app
@@ -627,6 +716,381 @@ test.describe('how many days are on screen', () => {
       await swipeBody(page, 60, 300)
       await expect(page.locator(`[data-body-day="${TODAY}"]`)).toBeVisible()
     })
+  })
+})
+
+/**
+ * A phone's Week is an agenda of the week's seven days.
+ *
+ * Reported from use: "in mobile, there is no difference between calendar day +
+ * week view." Below 48rem both drew one day of hours, and Week changed only how
+ * far the arrows stepped. Seven hour columns do not fit a phone, so Week is a
+ * schedule there — a heading per day and the tasks planned on it — and the
+ * hours stay Day's. Desktop Week is untouched, which `Week draws seven day
+ * columns and Day draws one` keeps.
+ */
+test.describe('a week on a phone is an agenda', () => {
+  test.use({ viewport: PHONE })
+
+  const WEEK = [
+    '2026-06-15',
+    '2026-06-16',
+    '2026-06-17',
+    '2026-06-18',
+    '2026-06-19',
+    '2026-06-20',
+    '2026-06-21',
+  ]
+
+  /** Every day section in order, and every row in each, out of one read. */
+  function readAgenda(page) {
+    return page.evaluate(() =>
+      [...document.querySelectorAll('[data-agenda-day]')].map((section) => ({
+        day: section.dataset.agendaDay,
+        empty: section.querySelector('[data-agenda-empty]')?.textContent.trim() ?? null,
+        rows: [...section.querySelectorAll('[data-agenda-item]')].map((row) => [
+          row.querySelector('span').textContent.trim(),
+          row.querySelector('[data-agenda-time]')?.textContent.trim() ?? null,
+          row.querySelector('[data-agenda-estimate]')?.textContent.trim() ?? null,
+        ]),
+      }))
+    )
+  }
+
+  test('Week lists the seven days, where Day draws one day of hours', async ({
+    page,
+    account,
+  }) => {
+    await makeTodo(account, { title: 'Feed the cat' })
+    await page.goto('/todos/calendar')
+    await expect(page.locator('[data-mode="week"]')).toHaveAttribute('aria-pressed', 'true')
+
+    const shape = () =>
+      page.evaluate(() => ({
+        sections: [...document.querySelectorAll('[data-agenda-day]')].map(
+          (one) => one.dataset.agendaDay
+        ),
+        bodies: [...document.querySelectorAll('[data-body-day]')].map((one) => one.dataset.bodyDay),
+        chips: document.querySelectorAll('[data-day]').length,
+        today: [...document.querySelectorAll('[data-agenda-heading][data-today="true"]')].map(
+          (one) => one.dataset.agendaHeading
+        ),
+        // Never a scroll box of its own: a column on a phone is in the page.
+        ownScroll: [...document.querySelectorAll('[data-agenda], [data-agenda] *')].some((node) =>
+          /(auto|scroll)/.test(getComputedStyle(node).overflowY)
+        ),
+      }))
+
+    await expect
+      .poll(shape)
+      .toEqual({ sections: WEEK, bodies: [], chips: 7, today: [TODAY], ownScroll: false })
+
+    await page.locator('[data-mode="day"]').click()
+    await expect
+      .poll(shape)
+      .toEqual({ sections: [], bodies: [TODAY], chips: 7, today: [], ownScroll: false })
+  })
+
+  test('a day lists its untimed tasks, then its timed ones by time with the time and the estimate', async ({
+    page,
+    account,
+  }) => {
+    await makeTodos(account, [
+      { client_id: own('late'), title: 'Late', planned_at: '17:00', duration_minutes: 45, rank: 'b' },
+      { client_id: own('bins'), title: 'Bins', rank: 'n' },
+      { client_id: own('early'), title: 'Early', planned_at: '08:30', rank: 'z' },
+      { client_id: own('post'), title: 'Post', rank: 'c' },
+      {
+        client_id: own('done'),
+        title: 'Done',
+        planned_at: '12:00',
+        done_at: `${TODAY}T12:30:00`,
+        rank: 'd',
+      },
+    ])
+    await page.goto('/todos/calendar')
+
+    await expect
+      .poll(async () => (await readAgenda(page)).find((one) => one.day === TODAY))
+      .toEqual({
+        day: TODAY,
+        empty: null,
+        rows: [
+          ['Post', null, null],
+          ['Bins', null, null],
+          ['Early', '08:30', null],
+          ['Done', '12:00', null],
+          ['Late', '17:00', '45m'],
+        ],
+      })
+
+    // A done task is drawn as a block draws one, and a row is a block's colour.
+    const drawn = await page.evaluate(
+      ([done, late]) => {
+        const row = (id) => document.querySelector(`[data-agenda-item][data-client-id="${id}"]`)
+        return {
+          done: row(done).classList.contains('line-through'),
+          late: row(late).classList.contains('line-through'),
+          edge: getComputedStyle(row(late)).borderLeftWidth,
+          userSelect: getComputedStyle(row(late)).userSelect,
+        }
+      },
+      [own('done'), own('late')]
+    )
+    expect(drawn).toEqual({ done: true, late: false, edge: '2px', userSelect: 'none' })
+  })
+
+  test('an empty day is one line reading Nothing planned', async ({ page, account }) => {
+    await makeTodo(account, { title: 'Feed the cat', planned_on: '2026-06-17' })
+    await page.goto('/todos/calendar')
+
+    await expect
+      .poll(async () => (await readAgenda(page)).map((one) => [one.day, one.empty, one.rows.length]))
+      .toEqual(
+        WEEK.map((day) =>
+          day === '2026-06-17' ? [day, null, 1] : [day, 'Nothing planned', 0]
+        )
+      )
+  })
+
+  test('dragging a task onto another day moves only the day, and a drop back writes nothing', async ({
+    page,
+    account,
+  }) => {
+    const [seeded] = await makeTodos(account, [
+      {
+        client_id: own('standup'),
+        title: 'Standup',
+        planned_on: TODAY,
+        planned_at: '09:00',
+        duration_minutes: 45,
+        priority: 'high',
+        due_on: '2026-06-20',
+        description: 'with the whole team',
+        colour: 'rose',
+        rank: 'n',
+      },
+    ])
+    // Read back rather than taken from the seed, which omits the fields it
+    // left null: the claim is that nothing but the day changed on the server.
+    const [stored] = await storedTodos(account)
+    const before = fields(stored)
+    expect(stored.client_id).toBe(seeded.client_id)
+    await page.goto('/todos/calendar')
+    const row = page.locator(`[data-agenda-item][data-client-id="${own('standup')}"]`)
+    await expect(row).toBeVisible()
+
+    const thursday = await page.locator('[data-agenda-day="2026-06-18"]').boundingBox()
+    await carry(page, row, { x: thursday.x + thursday.width / 2, y: thursday.y + thursday.height / 2 })
+
+    await expect
+      .poll(async () => (await storedTodos(account)).map(fields), { timeout: 15_000 })
+      .toEqual([{ ...before, planned_on: '2026-06-18', planned_at: '09:00:00' }])
+    await expect(
+      page.locator(`[data-agenda-day="2026-06-18"] [data-client-id="${own('standup')}"]`).first()
+    ).toBeVisible()
+    await expect(page.locator('[data-task-modal]')).toHaveCount(0)
+    await outboxEmpty(page)
+
+    const posts = []
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && request.url().includes('/api/sync')) posts.push(1)
+    })
+    const home = await page.locator('[data-agenda-day="2026-06-18"]').boundingBox()
+    await carry(page, row, { x: home.x + home.width / 2, y: home.y + 12 })
+    // Waited out: a claim that nothing is sent has no event to wait for.
+    await page.waitForTimeout(1200)
+    expect(posts, 'a drop back on its own day queued a write').toHaveLength(0)
+    expect((await storedTodos(account)).map((one) => [one.planned_on, one.planned_at])).toEqual([
+      ['2026-06-18', '09:00:00'],
+    ])
+    await expect(page.locator('[data-task-modal]')).toHaveCount(0)
+  })
+
+  test('carrying a task to the foot of the window scrolls the page', async ({ page, account }) => {
+    await page.setViewportSize({ width: 390, height: 560 })
+    await makeTodo(account, { client_id: own('standup'), title: 'Standup', planned_on: TODAY })
+    await page.goto('/todos/calendar')
+    const row = page.locator(`[data-agenda-item][data-client-id="${own('standup')}"]`)
+    await expect(row).toBeVisible()
+    await row.evaluate((node) => node.scrollIntoView({ block: 'center' }))
+    const was = await page.evaluate(() => scrollY)
+
+    await carry(page, row, { x: 195, y: 560 - 16 }, { release: false })
+    await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(was + 100)
+    await page.keyboard.press('Escape')
+    await page.mouse.up()
+  })
+
+  test('the plus on a day heading creates a task on that day with no time', async ({
+    page,
+    account,
+  }) => {
+    await page.goto('/todos/calendar')
+    const add = page.locator('[data-agenda-day="2026-06-17"] [data-add]')
+    await expect(add).toBeVisible()
+    await add.click()
+    await expect(page.locator('[data-task-modal]')).toBeVisible()
+    await expect
+      .poll(async () =>
+        (await storedTodos(account)).map((one) => [one.title, one.planned_on, one.planned_at])
+      )
+      .toEqual([['New task', '2026-06-17', null]])
+  })
+
+  test('tapping a day heading shows that day in Day', async ({ page, account }) => {
+    await makeTodo(account, { title: 'Dentist', planned_on: '2026-06-17', planned_at: '10:00' })
+    await page.goto('/todos/calendar')
+    await page.locator('[data-agenda-heading="2026-06-17"]').click()
+
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          mode: document.querySelector('[data-mode="day"]').getAttribute('aria-pressed'),
+          bodies: [...document.querySelectorAll('[data-body-day]')].map((one) => one.dataset.bodyDay),
+          pressed: [...document.querySelectorAll('[data-day]')]
+            .filter((one) => one.getAttribute('aria-pressed') === 'true')
+            .map((one) => one.dataset.day),
+          label: document.querySelector('[data-span-label]').dataset.spanLabel,
+          sections: document.querySelectorAll('[data-agenda-day]').length,
+        }))
+      )
+      .toEqual({ mode: 'true', bodies: ['2026-06-17'], pressed: ['2026-06-17'], label: 'day', sections: 0 })
+  })
+
+  test('a long press opens the menu, and the release opens no task', async ({ page, account }) => {
+    await makeTodo(account, { client_id: own('standup'), title: 'Standup', planned_at: '09:00' })
+    await page.goto('/todos/calendar')
+    const row = page.locator(`[data-agenda-item][data-client-id="${own('standup')}"]`)
+    await expect(row).toBeVisible()
+
+    const box = await row.boundingBox()
+    const at = {
+      pointerType: 'touch',
+      pointerId: 13,
+      button: 0,
+      clientX: box.x + box.width / 2,
+      clientY: box.y + box.height / 2,
+    }
+    await row.dispatchEvent('pointerdown', at)
+    await page.waitForTimeout(1000)
+    await row.dispatchEvent('pointerup', at)
+    await row.dispatchEvent('click')
+
+    await page.waitForTimeout(300)
+    await expect(page.locator('[data-task-menu]')).toBeVisible()
+    await expect(page.locator('[data-task-modal]')).toHaveCount(0)
+    expect(await storedTodos(account)).toHaveLength(1)
+  })
+
+  test('due dates are shown on the day they fall', async ({ page, account }) => {
+    await makeTodos(account, [
+      { client_id: own('here'), title: 'Report', planned_at: '11:00', due_on: TODAY, rank: 'b' },
+      { client_id: own('away'), title: 'Tax return', planned_on: '2026-06-16', due_on: '2026-06-18' },
+    ])
+    await page.goto('/todos/calendar')
+    await expect(page.locator('[data-agenda-item]')).toHaveCount(2)
+    await expect(page.locator('[data-due-mark]')).toHaveCount(0)
+
+    await page.locator('[data-due-toggle]').check()
+    await expect
+      .poll(() =>
+        page.evaluate(
+          ([here, away]) => ({
+            outlined: document
+              .querySelector(`[data-agenda-day="2026-06-15"] li [data-due-mark][data-client-id="${here}"]`)
+              ?.closest('li')
+              .querySelector('[data-agenda-item]').dataset.clientId,
+            dueRow: document
+              .querySelector(`[data-agenda-day="2026-06-18"] [data-due-mark][data-client-id="${away}"]`)
+              ?.textContent.replace(/\s+/g, ' ')
+              .trim(),
+            marks: document.querySelectorAll('[data-due-mark]').length,
+          }),
+          [own('here'), own('away')]
+        )
+      )
+      .toEqual({ outlined: own('here'), dueRow: 'Due Tax return', marks: 2 })
+  })
+
+  test('nothing above the list moves between Day and Week', async ({ page, account }) => {
+    await makeTodos(account, [
+      { title: 'Standup', planned_at: '09:00' },
+      { title: 'Water the plants' },
+    ])
+    await page.goto('/todos/calendar')
+    await expect(page.locator('[data-agenda-day]')).toHaveCount(7)
+
+    const measure = () =>
+      page.evaluate(() =>
+        Object.fromEntries(
+          [
+            ...document.querySelectorAll(
+              'main h1, [data-mode], [data-due-toggle], [data-step], [data-span-label], [data-today-button], [data-day]'
+            ),
+          ].map((node, at) => {
+            const box = node.getBoundingClientRect()
+            return [`${at}`, [box.left, box.top, box.width, box.height].map(Math.round)]
+          })
+        )
+      )
+
+    const worst = {}
+    const take = (sample) => {
+      for (const [key, box] of Object.entries(sample)) {
+        const seen = (worst[key] ??= { min: box, max: box })
+        seen.min = seen.min.map((value, at) => Math.min(value, box[at]))
+        seen.max = seen.max.map((value, at) => Math.max(value, box[at]))
+      }
+    }
+    for (let round = 0; round < 3; round += 1) {
+      for (const mode of ['day', 'week']) {
+        await page.locator(`[data-mode="${mode}"]`).click()
+        await expect(page.locator('[data-span-label]')).toHaveAttribute('data-span-label', mode)
+        for (let sample = 0; sample < 3; sample += 1) {
+          take(await measure())
+          await page.waitForTimeout(60)
+        }
+      }
+    }
+    const spread = Math.max(
+      ...Object.values(worst).flatMap(({ min, max }) => max.map((value, at) => value - min[at]))
+    )
+    expect(Object.keys(worst).length).toBeGreaterThanOrEqual(13)
+    expect(spread, JSON.stringify(worst)).toBeLessThanOrEqual(1)
+  })
+
+  test('a remembered Week restores as the agenda, and crossing 48rem keeps the selected day', async ({
+    page,
+    account,
+  }) => {
+    await makeTodo(account, { title: 'Feed the cat' })
+    await page.goto('/todos/calendar')
+    await savesView(page, async () => {
+      await page.locator('[data-mode="day"]').click()
+    })
+    await savesView(page, async () => {
+      await page.locator('[data-mode="week"]').click()
+    })
+    await page.reload()
+    await expect(page.locator('[data-agenda-day]')).toHaveCount(7)
+
+    await page.locator('[data-day="2026-06-17"]').click()
+    const state = () =>
+      page.evaluate(() => ({
+        sections: document.querySelectorAll('[data-agenda-day]').length,
+        bodies: document.querySelectorAll('[data-body-day]').length,
+        pressed: [...document.querySelectorAll('[data-day]')]
+          .filter((one) => one.getAttribute('aria-pressed') === 'true')
+          .map((one) => one.dataset.day),
+      }))
+    await expect.poll(state).toEqual({ sections: 7, bodies: 0, pressed: ['2026-06-17'] })
+
+    await resizeTo(page, { width: 1280, height: 900 })
+    await expect.poll(state).toEqual({ sections: 0, bodies: 7, pressed: ['2026-06-17'] })
+
+    await resizeTo(page, PHONE)
+    await expect.poll(state).toEqual({ sections: 7, bodies: 0, pressed: ['2026-06-17'] })
   })
 })
 
@@ -853,10 +1317,11 @@ test.describe('how wide a block is drawn', () => {
         await page.goto('/todos/calendar')
         const ids = { untimed: own('untimed'), timed: own('timed') }
 
-        for (const mode of ['week', 'day']) {
+        // On a phone Week is the agenda, which has no day columns to fill.
+        for (const mode of viewport.width >= 768 ? ['week', 'day'] : ['day']) {
           await page.locator(`[data-mode="${mode}"]`).click()
           await expect(page.locator('[data-body-day]')).toHaveCount(
-            mode === 'week' && viewport.width >= 768 ? 7 : 1
+            mode === 'week' ? 7 : 1
           )
           await expect
             .poll(() => shortfall(page, ids), { message: `${mode} at ${viewport.width}px` })
@@ -1657,17 +2122,20 @@ test.describe('at 320px', () => {
       { title: 'Water the plants' },
     ])
     await page.goto('/todos/calendar')
-    await expect(page.locator('[data-body-day]')).toHaveCount(1)
+    await expect(page.locator('[data-agenda-day]')).toHaveCount(7)
 
     // A negative claim: sampled repeatedly and asserted on the worst value,
-    // because the first sample is satisfied before anything has rendered.
-    expect(await worstOverflow(page), 'the calendar overflows at 320px').toBeLessThanOrEqual(1)
+    // because the first sample is satisfied before anything has rendered. In
+    // both modes, since below 48rem they are two different pictures.
+    expect(await worstOverflow(page), 'the week overflows at 320px').toBeLessThanOrEqual(1)
+    await inDay(page)
+    expect(await worstOverflow(page), 'the day overflows at 320px').toBeLessThanOrEqual(1)
   })
 
   test('the strip chips and the add button are a thumb tall', async ({ page, account }) => {
     await makeTodo(account, { title: 'Feed the cat' })
     await page.goto('/todos/calendar')
-    await expect(page.locator('[data-add]')).toHaveCount(1)
+    await expect(page.locator('[data-add]')).toHaveCount(7)
 
     const sizes = await page.evaluate(() => ({
       chips: [...document.querySelectorAll('[data-day]')].map((one) =>
@@ -1924,7 +2392,7 @@ test.describe('carrying a block', () => {
     // Aimed at 14:27, which is what a pointer actually lands on, and stored as
     // 14:30: the drop snaps to the quarter hour. Breaking the snap fails this
     // test by name and nothing else.
-    await carry(page, block(page, 'standup'), await atTime(page, '2026-06-18', '14:27'))
+    await carry(page, block(page, 'standup'), await topAt(page, block(page, 'standup'), '2026-06-18', '14:27'))
 
     // One read, every field: the two that the gesture names and the nine it
     // does not. A drag that also wrote `duration_minutes` would be a different
@@ -1967,7 +2435,7 @@ test.describe('carrying a block', () => {
     await expect(block(page, 'untimed-2')).toBeVisible()
     await showHours(page, 9)
 
-    await carry(page, block(page, 'standup'), await atTime(page, '2026-06-18', '14:27'))
+    await carry(page, block(page, 'standup'), await topAt(page, block(page, 'standup'), '2026-06-18', '14:27'))
 
     await expect.poll(async () => (await storedTodos(account)).map(fields), { timeout: 15_000 })
       .toContainEqual({
@@ -2042,7 +2510,9 @@ test.describe('carrying a block', () => {
       ['11:07', '2026-06-17', '11:00'],
       ['14:27', '2026-06-18', '14:30'],
     ]) {
-      const point = await atTime(page, day, clock)
+      // Where the block's *top* is at that clock: a drop means the top.
+      const line = await atTime(page, day, clock)
+      const point = { x: line.x, y: line.y + box.height / 2 }
       await page.mouse.move(point.x, point.y, { steps: 4 })
       await expect
         .poll(
@@ -2080,16 +2550,45 @@ test.describe('carrying a block', () => {
     await showHours(page, 9)
 
     const before = await block(page, 'standup').boundingBox()
-    await carry(page, block(page, 'standup'), await atTime(page, '2026-06-18', '14:30'), {
+    await carry(page, block(page, 'standup'), await topAt(page, block(page, 'standup'), '2026-06-18', '14:30'), {
       release: false,
     })
-    const shadow = await page.locator('[data-shadow="grid"]').boundingBox()
-    const hour = await page.locator('[data-body-day="2026-06-18"] [data-hour="14"]').boundingBox()
+    // Polled, both boxes read in **one** evaluate, and only a reading that
+    // holds still across two frames counts. The shadow's `top` changes as the
+    // aim moves, and the reduced-motion reset gives every element a (0.01ms)
+    // transition, so a box read straight after a change is still where the
+    // shadow was one aim ago: its style already says 14:30 while its rect is at
+    // 14:00, half an hour row above the half past. That is the 24px a one-shot
+    // read failed by. A poll alone is not enough either — a shadow genuinely
+    // drawn 24px low reads *correct* on that stale frame, and the poll would
+    // accept it.
+    await expect
+      .poll(() =>
+        page.evaluate(async (height) => {
+          const read = () => {
+            const shadow = document.querySelector('[data-shadow="grid"]')
+            const hour = document.querySelector('[data-body-day="2026-06-18"] [data-hour="14"]')
+            if (!shadow || !hour) return null
+            const box = shadow.getBoundingClientRect()
+            const row = hour.getBoundingClientRect()
+            return {
+              time: shadow.dataset.shadowTime,
+              sameHeight: Math.abs(box.height - height) <= 1,
+              // At the half past it says, measured against the hour row's own box.
+              atHalfPast: Math.abs(box.top - (row.top + row.height / 2)) <= 1,
+              top: box.top - row.top,
+            }
+          }
+          const first = read()
+          await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+          const second = read()
+          if (!first || !second || first.top !== second.top) return null
+          const { top, ...claim } = second
+          return claim
+        }, before.height)
+      )
+      .toEqual({ time: '14:30', sameHeight: true, atHalfPast: true })
     await page.mouse.up()
-
-    expect(Math.abs(shadow.height - before.height), 'the shadow is a different height').toBeLessThanOrEqual(1)
-    // And at the half past it says, measured against the hour row's own box.
-    expect(Math.abs(shadow.y - (hour.y + hour.height / 2))).toBeLessThanOrEqual(1)
   })
 
   test('carrying a block to the foot of the body scrolls the hours', async ({ page, account }) => {
@@ -2165,7 +2664,7 @@ test.describe('carrying a block', () => {
       if (request.method() === 'POST' && request.url().includes('/api/sync')) posts.push(1)
     })
 
-    await carry(page, block(page, 'standup'), await atTime(page, '2026-06-18', '14:27'), {
+    await carry(page, block(page, 'standup'), await topAt(page, block(page, 'standup'), '2026-06-18', '14:27'), {
       release: false,
     })
     // The promise was on screen, so what Escape cancels is a real drop rather
@@ -2198,7 +2697,7 @@ test.describe('carrying a block', () => {
 
     // Five minutes past, which snaps back to the hour it came from: the drop is
     // a real gesture and the fields it would write are the fields it has.
-    await carry(page, block(page, 'standup'), await atTime(page, '2026-06-16', '09:05'))
+    await carry(page, block(page, 'standup'), await topAt(page, block(page, 'standup'), '2026-06-16', '09:05'))
 
     await page.waitForTimeout(1200)
     expect(posts, 'a drop that changed nothing still queued a write').toHaveLength(0)
@@ -2280,6 +2779,7 @@ test.describe('carrying a block', () => {
       // is left alone.
       const [seeded] = await makeTodos(account, [STANDUP()])
       await page.goto('/todos/calendar')
+      await inDay(page)
       await page.locator(`[data-day="${STANDUP().planned_on}"]`).click()
       await expect(block(page, 'standup')).toBeVisible()
       await showHours(page, 9)
@@ -2310,6 +2810,7 @@ test.describe('carrying a block', () => {
       // whole of the mechanism either way.
       await makeTodos(account, [{ ...STANDUP(), planned_on: TODAY }])
       await page.goto('/todos/calendar')
+      await inDay(page)
       await expect(block(page, 'standup')).toBeVisible()
 
       const touchmove = () =>
@@ -2365,6 +2866,7 @@ test.describe('carrying a block', () => {
       // without seven drops.
       await makeTodos(account, [{ ...STANDUP(), planned_on: TODAY }])
       await page.goto('/todos/calendar')
+      await inDay(page)
       await expect(block(page, 'standup')).toBeVisible()
       await showHours(page, 9)
 
@@ -2384,8 +2886,9 @@ test.describe('carrying a block', () => {
 
       // The day stepped under a block that is still being carried, so the drop
       // lands on the day that is there now.
+      // Released with the block's top at 11:00, gripped in its centre.
       const to = await atTime(page, '2026-06-16', '11:00')
-      await page.mouse.move(to.x, to.y, { steps: 4 })
+      await page.mouse.move(to.x, to.y + box.height / 2, { steps: 4 })
       await page.mouse.up()
 
       await expect.poll(
@@ -2393,6 +2896,181 @@ test.describe('carrying a block', () => {
         { timeout: 15_000 }
       ).toEqual([['2026-06-16', '11:00:00']])
     })
+  })
+})
+
+/**
+ * A carried block lands where its top is drawn, not where the pointer is.
+ *
+ * Reported from use: a task picked up by its middle and moved up landed
+ * *later*. The drop's minute was the pointer's offset into the grid, so a
+ * two-hour block gripped an hour below its top and moved up half an hour put
+ * the pointer at 09:30 — after the 09:00 it started from. What the reader holds
+ * is the block, and the carried copy is drawn with its top at the pointer less
+ * the grip, so that top is the time a drop means.
+ */
+test.describe('a carried block lands where its top is drawn', () => {
+  test.use({ viewport: { width: 1280, height: 1000 } })
+
+  /** Two hours at nine, so its middle is an hour below its top. */
+  const LONG = () => ({
+    client_id: own('long'),
+    title: 'Deep work',
+    planned_on: TODAY,
+    planned_at: '09:00',
+    duration_minutes: 120,
+    rank: 'n',
+  })
+
+  /**
+   * What the shadow promises and whether the carried copy's top is on it.
+   *
+   * One read that holds still across two frames, because the reduced-motion
+   * reset gives the shadow a transition and a box read straight after its top
+   * changed is where it was one aim ago.
+   */
+  function promise(page) {
+    return expect.poll(() =>
+      page.evaluate(async () => {
+        const read = () => {
+          const shadow = document.querySelector('[data-shadow="grid"]')
+          const carried = document.querySelector('[data-carried]')
+          if (!shadow || !carried) return null
+          return {
+            time: shadow.dataset.shadowTime,
+            shadowTop: shadow.getBoundingClientRect().top,
+            copyTop: carried.getBoundingClientRect().top,
+          }
+        }
+        const first = read()
+        await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+        const second = read()
+        if (!first || !second || first.shadowTop !== second.shadowTop) return null
+        return {
+          time: second.time,
+          copyOnShadow: Math.abs(second.copyTop - second.shadowTop) <= 1,
+        }
+      })
+    )
+  }
+
+  /** Open the calendar on today's hours from eight, in the mode asked for. */
+  async function open(page, mode) {
+    await page.goto('/todos/calendar')
+    await expect(block(page, 'long')).toBeVisible()
+    if (mode === 'day') {
+      await page.locator('[data-mode="day"]').click()
+      await expect(page.locator('[data-body-day]')).toHaveCount(1)
+    }
+    await showHours(page, 8)
+    const row = await page.locator(`[data-body-day="${TODAY}"] [data-hour="9"]`).boundingBox()
+    return row.height
+  }
+
+  for (const mode of ['week', 'day']) {
+    for (const [direction, expected] of [
+      [-1, '08:30'],
+      [1, '09:30'],
+    ]) {
+      test(`in ${mode}, picked up by its middle and moved ${direction < 0 ? 'up' : 'down'} half an hour, it lands at ${expected}`, async ({
+        page,
+        account,
+      }) => {
+        await makeTodos(account, [LONG()])
+        const hour = await open(page, mode)
+
+        const box = await block(page, 'long').boundingBox()
+        const grip = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+        await page.mouse.move(grip.x, grip.y)
+        await page.mouse.down()
+        await page.mouse.move(grip.x, grip.y + (direction * hour) / 2, { steps: 6 })
+
+        await promise(page).toEqual({ time: expected, copyOnShadow: true })
+        await page.mouse.up()
+
+        await expect
+          .poll(async () => (await storedTodos(account)).map((one) => one.planned_at), {
+            timeout: 15_000,
+          })
+          .toEqual([`${expected}:00`])
+      })
+    }
+  }
+
+  test('picked up near its top, it lands where the pointer puts that top, as before', async ({
+    page,
+    account,
+  }) => {
+    await makeTodos(account, [LONG()])
+    const hour = await open(page, 'week')
+
+    const box = await block(page, 'long').boundingBox()
+    const grip = { x: box.x + box.width / 2, y: box.y + 4 }
+    await page.mouse.move(grip.x, grip.y)
+    await page.mouse.down()
+    await page.mouse.move(grip.x, grip.y - hour / 2, { steps: 6 })
+
+    await promise(page).toEqual({ time: '08:30', copyOnShadow: true })
+    await page.mouse.up()
+    await expect
+      .poll(async () => (await storedTodos(account)).map((one) => one.planned_at), {
+        timeout: 15_000,
+      })
+      .toEqual(['08:30:00'])
+  })
+
+  test('a finger that lifts a block by its middle and moves it up lands it earlier', async ({
+    page,
+    account,
+  }) => {
+    await makeTodos(account, [LONG()])
+    const hour = await open(page, 'day')
+
+    const box = await block(page, 'long').boundingBox()
+    const grip = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    const pointer = { pointerType: 'touch', pointerId: 21, isPrimary: true, button: 0 }
+    await block(page, 'long').dispatchEvent('pointerdown', {
+      ...pointer,
+      clientX: grip.x,
+      clientY: grip.y,
+    })
+    // The short press, and then the move straight away: a finger resting on
+    // past the menu's long press would open the menu rather than carry.
+    await expect(page.locator('[data-carried]')).toBeVisible()
+    await page.evaluate(
+      ({ pointer, grip, by }) => {
+        for (let step = 1; step <= 6; step += 1) {
+          window.dispatchEvent(
+            new PointerEvent('pointermove', {
+              ...pointer,
+              bubbles: true,
+              clientX: grip.x,
+              clientY: grip.y - (by * step) / 6,
+            })
+          )
+        }
+      },
+      { pointer, grip, by: hour / 2 }
+    )
+
+    await promise(page).toEqual({ time: '08:30', copyOnShadow: true })
+    await page.evaluate(
+      ({ pointer, grip, by }) =>
+        window.dispatchEvent(
+          new PointerEvent('pointerup', {
+            ...pointer,
+            bubbles: true,
+            clientX: grip.x,
+            clientY: grip.y - by,
+          })
+        ),
+      { pointer, grip, by: hour / 2 }
+    )
+    await expect
+      .poll(async () => (await storedTodos(account)).map((one) => one.planned_at), {
+        timeout: 15_000,
+      })
+      .toEqual(['08:30:00'])
   })
 })
 
@@ -2751,6 +3429,7 @@ test.describe('resizing a block', () => {
     }) => {
       await makeTodos(account, [{ ...PLAN(), planned_on: TODAY }])
       await page.goto('/todos/calendar')
+      await inDay(page)
       await expect(block(page, 'plan')).toBeVisible()
       await intoView(block(page, 'plan'))
 
@@ -2792,5 +3471,285 @@ test.describe('resizing a block', () => {
       await page.keyboard.press('Escape')
       await page.mouse.up()
     })
+  })
+})
+
+/**
+ * Under 30rem tall the hours flow in the page.
+ *
+ * The frame rule: a column is never its own scroll box on a phone, nor on any
+ * window under 30rem tall. The calendar's body was still one there — measured
+ * before the fix at 844×390 as a 384px box (the `24rem` floor of
+ * `max(24rem, 70vh)`) inside a 390px window, and at 1280×440 the same, so the
+ * page scrolled a little and then the box scrolled the rest of the day.
+ */
+test.describe('a short window has one scroll', () => {
+  for (const size of [
+    { width: 844, height: 390 },
+    { width: 1280, height: 440 },
+  ]) {
+    test(`the hours are in the page at ${size.width}×${size.height}`, async ({ page, account }) => {
+      await page.setViewportSize(size)
+      await makeTodos(account, [
+        { client_id: own('late'), title: 'Late', planned_on: TODAY, planned_at: '22:00', rank: 'n' },
+      ])
+      await page.goto('/todos/calendar')
+      await expect(block(page, 'late')).toHaveCount(1)
+
+      // A negative claim, so the worst of several samples.
+      let worst = 0
+      for (let sample = 0; sample < 6; sample += 1) {
+        worst = Math.max(
+          worst,
+          await page.locator('[data-body]').evaluate((node) =>
+            /(auto|scroll)/.test(getComputedStyle(node).overflowY)
+              ? Math.max(node.scrollHeight - node.clientHeight, 1)
+              : 0
+          )
+        )
+        await page.waitForTimeout(100)
+      }
+      expect(worst, 'the body is a scroll box of its own').toBe(0)
+
+      // The late block is reached by scrolling the page, and the day header
+      // is still there above it.
+      const seen = await page.evaluate((id) => {
+        const node = document.querySelector(`[data-block][data-client-id="${id}"]`)
+        const box = node.getBoundingClientRect()
+        window.scrollTo(0, box.top + scrollY - innerHeight / 2)
+        const now = node.getBoundingClientRect()
+        const hit = document.elementFromPoint(now.left + now.width / 2, now.top + now.height / 2)
+        const head = document.querySelector('[data-head-day]')
+        const top = head.getBoundingClientRect()
+        const onHead = document.elementFromPoint(top.left + top.width / 2, top.top + top.height / 2)
+        return {
+          block: Boolean(hit && node.contains(hit)),
+          scrolled: scrollY > 0,
+          headAtTop: Math.round(top.top) === 0,
+          headOnTop: Boolean(onHead && head.contains(onHead)),
+        }
+      }, own('late'))
+      expect(seen).toEqual({ block: true, scrolled: true, headAtTop: true, headOnTop: true })
+    })
+  }
+
+  test('carrying a block to the foot of a short window scrolls the page', async ({
+    page,
+    account,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 440 })
+    await makeTodos(account, [
+      { client_id: own('standup'), title: 'Standup', planned_on: TODAY, planned_at: '09:00', rank: 'n' },
+    ])
+    await page.goto('/todos/calendar')
+    await expect(block(page, 'standup')).toBeVisible()
+    await block(page, 'standup').evaluate((node) => node.scrollIntoView({ block: 'center' }))
+
+    const column = await page.locator(`[data-body-day="${TODAY}"]`).boundingBox()
+    const at = { x: column.x + column.width / 2, y: 440 - 20 }
+    const before = await page.evaluate(() => ({ window: scrollY, body: document.querySelector('[data-body]').scrollTop }))
+    const hourBefore = await page.evaluate(
+      (point) =>
+        Number(document.elementFromPoint(point.x, point.y)?.closest('[data-hour]')?.dataset.hour ?? -1),
+      at
+    )
+    expect(hourBefore, 'the foot of the window is not over an hour row').toBeGreaterThan(0)
+
+    await carry(page, block(page, 'standup'), at, { release: false })
+    await expect
+      .poll(() =>
+        page.evaluate((was) => {
+          const shadow = document.querySelector('[data-shadow="grid"]')
+          return {
+            scrolled: scrollY - was.window > 100,
+            later: Number((shadow?.dataset.shadowTime ?? '00:00').slice(0, 2)) > was.hour,
+          }
+        }, { ...before, hour: hourBefore })
+      )
+      .toEqual({ scrolled: true, later: true })
+
+    // And it stops at the end of the day rather than spinning on.
+    await expect
+      .poll(() => page.evaluate(() => document.querySelector(`[data-body]`).getBoundingClientRect().bottom <= innerHeight + 1), { timeout: 15_000 })
+      .toBe(true)
+    await page.keyboard.press('Escape')
+    await page.mouse.up()
+  })
+})
+
+test.describe('the now line', () => {
+  test('is drawn beneath a block and over the empty grid, in both themes', async ({
+    page,
+    account,
+  }) => {
+    // Measured before the fix: the line was drawn over the blocks, so at 10:15
+    // it crossed "Write the…" mid-letter, which reads as the strike-through of
+    // a done task. The pinned clock is 14:00, so a block from 13:45 has the line
+    // a third of the way down it.
+    await makeTodos(account, [
+      {
+        client_id: own('write'),
+        title: 'Write the report',
+        planned_on: TODAY,
+        planned_at: '13:45',
+        duration_minutes: 45,
+        rank: 'n',
+      },
+    ])
+    await page.goto('/todos/calendar')
+    await expect(block(page, 'write')).toBeVisible()
+    await intoView(block(page, 'write'))
+
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme })
+      await expect
+        .poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches))
+        .toBe(scheme === 'dark')
+
+      const seen = await page.evaluate((id) => {
+        const line = document.querySelector('[data-now]')
+        const one = document.querySelector(`[data-block][data-client-id="${id}"]`)
+        const drawn = line.getBoundingClientRect()
+        const box = one.getBoundingClientRect()
+        const y = drawn.top + 0.5
+        // `elementFromPoint` never returns a `pointer-events: none` element, so
+        // the line takes pointer events for this one read.
+        line.style.pointerEvents = 'auto'
+        const inside = document.elementFromPoint(box.left + box.width / 2, y)
+        // A block stops a pixel short of the line's right end, and that pixel
+        // is grid with nothing on it but the line. Measured: the left edge
+        // reads as the block, the rightmost pixel as the column's border.
+        const outside = document.elementFromPoint((box.right + drawn.right) / 2, y)
+        line.style.pointerEvents = ''
+        const background = getComputedStyle(one).backgroundColor
+        return {
+          crosses: drawn.top > box.top && drawn.top < box.bottom,
+          inside: one.contains(inside) ? 'block' : inside === line ? 'line' : inside?.tagName,
+          outside: outside === line ? 'line' : outside?.tagName,
+          // A tint over transparency lets the line through it all the same.
+          opaque: !/\/\s*0?\.\d+\s*\)$|rgba\(.*,\s*0?\.\d+\)$/.test(background),
+          background,
+        }
+      }, own('write'))
+
+      expect({ ...seen, background: undefined }, `${scheme}: ${seen.background}`).toEqual({
+        crosses: true,
+        inside: 'block',
+        outside: 'line',
+        opaque: true,
+        background: undefined,
+      })
+    }
+  })
+})
+
+test.describe('the step controls', () => {
+  for (const viewport of [
+    { width: 1280, height: 900 },
+    { width: 320, height: 720 },
+  ]) {
+    test(`are outlined buttons a thumb tall at ${viewport.width}px`, async ({ page, account }) => {
+      // 34.5px before, where every outlined button elsewhere is 44.
+      await page.setViewportSize(viewport)
+      await makeTodo(account, { title: 'Feed the cat' })
+      await page.goto('/todos/calendar')
+      await expect(page.locator('[data-today-button]')).toBeVisible()
+
+      const seen = await page
+        .locator('[data-step], [data-today-button]')
+        .evaluateAll((nodes) =>
+          nodes.map((node) => ({
+            outline: node.classList.contains('btn-outline'),
+            height: Math.round(node.getBoundingClientRect().height * 2) / 2,
+            width: node.getBoundingClientRect().width >= 44,
+          }))
+        )
+      expect(seen).toEqual([
+        { outline: true, height: 44, width: true },
+        { outline: true, height: 44, width: true },
+        { outline: true, height: 44, width: true },
+      ])
+    })
+  }
+})
+
+test.describe('a short window lets the anytime row scroll away', () => {
+  test.use({ viewport: { width: 844, height: 390 } })
+
+  test('the day header stays and the anytime row goes, and a drag still lands in it', async ({
+    page,
+    account,
+  }) => {
+    // Measured before: a 52px sticky header and a 74px sticky anytime row kept
+    // 126 of 390px on screen for good.
+    await makeTodos(account, [
+      ...['Bins', 'Post', 'Plants'].map((title, at) => ({
+        client_id: own(`untimed-${at}`),
+        title,
+        planned_on: TODAY,
+        rank: 'n',
+      })),
+      { client_id: own('early'), title: 'Early', planned_on: TODAY, planned_at: '03:00', rank: 'n' },
+      { client_id: own('late'), title: 'Late', planned_on: TODAY, planned_at: '15:00', rank: 'n' },
+    ])
+    await page.goto('/todos/calendar')
+    await expect(block(page, 'late')).toBeVisible()
+
+    const covered = await page.evaluate((id) => {
+      const node = document.querySelector(`[data-block][data-client-id="${id}"]`)
+      window.scrollTo(0, node.getBoundingClientRect().top + scrollY - innerHeight / 2)
+      const head = document.querySelector(`[data-head-day]`).getBoundingClientRect()
+      const row = document.querySelector(`[data-anytime-row]`).getBoundingClientRect()
+      return {
+        headAtTop: Math.round(head.top) === 0,
+        rowOnScreen: Math.max(0, Math.min(row.bottom, innerHeight) - Math.max(row.top, head.bottom)),
+      }
+    }, own('late'))
+    expect(covered).toEqual({ headAtTop: true, rowOnScreen: 0 })
+
+    // Scrolled back to where the row sits under the header, a block carried
+    // into it still becomes a plan with no time.
+    await page.evaluate(() => {
+      const row = document.querySelector('[data-anytime-row]')
+      window.scrollTo(0, row.getBoundingClientRect().top + scrollY - 52)
+    })
+    await expect(block(page, 'early')).toBeInViewport()
+    await carry(page, block(page, 'early'), await atAnytime(page, TODAY))
+    await expect
+      .poll(
+        async () =>
+          (await storedTodos(account))
+            .filter((one) => one.title === 'Early')
+            .map((one) => [one.planned_on, one.planned_at]),
+        { timeout: 15_000 }
+      )
+      .toEqual([[TODAY, null]])
+  })
+})
+
+test.describe('by keyboard', () => {
+  test('no hour row is a tab stop, and the plus on a day adds at a time through the task', async ({
+    page,
+    account,
+  }) => {
+    await page.goto('/todos/calendar')
+    await expect(page.locator(`[data-body-day="${TODAY}"] [data-hour="9"]`)).toBeAttached()
+
+    // Measured before: one "Add a task at HH:00" stop per hour per day, 168 in a
+    // week, between the header and the first block.
+    const hours = await page
+      .locator('[data-hour]')
+      .evaluateAll((rows) => ({ all: rows.length, tabbable: rows.filter((row) => row.tabIndex >= 0).length }))
+    expect(hours.all).toBeGreaterThanOrEqual(24)
+    expect(hours.tabbable, 'hour rows in the tab order').toBe(0)
+
+    // The keyboard's way to a time: the day's plus, then the time on the task.
+    await page.locator(`[data-add="${TODAY}"]`).first().focus()
+    await page.keyboard.press('Enter')
+    await expect(page.locator('[data-task-modal]')).toBeVisible()
+    await page.locator('[data-field="planned_at"]').fill('09:30')
+    await expect
+      .poll(async () => (await storedTodos(account)).map((one) => [one.planned_on, one.planned_at]))
+      .toEqual([[TODAY, '09:30:00']])
   })
 })

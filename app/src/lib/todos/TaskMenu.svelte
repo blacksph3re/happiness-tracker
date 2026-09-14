@@ -1,4 +1,6 @@
 <script>
+  import { tick } from 'svelte'
+
   import { pushToast } from '../toasts.js'
   import { archiveList, archiveListId, saveTodo, todoLists } from '../store.js'
   import { chipColour } from '../palette.js'
@@ -73,6 +75,55 @@
     }
     if (menu.shown.focus) node?.querySelector('button')?.focus({ preventScroll: true })
   })
+
+  /**
+   * Show the list step or the verbs, with the focus on the first thing in it.
+   *
+   * The step replaces every row in the menu, the one holding the focus
+   * included, so without this a keyboard that chose *Send to list* was left on
+   * nothing. Back returns to the verb that opened the step.
+   *
+   * @param {boolean} lists
+   */
+  async function step(lists) {
+    choosingList = lists
+    await tick()
+    const target = lists
+      ? node?.querySelector('[data-menu-list]')
+      : node?.querySelector('[data-menu-send]')
+    if (target instanceof HTMLElement) target.focus({ preventScroll: true })
+  }
+
+  /**
+   * Move through the menu from the keyboard, the way a menu moves.
+   *
+   * The arrows walk the items and wrap, Home and End go to either end, and Tab
+   * in either direction closes the menu — which gives the focus back to the
+   * card it was opened from, rather than walking on past the last item into
+   * whatever the page happens to have next. Escape is the dismissal's, which
+   * closes the same way.
+   *
+   * @param {KeyboardEvent} event
+   */
+  function onKey(event) {
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      menu.close()
+      return
+    }
+    const items = [...(node?.querySelectorAll('[role="menuitem"]') ?? [])]
+    if (!items.length) return
+    const at = items.indexOf(document.activeElement)
+    const next = {
+      ArrowDown: (at + 1) % items.length,
+      ArrowUp: (at - 1 + items.length) % items.length,
+      Home: 0,
+      End: items.length - 1,
+    }[event.key]
+    if (next === undefined) return
+    event.preventDefault()
+    items[next].focus({ preventScroll: true })
+  }
 
   /**
    * Close, having done the thing.
@@ -156,10 +207,12 @@
   <div
     bind:this={node}
     data-task-menu
-    role="group"
+    role="menu"
+    tabindex="-1"
     aria-label={`Actions for ${task.title}`}
-    class="fixed z-50 w-56 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border
-           border-white/15 bg-ink shadow-2xl shadow-black/50"
+    onkeydown={onKey}
+class="fixed z-50 w-56 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border
+           border-white/15 bg-ink shadow-2xl shadow-black/50 select-none [-webkit-touch-callout:none]"
     style:left="{menu.shown.x}px"
     style:top="{menu.shown.y}px"
     style:transform={place(menu.shown.x, menu.shown.y)}
@@ -168,15 +221,16 @@
          is the lesson one section along: equal padding does not make equal
          buttons, because the contents decide. `py-3` on `text-sm` measured 42.
          The header is not a control and keeps its own height. -->
-    <p class="meta truncate border-b border-white/10 px-3 py-2" data-menu-task>
+    <p class="meta truncate border-b border-white/10 px-3 py-2" role="none" data-menu-task>
       {task.title}
     </p>
 
     {#if choosingList}
-      <div class="flex max-h-64 flex-col overflow-y-auto py-1">
+      <div class="flex max-h-64 flex-col overflow-y-auto py-1" role="none">
         {#each options as one (one.id)}
           <button
             data-menu-list={one.id}
+            role="menuitem"
             aria-current={one.id === task.list_id ? 'true' : undefined}
             class="flex min-h-11 items-center gap-2 px-3 py-2 text-left text-sm hover:bg-dusk/20"
             onclick={() => sendTo(one)}
@@ -195,16 +249,18 @@
       </div>
       <button
         data-menu-back
+        role="menuitem"
         class="meta flex min-h-11 w-full items-center border-t border-white/10 px-3 py-2
                text-left hover:bg-dusk/20"
-        onclick={() => (choosingList = false)}
+        onclick={() => step(false)}
       >
         ← Back
       </button>
     {:else}
-      <div class="flex flex-col py-1">
+      <div class="flex flex-col py-1" role="none">
         <button
           data-menu-wont-do
+          role="menuitem"
           class="flex min-h-11 items-center px-3 py-2 text-left text-sm hover:bg-dusk/20"
           onclick={wontDo}
         >
@@ -212,6 +268,7 @@
         </button>
         <button
           data-menu-pomodoro
+          role="menuitem"
           class="flex min-h-11 items-center px-3 py-2 text-left text-sm hover:bg-dusk/20"
           onclick={startPomodoro}
         >
@@ -222,10 +279,12 @@
              open it with. -->
         <button
           data-menu-send
+          role="menuitem"
+          aria-haspopup="menu"
           aria-expanded={choosingList}
           class="flex min-h-11 items-center justify-between px-3 py-2 text-left text-sm
                  hover:bg-dusk/20"
-          onclick={() => (choosingList = true)}
+          onclick={() => step(true)}
         >
           Send to list
           <span aria-hidden="true" class="text-haze">›</span>
@@ -234,7 +293,11 @@
       <!-- Said rather than prevented, exactly as the modal says it: this half
            cannot see which pomodoro is running, and a claim it cannot check
            is one it must not make conditionally. -->
-      <p class="meta border-t border-white/10 px-3 py-2 normal-case text-haze" data-menu-note>
+      <p
+        class="meta border-t border-white/10 px-3 py-2 normal-case text-haze"
+        role="none"
+        data-menu-note
+      >
         Starting one ends a pomodoro already running.
       </p>
     {/if}

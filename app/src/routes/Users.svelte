@@ -1,4 +1,5 @@
 <script>
+  import Frame from '../lib/Frame.svelte'
   import AdminOffline, { OFFLINE_HINT } from '../lib/AdminOffline.svelte'
   import { attempt, unwrap } from '../lib/api.js'
   import IconBin from '../lib/IconBin.svelte'
@@ -139,11 +140,12 @@
   }
 </script>
 
-<section class="mx-auto w-full max-w-4xl px-5 py-8">
+<Frame column="max-w-4xl">
+<section class="max-w-4xl">
   <p class="meta">Who can sign in</p>
   <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">People</h1>
 
-  <AdminOffline does="Accounts belong to the server rather than to this device" />
+  <AdminOffline />
 
   {#if loading}
     <p class="meta">Loading…</p>
@@ -164,21 +166,20 @@
               {user.is_admin ? 'manages people' : 'answers only'}
             </p>
           </div>
-          <div class="flex shrink-0 flex-wrap items-center gap-2">
-            <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                           disabled:cursor-not-allowed disabled:opacity-40"
+          <!-- `min-w-0` and no `shrink-0`: a row that claims its whole width never
+               wraps, and "Clear second factor" ran 83px off a 390px screen. -->
+          <div class="flex min-w-0 flex-wrap items-center gap-2">
+            <button class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-40"
               disabled={offline}
               title={hint} onclick={() => toggle(user, 'is_admin')}>
               {user.is_admin ? 'Revoke people' : 'Grant people'}
             </button>
-            <button class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                           disabled:cursor-not-allowed disabled:opacity-40"
+            <button class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-40"
               disabled={offline}
               title={hint} onclick={() => resetPassword(user)}>Reset password</button>
             <button
               data-clear-totp={user.id}
-              class="meta rounded-md border border-white/15 px-3 py-2 hover:border-white/40
-                     disabled:cursor-not-allowed disabled:opacity-40"
+              class="btn-outline meta disabled:cursor-not-allowed disabled:opacity-40"
               disabled={offline}
               title={hint}
               onclick={() => clearSecondFactor(user)}>Clear second factor</button>
@@ -239,8 +240,7 @@
         type="submit"
         disabled={offline}
         title={hint}
-        class="mt-5 flex items-center gap-2 rounded-lg bg-dusk px-5 py-3 font-semibold
-               hover:bg-dusk-lift disabled:cursor-not-allowed disabled:opacity-40"
+        class="btn-filled mt-5 flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-40"
       >
         <IconPlus class="size-4" />
         Add person
@@ -248,3 +248,4 @@
     </form>
   {/if}
 </section>
+</Frame>

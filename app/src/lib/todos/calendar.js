@@ -329,18 +329,30 @@ export function dayNumber(day) {
  * once, somewhere, or a week either side of the first is a set of numbers with
  * no year in them. The month is repeated only when the week straddles two.
  *
+ * **The year follows `dayLabel`'s rule**: none inside the current year, one
+ * otherwise, and both when the week spans two — a week in another year read
+ * exactly like one in this, so stepping back past January named a June without
+ * saying which.
+ *
  * @param {string} day A `YYYY-MM-DD` key anywhere inside the week.
- * @returns {string} e.g. `Jun 15 – 21` or `Jun 29 – Jul 5`.
+ * @returns {string} e.g. `Jun 15 – 21`, `Jun 29 – Jul 5`, `Jun 9 – 15, 2025`
+ *   or `Dec 28, 2026 – Jan 3, 2027`.
  */
 export function weekLabel(day) {
   const week = weekOf(day)
   const month = (key) => MONTH_LABELS[Number(key.slice(5, 7)) - 1]
-  const first = `${month(week[0])} ${dayNumber(week[0])}`
+  const year = (key) => Number(key.slice(0, 4))
+  const [start, end] = [week[0], week[6]]
+  // Two years: each end names its own, or "Dec 28 – Jan 3, 2027" would claim
+  // the December was 2027's too.
+  if (year(start) !== year(end)) {
+    return `${month(start)} ${dayNumber(start)}, ${year(start)} \u2013 ${month(end)} ${dayNumber(end)}, ${year(end)}`
+  }
+  const first = `${month(start)} ${dayNumber(start)}`
   const last =
-    month(week[0]) === month(week[6])
-      ? String(dayNumber(week[6]))
-      : `${month(week[6])} ${dayNumber(week[6])}`
-  return `${first} \u2013 ${last}`
+    month(start) === month(end) ? String(dayNumber(end)) : `${month(end)} ${dayNumber(end)}`
+  const named = year(start) !== new Date().getFullYear() ? `, ${year(start)}` : ''
+  return `${first} \u2013 ${last}${named}`
 }
 
 /**

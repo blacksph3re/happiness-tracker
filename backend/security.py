@@ -1,3 +1,4 @@
+import math
 import secrets
 import threading
 import time
@@ -70,6 +71,44 @@ class TokenError(Exception):
 
 class LoginLocked(Exception):
     """Raised when a username has failed to log in too many times recently."""
+
+    def __init__(self, username: str, retry_after: float) -> None:
+        """Record who is locked and for how much longer.
+
+        Parameters
+        ----------
+        username : str
+            The username as submitted, not necessarily a real account.
+        retry_after : float
+            Seconds until the oldest failure in the window ages out and the
+            next attempt is allowed again.
+        """
+        super().__init__(username)
+        self.retry_after = retry_after
+        """Seconds until the username may try again."""
+
+
+def lockout_message(retry_after: float) -> str:
+    """Say how long a lockout has left, in the words the login form shows.
+
+    Whole minutes rounded up, because "about" is the honest precision: the
+    window is measured from a failure the reader did not time. Computed from
+    the submitted username's own failures alone, so an unknown username is
+    answered exactly as a real one is.
+
+    Parameters
+    ----------
+    retry_after : float
+        Seconds until the next attempt is allowed.
+
+    Returns
+    -------
+    str
+        The sentence for the 429's `detail`.
+    """
+    minutes = max(1, math.ceil(retry_after / 60))
+    wait = "a minute" if minutes == 1 else f"{minutes} minutes"
+    return f"Too many attempts. Try again in about {wait}."
 
 
 def hash_password(password: str) -> str:
@@ -267,8 +306,12 @@ class LoginThrottle:
         """
         now = self._clock()
         with self._lock:
-            if len(self._recent(username, now)) >= self._max_attempts:
-                raise LoginLocked(username)
+            recent = self._recent(username, now)
+            if len(recent) >= self._max_attempts:
+                # The oldest failure still counted is the one whose ageing out
+                # lets the next attempt through.
+                oldest = recent[-self._max_attempts]
+                raise LoginLocked(username, oldest + self._window_seconds - now)
 
     def record_failure(self, username: str) -> None:
         """Record one failed login attempt for `username`."""

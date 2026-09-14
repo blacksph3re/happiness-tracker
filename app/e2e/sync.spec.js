@@ -887,6 +887,146 @@ test('a pomodoro started while the pomodoros are being read is not lost by the r
   await expect(page.locator('[data-pomodoro]')).toHaveCount(3)
 })
 
+test('a pomodoro whose write was still in the air when a read began is not lost by the reply', async ({
+  page,
+  account,
+}) => {
+  // The case the map above did not cover. The read *begins* after the start,
+  // so it empties the map the start was recorded in; the start's own request is
+  // still outstanding, so the server answers the read without it; and that
+  // request comes back before the read does, so the queue is empty by the time
+  // the reply lands. Nothing is left to lay the pomodoro back, and it goes.
+  //
+  // The transfer is the trigger because it is where this was seen: `transferDay`
+  // re-reads the pomodoros when it lands, and "the copy button offers the same
+  // total the day reports" starts the next pomodoro without waiting for it — so
+  // the button came back offering half the day, one full run in several.
+  await makeProject(account, 'The rewrite')
+  await seedPomodoro(account, 'First', `${TODAY}T09:00:00`)
+  await page.goto('/focus')
+  await expect(page.locator('[data-pomodoro]')).toHaveCount(1)
+
+  let releaseTransfer = null
+  const transferHeld = new Promise((resolve) => (releaseTransfer = resolve))
+  await page.route(/\/api\/pomodoros\/transfer/, async (route) => {
+    await transferHeld
+    await route.continue()
+  })
+
+  await page.locator('[data-open-transfer]').click()
+  await page.getByRole('button', { name: 'The rewrite' }).click()
+  await page.locator('[data-confirm-transfer]').click()
+
+  // The start's request is held at the door, so the server does not have it.
+  let releaseSync = null
+  const syncHeld = new Promise((resolve) => (releaseSync = resolve))
+  await page.route(/\/api\/sync$/, async (route) => {
+    await syncHeld
+    await route.continue()
+  })
+  // The read is answered with what the server holds while that request is
+  // held, and only once the request has come back and left the queue empty.
+  // Fulfilled from plain JSON, never proxied — see `holdTasksRead`.
+  let reads = 0
+  await page.route(POMODORO_READ, async (route) => {
+    reads += 1
+    if (reads > 1) return route.continue()
+    const before = await (await account.api.get('/api/pomodoros')).json()
+    releaseSync()
+    await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0')
+    await route.fulfill({ json: before })
+  })
+
+  await page.getByLabel(/focusing on|when you are ready/).fill('Second')
+  await page.locator('[data-start]').click()
+  // The card proves the batch is on the device — see the test above.
+  await expect(page.locator('[data-running]')).toBeVisible()
+  await expect(page.locator('[data-sync]')).not.toHaveAttribute('data-pending', '0')
+
+  releaseTransfer()
+  await expect(page.locator('[data-confirm-transfer]')).toHaveCount(0)
+  expect(reads, 'the transfer re-read the pomodoros').toBe(1)
+
+  expect(
+    await leastCount(page.locator('[data-running]')),
+    'the pomodoro that was running went off the screen'
+  ).toBe(1)
+  await expect(page.locator('[data-pomodoro]')).toHaveCount(2)
+})
+
+test('a pomodoro whose write outlasts one read is not lost by the next', async ({
+  page,
+  account,
+}) => {
+  // The reply-side half of the test above. The start is still queued when the
+  // first read's reply lands, so the overlay draws it and nothing looks wrong —
+  // but a map emptied there no longer holds it. A second read then begins
+  // while it is still queued, the server answers that read without it, and the
+  // start's request comes back first: gone, one read late.
+  await makeProject(account, 'The rewrite')
+  await seedPomodoro(account, 'First', `${TODAY}T09:00:00`)
+  await page.goto('/focus')
+  await expect(page.locator('[data-pomodoro]')).toHaveCount(1)
+
+  // The first read is the transfer's own, which a held transfer puts after the
+  // start: `transferDay` settles the queue first, so it has to be pressed while
+  // the queue is still empty.
+  let releaseTransfer = null
+  const transferHeld = new Promise((resolve) => (releaseTransfer = resolve))
+  await page.route(/\/api\/pomodoros\/transfer/, async (route) => {
+    await transferHeld
+    await route.continue()
+  })
+  await page.locator('[data-open-transfer]').click()
+  await page.getByRole('button', { name: 'The rewrite' }).click()
+  await page.locator('[data-confirm-transfer]').click()
+
+  let releaseSync = null
+  const syncHeld = new Promise((resolve) => (releaseSync = resolve))
+  await page.route(/\/api\/sync$/, async (route) => {
+    await syncHeld
+    await route.continue()
+  })
+  // The first read goes to the server, which cannot have the start. The second
+  // is answered with what the server holds while the start is still held, and
+  // only once it has come back — see `holdTasksRead` on fulfilling from JSON.
+  let reads = 0
+  await page.route(POMODORO_READ, async (route) => {
+    reads += 1
+    if (reads !== 2) return route.continue()
+    const before = await (await account.api.get('/api/pomodoros')).json()
+    releaseSync()
+    await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0')
+    await route.fulfill({ json: before })
+  })
+
+  await page.getByLabel(/focusing on|when you are ready/).fill('Second')
+  await page.locator('[data-start]').click()
+  await expect(page.locator('[data-running]')).toBeVisible()
+  await expect(page.locator('[data-sync]')).not.toHaveAttribute('data-pending', '0')
+
+  // The first reply lands with the start still queued.
+  releaseTransfer()
+  await expect(page.locator('[data-confirm-transfer]')).toHaveCount(0)
+  expect(reads, 'the transfer re-read the pomodoros').toBe(1)
+  await expect(page.locator('[data-sync]')).not.toHaveAttribute('data-pending', '0')
+
+  // The second read: another device adds a pomodoro, which moves the digest's
+  // count, and a focus past the ten-second floor asks what changed.
+  await seedPomodoro(account, 'Another device', `${TODAY}T10:00:00`)
+  await page.clock.fastForward('00:11')
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+
+  // Its row appearing is what says the second reply was applied at all.
+  await expect(page.locator('[data-pomodoro]').filter({ hasText: 'Another device' })).toBeVisible()
+  expect(reads, 'the focus re-read the pomodoros').toBe(2)
+  expect(
+    await leastCount(page.locator('[data-running]')),
+    'the pomodoro that was running went off the screen'
+  ).toBe(1)
+  await expect(page.locator('[data-pomodoro]')).toHaveCount(3)
+})
+
 test('a pomodoro deleted while the pomodoros are being read is not brought back by the reply', async ({
   page,
   account,

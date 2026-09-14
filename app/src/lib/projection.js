@@ -55,6 +55,43 @@ export function mergeDuringRead(loaded, mine, keyOf) {
 }
 
 /**
+ * The part of a during-read map the server has not yet confirmed.
+ *
+ * What a read may empty its map down to, both when it begins and when its reply
+ * lands. Emptying it outright assumed that a write made *before* a read began
+ * is on the server by the time the read is answered — which is false while that
+ * write's own request is still in the air. Two requests race: the server can
+ * answer the read before it commits the write, and the write's reply can still
+ * reach the device first and empty the queue, so neither the map nor the
+ * overlay is left to lay the row back. Seen as the focus page's copy button
+ * offering half the day, because `transferDay` re-reads the pomodoros while the
+ * next one's start is being sent.
+ *
+ * An intent leaves the queue only when a reply for it has been applied, so a
+ * key still named by one is exactly a write the server might not have yet.
+ * Everything else still goes, a drained tombstone included: overlaying writes
+ * the server has confirmed would be the other bug, since an edit made on
+ * another device arrives precisely *by* a read replacing this one.
+ *
+ * @param {Map<string, object|null>} mine Rows (or `null` tombstones) by key.
+ * @param {Array<object>} queue The outbox, oldest first.
+ * @param {(intent: object) => string|true|undefined} keyOf Which key an intent
+ *   writes: `undefined` for an intent about another collection, and `true` for
+ *   one that cannot say which row it touches, which keeps the whole map.
+ * @returns {Map<string, object|null>} A new map; `mine` is not changed.
+ */
+export function unconfirmed(mine, queue, keyOf) {
+  if (!mine.size) return new Map()
+  const waiting = new Set()
+  for (const intent of queue) {
+    const key = keyOf(intent)
+    if (key === true) return new Map(mine)
+    if (key !== undefined) waiting.add(key)
+  }
+  return new Map([...mine].filter(([key]) => waiting.has(key)))
+}
+
+/**
  * Lay queued answers over the answers the server returned.
  *
  * @param {Array<object>} rows Answers as the server gave them.
