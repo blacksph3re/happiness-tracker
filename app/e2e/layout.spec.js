@@ -3,8 +3,11 @@ import { expect, privateCatalogue, test } from './fixtures.js'
 test('the day controls belong to the date line they move', async ({ page }) => {
   await page.goto('/answer')
 
-  const previous = page.getByRole('button', { name: 'Previous day' })
-  const next = page.getByRole('button', { name: 'Next day' })
+  // The drawn arrows, not their buttons: each button is the 44px a thumb aims
+  // at, reaching past the arrow it draws, so its box says nothing about how
+  // big the arrow looks beside the date.
+  const previous = page.getByRole('button', { name: 'Previous day' }).locator('span')
+  const next = page.getByRole('button', { name: 'Next day' }).locator('span')
   const date = page.locator('header p.meta').first()
 
   const [prevBox, dateBox, nextBox] = await Promise.all([

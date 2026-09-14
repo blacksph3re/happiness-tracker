@@ -422,3 +422,75 @@ def test_an_answer_and_its_correction_in_one_queue(client, admin_headers):
     assert results[1]["outcome"] == "applied"
     assert results[2]["outcome"] == "applied"
     assert stored_answer(client, admin_headers, question["id"]) == 5
+
+
+def test_an_entry_stamped_with_z_is_applied_as_utc_beside_the_rest(
+    client, admin_headers
+):
+    # `Z` is valid UTC. Another client sending it used to make the overlap check
+    # compare an aware datetime against stored naive ones, and the resulting 500
+    # failed every intent in the batch, including the answer behind it.
+    project = make_project(client, admin_headers)
+    sync(client, admin_headers, [entry_intent(1, "earlier", project["id"], EARLIER)])
+    question = scaled_question(client, admin_headers)
+
+    zulu = entry_intent(2, "zulu", project["id"], LATER, start_hour=13, end_hour=14)
+    zulu["payload"]["started_at"] = "2026-06-10T13:00:00Z"
+    zulu["payload"]["ended_at"] = "2026-06-10T16:30:00+02:00"
+    results = sync(
+        client,
+        admin_headers,
+        [zulu, answer_intent(3, question["id"], LATER, 4)],
+    )
+
+    assert results[2]["outcome"] == "applied"
+    assert results[3]["outcome"] == "applied"
+    stored = {row["client_id"]: row for row in sessions(client, admin_headers)}
+    assert stored["zulu"]["started_at"] == at(10, 13)
+    assert stored["zulu"]["ended_at"] == at(10, 14, 30)
+
+
+def test_a_pomodoro_and_a_task_stamped_with_offsets_are_stored_as_utc(
+    client, admin_headers
+):
+    from tests.test_todos import kinds, tasks
+
+    inbox = kinds(client, admin_headers)["inbox"]
+    results = sync(
+        client,
+        admin_headers,
+        [
+            {
+                "seq": 1,
+                "kind": "pomodoro.upsert",
+                "client_id": "pomo-z",
+                "client_updated_at": "2026-06-10T08:00:00Z",
+                "payload": {
+                    "started_at": "2026-06-10T09:00:00Z",
+                    "ended_at": "2026-06-10T11:10:00+02:00",
+                    "utc_offset": 0,
+                    "focus_seconds": 1500,
+                    "break_seconds": 300,
+                },
+            },
+            {
+                "seq": 2,
+                "kind": "todo.upsert",
+                "client_id": "todo-z",
+                "client_updated_at": "2026-06-10T08:00:00Z",
+                "payload": {
+                    "list_id": inbox["id"],
+                    "title": "Feed the cat",
+                    "planned_on": "2026-06-10",
+                    "done_at": "2026-06-10T11:00:00+02:00",
+                },
+            },
+        ],
+    )
+
+    assert results[1]["outcome"] == "applied", results[1]
+    assert results[2]["outcome"] == "applied", results[2]
+    pomodoro = client.get("/api/pomodoros", headers=admin_headers).json()[0]
+    assert pomodoro["started_at"] == at(10, 9)
+    assert pomodoro["ended_at"] == at(10, 9, 10)
+    assert tasks(client, admin_headers)[0]["done_at"] == at(10, 9)

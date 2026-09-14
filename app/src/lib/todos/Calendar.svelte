@@ -909,7 +909,7 @@
             {#each placed[day].anytime.slice(0, fill.tasks) as task (task.client_id)}
               <button
                 class="pointer-events-auto w-full shrink-0 truncate rounded border-l-2 px-1.5 text-left
-                       text-[0.7rem] leading-tight
+                       text-[0.7rem] leading-tight select-none [-webkit-touch-callout:none]
                        focus-visible:ring-1 focus-visible:ring-ember focus-visible:outline-none
                        {task.done_at ? 'text-haze line-through opacity-60' : ''}
                        {drag.dragging === task.client_id ? 'opacity-40' : ''}"
@@ -1002,7 +1002,8 @@
                other. -->
           <button
             class="absolute z-10 flex touch-pan-y overflow-hidden rounded border-l-2 px-1.5 text-left
-                   text-[0.7rem] leading-tight transition hover:brightness-125
+                   text-[0.7rem] leading-tight select-none [-webkit-touch-callout:none] transition
+                   hover:brightness-125
                    focus-visible:ring-1 focus-visible:ring-ember focus-visible:outline-none
                    {block.compact
               ? 'items-baseline gap-1.5 py-0.5'

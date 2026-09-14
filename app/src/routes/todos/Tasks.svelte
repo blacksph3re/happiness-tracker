@@ -1,16 +1,25 @@
 <script>
   import { tick as painted, untrack } from 'svelte'
+  import { get } from 'svelte/store'
 
   import Board from '../../lib/todos/Board.svelte'
+  import Frame from '../../lib/todos/Frame.svelte'
   import TaskMenu from '../../lib/todos/TaskMenu.svelte'
   import TaskModal from '../../lib/todos/TaskModal.svelte'
   import { tick, untick } from '../../lib/todos/fields.js'
-  import { markTicked } from '../../lib/todos/tick.js'
-  import { GROUPINGS, groupingFor, listOrder } from '../../lib/todos/groupings.js'
+  import { markTicked, nextSettleIn, settlingNow } from '../../lib/todos/tick.js'
+  import {
+    DEFAULT_GROUPING,
+    GROUPINGS,
+    dropNeighbours,
+    groupingFor,
+    listOrder,
+    newTaskRank,
+  } from '../../lib/todos/groupings.js'
   import { selectedLists, storedLists, todoSettings } from '../../lib/todo-settings.js'
   import { cardDrag } from '../../lib/todos/drag.svelte.js'
   import { taskMenu } from '../../lib/todos/task-menu.svelte.js'
-  import { between, compareRank, needsRebalance, spread } from '../../lib/todos/rank.js'
+  import { between, needsRebalance, spread } from '../../lib/todos/rank.js'
   import { dayLabel, today as todayKey } from '../../lib/day.js'
   import { chipColour } from '../../lib/palette.js'
   import { wide } from '../../lib/media.js'
@@ -28,6 +37,7 @@
     persistPreferences,
     preferenceSection,
     preferences,
+    ready,
     saveTodo,
     saveTodos,
     settleActiveTasks,
@@ -64,7 +74,11 @@
    * lists on every read — see `selectedLists`.
    */
   let chosen = $state([])
-  let groupingId = $state('date')
+  // The grouping module's default and never a second one here: this said
+  // `'date'` while `groupingFor` fell back to something else, so an account with
+  // nothing remembered and one remembering a grouping that no longer exists
+  // opened on two different boards.
+  let groupingId = $state(DEFAULT_GROUPING)
   let layoutId = $state('stacked')
 
   /** Whether the saved view state has been read, so mirroring it back is not a save. */
@@ -241,20 +255,18 @@
   const choosable = $derived(grouping.layouts.length > 1 && $wide)
 
   /**
-   * How wide the page's regions are, and where they start.
+   * How much of the frame the board fills — and nothing about where it starts.
    *
-   * **One value for the heading, the toolbar and the board**, because they have
-   * to share a left edge: `columns` lays out from a per-column minimum, so its
-   * width is decided by the grouping rather than by the screen — five columns
-   * came to 1216px inside the 1112 the reading width left, clipped identically
-   * at 1280, 1440 and 1920. It gets the whole page there, and a centred heading
-   * above a full-width board sat 384px right of the first column, which reads
-   * as two pages. A stack and a 2×2 grid are decided by the screen and keep the
-   * reading width, where a card 1,880px wide is a line nobody can follow.
+   * The frame is fixed by the window (`Frame.svelte`), so the heading, the
+   * toolbar and the board all start at its left edge in every view. A column row
+   * and a 2×2 grid fill it: columns are laid out from a per-column minimum, and
+   * a five-column grouping bounded by a reading width was clipped at every
+   * desktop width. A stack keeps the reading width, where a card 1,500px wide is
+   * a line nobody can follow — but anchored left rather than centred, because
+   * *centred* is what used to move the heading every time the board changed
+   * shape, not *wide*.
    */
-  const region = $derived(
-    layout === 'columns' ? 'w-full px-5' : 'mx-auto w-full max-w-6xl px-5'
-  )
+  const boardWidth = $derived(layout === 'stacked' ? 'max-w-todo-reading' : '')
 
   // The archive is the one collection that is paged and the one that is not in
   // the snapshot: it is read when it is looked at, and not before. Two views
@@ -286,6 +298,53 @@
   })
 
   /**
+   * Bumped when a settling window opens or closes, and read by nothing else.
+   *
+   * **What re-derives `settling`, and the only thing that does.** The set is a
+   * clock read (`settlingNow`), and a `$derived` over a clock read alone would
+   * compute once and never again — nothing reactive would tell it a window had
+   * closed. So it reads this counter, and the counter is written from exactly
+   * two places, neither of them an effect: the tick gesture (`toggle`), and the
+   * timeout that gesture schedules for the moment the earliest open window
+   * closes (`wake`). Nothing reads what it writes, so there is nothing to loop.
+   */
+  let settleClock = $state(0)
+
+  /** The pending `wake`, so a second tick replaces rather than stacks it. */
+  let settleTimer = null
+
+  /**
+   * Re-derive the settling set, and come back when the next window closes.
+   *
+   * Scheduled from the stamps rather than from the tick that asked, so a window
+   * opened by another tick in the meantime is still closed on time. One timer
+   * at most; a page left mid-window is cleared by the effect below.
+   */
+  function wake() {
+    settleClock += 1
+    clearTimeout(settleTimer)
+    const left = nextSettleIn()
+    // A frame past the edge, so the read lands after the window and not on it.
+    settleTimer = left === null ? null : setTimeout(wake, left + 16)
+  }
+
+  $effect(() => () => clearTimeout(settleTimer))
+
+  /**
+   * Tasks ticked on this device a moment ago, still drawn where they were.
+   *
+   * Plain is the one grouping that moves a card for a tick — to the end of its
+   * column — and a card vanishing from under the finger that ticked it takes its
+   * own animation with it and leaves the reader nowhere to untick a mis-tap. So
+   * for `SETTLE_MS` it keeps its slot. Every other grouping ignores the set.
+   * Ticks arriving from another device are not in it: nobody here made them.
+   */
+  const settling = $derived.by(() => {
+    settleClock
+    return settlingNow()
+  })
+
+  /**
    * The archive has no order of its own, so the chip view is not a grouping.
    *
    * A task arrives there by being finished or abandoned, never by being placed
@@ -308,7 +367,7 @@
             ),
           },
         ]
-      : grouping.columns(tasks, today, settings, lists).map((column, _, all) => ({
+      : grouping.columns(tasks, today, settings, lists, { settling }).map((column, _, all) => ({
           ...column,
           sweepTo: sweepTarget(column, all),
           // Under the `list` grouping a column is a list, and a shared list's
@@ -412,13 +471,35 @@
     restore()
   })
 
-  /** Put the board back on the lists, grouping and layout it was last left on. */
+  /**
+   * Put the board back on the lists, grouping and layout it was last left on.
+   *
+   * **From the snapshot first, and then from the read.** `ensurePreferences`
+   * waits on the network whenever this session has not confirmed a read yet —
+   * which is every reload — so restoring only after it painted the default
+   * grouping for as long as the connection took, over a snapshot that already
+   * knew better: on a slow start an account that keeps Date sat on Plain. The
+   * held copy is applied as soon as the device has read its own disk, and the
+   * confirmed one over it, so another device's change still arrives. Saving
+   * waits for the confirmed read, as it always has.
+   */
   async function restore() {
-    const stored = preferenceSection(await ensurePreferences(), 'todos')
+    await ready()
+    const held = get(preferences)
+    if (held) apply(preferenceSection(held, 'todos'))
+    apply(preferenceSection(await ensurePreferences(), 'todos'))
+    restored = true
+  }
+
+  /**
+   * Take one stored view, leaving every control the reader has already moved.
+   *
+   * @param {object} stored The `todos` section of the preferences document.
+   */
+  function apply(stored) {
     if (!steered.has('lists')) chosen = storedLists(stored)
     if (!steered.has('grouping') && GROUPINGS[stored.grouping]) groupingId = stored.grouping
     if (!steered.has('layout') && typeof stored.layout === 'string') layoutId = stored.layout
-    restored = true
   }
 
   $effect(() => {
@@ -534,16 +615,24 @@
     // there by being finished or abandoned and never by being put there.
     if (column.readonly && inside) return false
     const others = column.tasks.filter((row) => row.client_id !== task.client_id)
-    const at = Math.min(Math.max(index, 0), others.length)
+    // The slot *and* the ranks either side of it come from one call. A column
+    // with an open and a done section (Plain) sorts each section alone, so at
+    // the boundary the card before the slot and the card after it can be ranked
+    // either way round — and `between` of the two then lands the card a slot
+    // late even with the slot clamped. Without sections this is exactly the
+    // clamp and the pair this function always read.
+    const { at, lower, upper } = dropNeighbours(column, task, index)
     const was = column.tasks.findIndex((row) => row.client_id === task.client_id)
     const patch = grouping.drop(task, column.id, today, settings, lists)
 
     // Dropped back where it came from: no field to change and the same
     // neighbours either side. Writing anyway would queue an intent that says
     // nothing, and on a slow connection that is a write somebody waits for.
+    // A drop clamped back to its own slot at a section boundary ends here too,
+    // which is what stops an arrow key at the boundary.
     if (!Object.keys(patch).length && was === at) return false
 
-    const rank = between(others[at - 1]?.rank ?? null, others[at]?.rank ?? null)
+    const rank = between(lower, upper)
     const moved = { ...task, ...patch, rank }
 
     if (!needsRebalance(rank)) {
@@ -725,13 +814,9 @@
    */
   function add(title, fields, column) {
     if (!creating) return
-    const last = column.tasks.toSorted(compareRank).at(-1)
-    saveTodo({
-      list_id: creating.id,
-      title,
-      ...fields,
-      rank: between(last?.rank ?? null, null),
-    })
+    // The end of the open section where a column has one, so a typed task in
+    // Plain lands above the done tasks rather than among them.
+    saveTodo({ list_id: creating.id, title, ...fields, rank: newTaskRank(column) })
   }
 
   /**
@@ -748,6 +833,10 @@
     // Stamped before the write, so the card rendering the tick finds it: this
     // is the gesture, and only a tick made here draws itself. See `tick.js`.
     if (!task.done_at) markTicked(task.client_id)
+    // Before the write, so the projection that draws the tick already draws it
+    // settling: the other order moves the card for one frame and back.
+    // Unticking needs no window — an open task is open whatever the set holds.
+    if (!task.done_at) wake()
     saveTodo(task.done_at ? untick(task) : tick(task))
   }
 
@@ -843,143 +932,19 @@
 
 </script>
 
-<!-- The page's own gutter, with the *reading* width applied per region rather
-     than to the whole section. The heading and the toolbar are prose and keep
-     it; the board does not, and bounding it there is what clipped a
-     five-column layout at every desktop width — see the board region below. -->
-<section class="w-full py-8">
-  <!-- The gutter lives on each region rather than on the section, so the
-       reading width is the same 1112px it always was: moved outwards it became
-       1152 and shifted the whole board 20px left, which a carry test measured
-       within one run. -->
-  <div class={region}>
-  <div class="mb-6">
-    <p class="meta">What you mean to do</p>
-    <h1 class="mt-1 text-3xl font-bold tracking-tight">Tasks</h1>
-  </div>
-
-  <!-- One row for every control that changes what the board means, which is
-       the smoothing-slider lesson applied before it bites: a control that is
-       not on screen still applies. Each group is its own flex container, so a
-       cramped row moves a whole group to the next line rather than splitting a
-       label from the buttons it names. -->
-  <div class="mb-6 flex flex-wrap items-center gap-x-4 gap-y-3">
-    {#if !byList}
-      <!-- A toggle each rather than a choice between them: the board shows a
-           **set** of lists, and at least one of them always — tapping the last
-           one selected is the one press here that does nothing, because a board
-           showing no list has nothing to draw and nowhere to put a typed task.
-           `aria-pressed` is what says which are in, and it is the same
-           attribute a single-selection row used, so nothing reading it has to
-           learn a second shape. -->
-      <!-- **One row that scrolls below 48rem**, rather than a block that wraps.
-           Measured at 390: five lists took two rows of chips and the first card
-           began at y=414 of 844, over half the screen spent on chrome. Every
-           chip is still here and still a toggle - a summary that opened a sheet
-           would have cost a tap to reach the thing a tap already does. -->
-      <div
-        class={$wide
-          ? 'flex flex-wrap gap-1'
-          : '-mx-5 flex gap-1 overflow-x-auto px-5'}
-        role="group"
-        aria-label="Lists"
-        data-list-chips
-      >
-        {#if several || chips.filter((one) => one.kind !== 'archive').length > 1}
-          <!-- Only where there is more than one ordinary list to gather, or it
-               is a control whose whole effect is already on screen. -->
-          <button
-            class="meta shrink-0 rounded-md border px-3 py-2 whitespace-nowrap transition
-                   {allSelected
-              ? 'border-ember bg-ember/10 text-paper'
-              : 'border-white/15 hover:border-white/40'}"
-            data-list-all
-            aria-pressed={allSelected}
-            onclick={selectAll}
-          >
-            All
-          </button>
-        {/if}
-        {#each chips as one (one.id)}
-          <button
-            class="meta flex shrink-0 items-center gap-2 rounded-md border px-3 py-2
-                   whitespace-nowrap transition
-                   {listIds.includes(one.id)
-              ? 'border-ember bg-ember/10 text-paper'
-              : 'border-white/15 hover:border-white/40'}"
-            data-list={one.id}
-            data-kind={one.kind}
-            aria-pressed={listIds.includes(one.id)}
-            onclick={() => toggleList(one)}
-          >
-            <span
-              class="size-2 rounded-full"
-              style:background={chipColour(one.colour)}
-              aria-hidden="true"
-            ></span>
-            {one.name}
-          </button>
-        {/each}
-      </div>
-    {/if}
-
-    {#if !showingArchive}
-      <!-- Pills, not a `<select>`. It was the only one in the four toolbars,
-           beside two rows of pills that do the same kind of job, and Time
-           Patterns switches five windows with five of these — which is what
-           made this row read as bolted on. `data-grouping` stays on the group
-           so what is *showing* is still one attribute to find; `aria-pressed`
-           on each says which. Its own flex container, so at 320 it takes two
-           rows rather than splitting a label off the buttons beside it. -->
-      <div
-        class={$wide
-          ? 'flex flex-wrap gap-1'
-          : '-mx-5 flex gap-1 overflow-x-auto px-5'}
-        role="group"
-        aria-label="Group by"
-        data-grouping
-      >
-        {#each Object.values(GROUPINGS) as one (one.id)}
-          <button
-            class="meta shrink-0 rounded-md border px-3 py-2 whitespace-nowrap transition
-                   {one.id === groupingId
-              ? 'border-ember bg-ember/10 text-paper'
-              : 'border-white/15 hover:border-white/40'}"
-            data-grouping-option={one.id}
-            aria-pressed={one.id === groupingId}
-            onclick={() => {
-              groupingId = one.id
-              steered.add('grouping')
-            }}
-          >
-            {one.label}
-          </button>
-        {/each}
-      </div>
-
-      {#if choosable}
-        <!-- Only where there is a choice *and* room for one. Below 48rem a
-             column layout is the pager, which is not a third option somebody
-             picks — it is what `columns` and `quadrants` are on a phone. -->
-        <div class="flex items-stretch gap-1" role="group" aria-label="Layout">
-          {#each grouping.layouts as one (one)}
-            <button
-              class="meta rounded-md border px-3 py-2 whitespace-nowrap transition
-                     {one === layout
-                ? 'border-ember bg-ember/10 text-paper'
-                : 'border-white/15 hover:border-white/40'}"
-              data-layout={one}
-              aria-pressed={one === layout}
-              onclick={() => {
-                layoutId = one
-                steered.add('layout')
-              }}
-            >
-              {one === 'stacked' ? 'Stacked' : one === 'columns' ? 'Columns' : 'Quadrants'}
-            </button>
-          {/each}
-        </div>
-      {/if}
+<Frame eyebrow="What you mean to do" title="Tasks">
+  <!-- The heading's line carries the one control a *tick* can call up. *Clean
+       up N done* arrives with the first done task, and in the toolbar it was a
+       row of its own on a phone: ticking the first task moved the whole board
+       down under the finger that ticked it. Beside the `h1` it changes no row:
+       a 34px button next to a 36px line adds no height, and it fits at 320 with
+       room for a three-digit count. Beside the `h1` and not beside the eyebrow
+       above it, because that block is as wide as its eyebrow, and at 320 the
+       two came to 305px of a 296px row and the button wrapped under the heading.
+       Keeping an empty place for it in the toolbar was the other structural
+       answer, and on a phone that is a permanent row of chrome above every
+       board. Only the confirmation a press opens may wrap. -->
+  {#snippet aside()}
 
       <!-- The count is on the button because the pressure it relieves is
            invisible otherwise: done tasks stay in the list until somebody
@@ -988,7 +953,7 @@
            would be moving things to — and not offered here at all under the
            `list` grouping, where every list is on screen and one button could
            only be about one of them. There it is per column. -->
-      {#if done.length && !byList}
+      {#if done.length && !byList && !showingArchive}
         <!-- Behind the same two-step confirm the modal's Delete uses. One press
              here archived six tasks; one press there takes a single task and
              still asks. The question replaces the button that raised it and
@@ -1033,15 +998,181 @@
           {/if}
         </div>
       {/if}
+  {/snippet}
+
+  <!-- One row for every control that changes what the board means, which is
+       the smoothing-slider lesson applied before it bites: a control that is
+       not on screen still applies. Each group is its own flex container, so a
+       cramped row moves a whole group to the next line rather than splitting a
+       label from the buttons it names.
+
+       **Ordered from stable to conditional, so a view change moves nothing.**
+       The grouping pills come first, because every view has them; the list
+       selector second, because one grouping replaces it; the layout toggle last
+       and anchored to the frame's right edge, because only some groupings offer
+       one. A control that can disappear sits after everything that cannot, and
+       where one does go its *place* is kept and says why — so on a phone the
+       rows below do not climb 46px either. -->
+  <div class="mb-6 flex flex-wrap items-center gap-x-4 gap-y-3" data-toolbar>
+    <!-- Pills, not a `<select>`. It was the only one in the four toolbars,
+         beside two rows of pills that do the same kind of job, and Time
+         Patterns switches five windows with five of these — which is what
+         made this row read as bolted on. `data-grouping` stays on the group
+         so what is *showing* is still one attribute to find; `aria-pressed`
+         on each says which. Its own flex container, so at 320 it takes two
+         rows rather than splitting a label off the buttons beside it.
+
+         The archive is not grouped, so there the pills keep their exact box
+         — invisible, which also takes them out of the tab order and the
+         accessibility tree — under a caption saying so. Hiding them slid the
+         list chips into their place the moment the Archive chip was tapped. -->
+    <!-- Below 48rem, three equal cells a row and never a strip that scrolls —
+         the rule the category switcher already follows. Six pills scrolled
+         sideways at 320 and ended in a cut one; *Eisenhower*, the widest label,
+         fits a third of the 296px row with room to spare. -->
+    <div
+      class="relative gap-1
+             {$wide ? 'flex flex-wrap' : 'grid w-full auto-rows-fr grid-cols-3'}
+             {showingArchive ? 'overflow-hidden' : ''}"
+      role={showingArchive ? undefined : 'group'}
+      aria-label={showingArchive ? undefined : 'Group by'}
+      data-grouping={showingArchive ? undefined : ''}
+      data-grouping-slot
+    >
+      {#each Object.values(GROUPINGS) as one (one.id)}
+        <button
+          class="meta rounded-md border py-2 transition
+                 {$wide ? 'shrink-0 px-3 whitespace-nowrap' : 'min-w-0 px-1 text-center break-words'}
+                 {showingArchive ? 'invisible' : ''}
+                 {one.id === groupingId
+            ? 'border-ember bg-ember/10 text-paper'
+            : 'border-white/15 hover:border-white/40'}"
+          data-grouping-option={showingArchive ? undefined : one.id}
+          aria-pressed={one.id === groupingId}
+          onclick={() => {
+            groupingId = one.id
+            steered.add('grouping')
+          }}
+        >
+          {one.label}
+        </button>
+      {/each}
+      {#if showingArchive}
+        <p
+          class="meta absolute inset-y-0 left-0 flex items-center whitespace-nowrap"
+          data-grouping-archive
+        >
+          The archive is not grouped
+        </p>
+      {/if}
+    </div>
+
+    <!-- A toggle each rather than a choice between them: the board shows a
+         **set** of lists, and at least one of them always — tapping the last
+         one selected is the one press here that does nothing, because a board
+         showing no list has nothing to draw and nowhere to put a typed task.
+         `aria-pressed` is what says which are in, and it is the same attribute
+         a single-selection row used, so nothing reading it has to learn a
+         second shape.
+
+         **Below 48rem, equal cells that wrap**, as the pills above and the
+         category switcher below: one row that scrolled sideways ended in a cut
+         chip at 320, and a chip off screen is a list you cannot see is there. A
+         long name wraps inside its cell rather than losing letters.
+
+         **Under the Lists grouping the chips keep their exact box**, drawn
+         invisible and without a single hook, under a caption saying why — the
+         archive's rule for the pills. Every list is a column there, so a
+         control choosing between them would have nothing to do; but a one-line
+         caption in place of two rows of cells moved the board up by a row on a
+         phone the moment the grouping changed. `invisible` also takes the cells
+         out of the tab order and the accessibility tree. -->
+    <div
+      class="relative gap-1
+             {$wide
+        ? 'flex flex-wrap'
+        : 'grid w-full auto-rows-fr grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))]'}"
+      role={byList ? undefined : 'group'}
+      aria-label={byList ? undefined : 'Lists'}
+      data-list-chips={byList ? undefined : ''}
+      data-list-slot
+    >
+      {#if several || chips.filter((one) => one.kind !== 'archive').length > 1}
+        <!-- Only where there is more than one ordinary list to gather, or it
+             is a control whose whole effect is already on screen. -->
+        <button
+          class="meta rounded-md border py-2 transition
+                 {$wide ? 'shrink-0 px-3 whitespace-nowrap' : 'min-w-0 px-1 text-center'}
+                 {byList ? 'invisible' : ''}
+                 {allSelected && !byList
+            ? 'border-ember bg-ember/10 text-paper'
+            : 'border-white/15 hover:border-white/40'}"
+          data-list-all={byList ? undefined : ''}
+          aria-pressed={byList ? undefined : allSelected}
+          onclick={selectAll}
+        >
+          All
+        </button>
+      {/if}
+      {#each chips as one (one.id)}
+        <button
+          class="meta flex items-center gap-2 rounded-md border py-2 transition
+                 {$wide ? 'shrink-0 px-3 whitespace-nowrap' : 'min-w-0 justify-center px-1'}
+                 {byList ? 'invisible' : ''}
+                 {listIds.includes(one.id) && !byList
+            ? 'border-ember bg-ember/10 text-paper'
+            : 'border-white/15 hover:border-white/40'}"
+          data-list={byList ? undefined : one.id}
+          data-kind={byList ? undefined : one.kind}
+          aria-pressed={byList ? undefined : listIds.includes(one.id)}
+          onclick={() => toggleList(one)}
+        >
+          <span
+            class="size-2 shrink-0 rounded-full"
+            style:background={chipColour(one.colour)}
+            aria-hidden="true"
+          ></span>
+          <span class="min-w-0 break-words" data-chip-label>{one.name}</span>
+        </button>
+      {/each}
+      {#if byList}
+        <p
+          class="meta absolute inset-y-0 left-0 flex items-center whitespace-nowrap"
+          data-list-columns
+        >
+          Every list is a column
+        </p>
+      {/if}
+    </div>
+
+    {#if choosable && !showingArchive}
+      <!-- Only where there is a choice *and* room for one. Below 48rem a
+           column layout is the pager, which is not a third option somebody
+           picks — it is what `columns` and `quadrants` are on a phone.
+           `ml-auto` pins it to the frame's right edge, so appearing moves
+           nothing to its left and nothing to its left moves it. -->
+      <div class="ml-auto flex items-stretch gap-1" role="group" aria-label="Layout">
+        {#each grouping.layouts as one (one)}
+          <button
+            class="meta rounded-md border px-3 py-2 whitespace-nowrap transition
+                   {one === layout
+              ? 'border-ember bg-ember/10 text-paper'
+              : 'border-white/15 hover:border-white/40'}"
+            data-layout={one}
+            aria-pressed={one === layout}
+            onclick={() => {
+              layoutId = one
+              steered.add('layout')
+            }}
+          >
+            {one === 'stacked' ? 'Stacked' : one === 'columns' ? 'Columns' : 'Quadrants'}
+          </button>
+        {/each}
+      </div>
     {/if}
   </div>
 
-  </div>
-
-  <!-- The board's own region, on the same `region` the heading above it uses:
-       see the note on that derived value for why the width is the point and
-       why the two must not disagree. -->
-  <div class={region}>
+  <div class={boardWidth}>
   {#if loading}
     <p class="meta">Loading your tasks…</p>
   {:else if !lists.length}
@@ -1051,6 +1182,7 @@
     </p>
   {:else}
     <Board
+      grouping={grouping.id}
       {columns}
       {today}
       {lists}
@@ -1078,7 +1210,7 @@
        about a card that has already moved, and a reader who can see it move
        does not need telling. -->
   <p class="sr-only" role="status" aria-live="polite" data-moved>{moved}</p>
-</section>
+</Frame>
 
 <!-- Outside the section, because it is positioned against the *viewport*: a
      card sits inside a column that hides its own overflow, and the edges are

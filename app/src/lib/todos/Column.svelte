@@ -1,4 +1,5 @@
 <script>
+  import { clampDrop } from './groupings.js'
   import QuickAdd from './QuickAdd.svelte'
   import TaskCard from './TaskCard.svelte'
 
@@ -58,6 +59,14 @@
      * not repeated up there and stays either way.
      */
     titled = true,
+    /**
+     * How tall the heading row is kept whatever this column has in it:
+     * `'button'`, `'line'`, or null to draw only what the column has.
+     *
+     * The pager's, and only the pager's, which decides it per grouping — see
+     * `head` in `Board`. A control appearing because of state keeps its place.
+     */
+    steady = null,
     onadd = () => {},
     ontoggle = () => {},
     onopen = () => {},
@@ -106,6 +115,26 @@
   const gap = $derived(over ? (drag.height || 0) + 8 : 0)
 
   /**
+   * Where the gap opens: the pointer's index, kept inside the carried card's
+   * own section where the column has sections.
+   *
+   * The same `clampDrop` `place` resolves the drop through, so the gap is a
+   * picture of where the card will land rather than of where the pointer is — a
+   * gap opening among the done cards for a drop that lands last among the open
+   * ones would be the picture lying. Only for a column with `doneFrom`: a pager
+   * tab asks for the end with `MAX_SAFE_INTEGER`, which every other column has
+   * always shown as it is.
+   */
+  const slot = $derived.by(() => {
+    if (!over) return 0
+    if (typeof column.doneFrom !== 'number') return drag.index
+    const carried = column.tasks.find((one) => one.client_id === carrying) ?? {
+      client_id: carrying,
+    }
+    return clampDrop(column, carried, drag.index)
+  })
+
+  /**
    * Whether the end of this column holds the carried card's height open.
    *
    * **What makes the last slot reachable by pointer**, in a column that scrolls
@@ -143,7 +172,7 @@
     let seen = 0
     return column.tasks.map((task) => {
       const carried = task.client_id === carrying
-      const displaced = over && !carried && seen >= drag.index
+      const displaced = over && !carried && seen >= slot
       if (!carried) seen += 1
       return { task, carried, displaced }
     })
@@ -152,8 +181,21 @@
   /** How many done tasks this column holds, for the button that clears them. */
   const done = $derived(column.tasks.filter((one) => one.done_at).length)
 
-  /** Whether this column's own cleanup is on offer, which the header row holds. */
-  const clearable = $derived(Boolean(oncleanup) && done > 0 && !frozen)
+  /**
+   * Whether this column can offer its own cleanup at all, whatever it holds now.
+   *
+   * **A tick must not move the column.** The button used to arrive with the
+   * first done task, and a button is taller than the heading beside it — so the
+   * heading row grew and every card below it moved, set off by ticking one of
+   * them. The row now holds the button's place whenever the column *could*
+   * offer it, and draws it invisible, disabled and without its `data-` hook
+   * while there is nothing to clean. `invisible` is `visibility: hidden`, which
+   * also takes it out of the tab order and the accessibility tree.
+   */
+  const canClear = $derived(Boolean(oncleanup) && !frozen)
+
+  /** Whether this column's own cleanup has anything to do. */
+  const clearable = $derived(canClear && done > 0)
 
   /** Whether asking has been asked. Per column, so two cannot be armed at once. */
   let confirming = $state(false)
@@ -164,8 +206,15 @@
    */
   const open = $derived(column.tasks.filter((one) => !one.done_at).length)
 
-  /** Whether this column's sweep is on offer. Not at zero: a button moving nothing. */
-  const sweepable = $derived(Boolean(onsweep && column.sweepTo) && open > 0 && !frozen)
+  /**
+   * Whether this column can offer a sweep at all. The place is kept for the same
+   * reason as `canClear`: ticking the last open task in Past took the button
+   * away and the row under a finger with it.
+   */
+  const canSweep = $derived(Boolean(onsweep && column.sweepTo) && !frozen)
+
+  /** Whether a sweep has anything to move. Not at zero: a button moving nothing. */
+  const sweepable = $derived(canSweep && open > 0)
 
   /**
    * What the sweep asks, as one string. Composed here rather than in markup,
@@ -275,10 +324,10 @@
      interpolated value. -->
 <section
   data-column={column.id}
-  data-drop-index={over ? drag.index : undefined}
+  data-drop-index={over ? slot : undefined}
   class="flex w-full min-w-0 flex-col gap-2"
 >
-  {#if titled || column.hint || clearable || sweepable}
+  {#if titled || column.hint || canClear || canSweep || steady}
     <!-- Wraps, so a question that names an owner's archive or a date can take
          a second line in a narrow column rather than pushing the row past it. -->
     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -289,12 +338,12 @@
       {#if column.hint}
         <span class="meta" data-hint={column.id}>{column.hint}</span>
       {/if}
-      {#if clearable}
+      {#if canClear}
         <!-- Behind the same two-step confirm the modal's Delete uses, and for
              the same reason: one press took six tasks off the board, where
              taking *one* task away asks first. The question replaces the
              button that raised it, and it names the count and where they go. -->
-        {#if confirming}
+        {#if confirming && clearable}
           <span class="meta ml-auto whitespace-nowrap" data-cleanup-column-asking={column.id}>
             Archive {done} done?
           </span>
@@ -327,19 +376,20 @@
         {:else}
           <button
             class="meta ml-auto rounded-md border border-white/15 px-2 py-1 whitespace-nowrap
-                   hover:border-white/40"
-            data-cleanup-column={column.id}
+                   hover:border-white/40 {clearable ? '' : 'invisible'}"
+            data-cleanup-column={clearable ? column.id : undefined}
+            disabled={!clearable}
             onclick={() => (confirming = true)}
           >
             Clean up {done}
           </button>
         {/if}
       {/if}
-      {#if sweepable}
+      {#if canSweep}
         <!-- The same two-step confirm as cleanup, and it names the date rather
              than the column: *Later* in this grouping is the day after
              tomorrow, which skips two days somebody may have expected. -->
-        {#if sweeping}
+        {#if sweeping && sweepable}
           <span class="meta ml-auto" data-sweep-asking={column.id}>{question}</span>
           <button
             class="meta rounded-md border border-ember px-2 py-1 whitespace-nowrap
@@ -363,13 +413,24 @@
         {:else}
           <button
             class="meta ml-auto rounded-md border border-white/15 px-2 py-1 whitespace-nowrap
-                   hover:border-white/40"
-            data-sweep={column.id}
+                   hover:border-white/40 {sweepable ? '' : 'invisible'}"
+            data-sweep={sweepable ? column.id : undefined}
+            disabled={!sweepable}
             onclick={() => (sweeping = true)}
           >
             Move {open} to {column.sweepTo.label}
           </button>
         {/if}
+      {/if}
+      {#if steady === 'button' && !canClear && !canSweep}
+        <!-- The box a heading button has, with nothing in it, so a column with
+             no button is exactly as tall above its cards as one with. -->
+        <span
+          aria-hidden="true"
+          class="meta invisible ml-auto rounded-md border px-2 py-1 whitespace-nowrap"
+          >&nbsp;</span>
+      {:else if steady === 'line' && !column.hint && !titled}
+        <span aria-hidden="true" class="meta invisible">&nbsp;</span>
       {/if}
     </div>
   {/if}
@@ -415,6 +476,7 @@
           task={row.task}
           {today}
           columnDate={column.date ?? null}
+          quiet={Boolean(column.quiet)}
           {showList}
           {me}
           readOnly={readOnly || frozen}

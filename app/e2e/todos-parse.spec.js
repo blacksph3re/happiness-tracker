@@ -1,4 +1,4 @@
-import { expect, storedTodos, systemList, test } from './fixtures.js'
+import { expect, openTasks, storedTodos, systemList, test } from './fixtures.js'
 
 /**
  * The quick-add, colouring what it recognised in the box you typed it in.
@@ -29,8 +29,8 @@ async function makeList(account, name, colour = 'iris') {
   return response.json()
 }
 
-test('the last word of a line is coloured as the date it means', async ({ page }) => {
-  await page.goto('/todos')
+test('the last word of a line is coloured as the date it means', async ({ page, account }) => {
+  await openTasks(page, account, 'date')
   await box(page).fill('Go to gym tomorrow')
 
   const token = overlay(page).locator('[data-token="planned_on"]')
@@ -46,7 +46,7 @@ test('the last word of a line is coloured as the date it means', async ({ page }
 
 test('Enter creates the task the coloured line described', async ({ page, account }) => {
   const inbox = await systemList(account, 'inbox')
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await box(page).fill('Go to gym tomorrow at 9 !2 ~45m')
 
   await expect(preset(page)).toHaveText('tomorrow · 09:00 · high · 45m')
@@ -74,7 +74,7 @@ test('Enter creates the task the coloured line described', async ({ page, accoun
 test('a column preset fills in what the line did not mention', async ({ page, account }) => {
   // The two halves of what Enter does, and the line wins where they disagree:
   // typed under *Tomorrow*, `today` in the text still means today.
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   const tomorrow = page.locator('[data-quick-add="tomorrow"]')
   await expect(page.locator('[data-quick-add-preset="tomorrow"]')).toHaveText('tomorrow')
 
@@ -88,7 +88,7 @@ test('a column preset fills in what the line did not mention', async ({ page, ac
 })
 
 test('a click inside a coloured run turns it back into plain text', async ({ page, account }) => {
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await box(page).fill('Go to gym tomorrow')
   const token = overlay(page).locator('[data-token="planned_on"]')
   await expect(token).toHaveText('tomorrow')
@@ -115,7 +115,7 @@ test('a click inside a coloured run turns it back into plain text', async ({ pag
 
 test('#errands names a list that exists', async ({ page, account }) => {
   const errands = await makeList(account, 'Errands', 'rose')
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   // Waited for rather than assumed, and this is the line that made a flake go
   // away. Phase 3 saw this test fail once with `list_id` reading the inbox: the
   // parser matches `#errands` against the lists it is *handed*, so typing before
@@ -163,7 +163,7 @@ test('the quick-add does not exist before the lists it matches against', async (
     await new Promise((resolve) => setTimeout(resolve, 1500))
     await route.continue()
   })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible()
   // Sampled repeatedly rather than polled: "the box is never there without its
   // lists" is a negative claim, and the first sample of it is true before
@@ -179,10 +179,10 @@ test('the quick-add does not exist before the lists it matches against', async (
   await expect(box(page)).toBeVisible()
 })
 
-test('a word nothing is named after stays a word', async ({ page }) => {
+test('a word nothing is named after stays a word', async ({ page, account }) => {
   // No list called Elsewhere, so the text is left alone: an invented list is
   // worse than a plain word.
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await box(page).fill('Buy milk #elsewhere')
   await expect(overlay(page).locator('[data-token]')).toHaveCount(0)
   await expect(preset(page)).toHaveText('today')
@@ -192,7 +192,7 @@ test('an unknown #list does not block the phrases behind it', async ({ page, acc
   // A `#word` is stepped over by the phrase scan whether or not it names a
   // list. Left as text it sat at the tail and blocked every end-anchored
   // pattern behind it, so this line recognised nothing at all but its sigils.
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await box(page).fill('Write the report tomorrow at 9 for 2h #nosuchlist')
 
   await expect(preset(page)).toHaveText('tomorrow · 09:00 · 2h')
@@ -220,7 +220,7 @@ test('a line ending in high importance is coloured as the priority it names', as
   page,
   account,
 }) => {
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await box(page).fill('Fix the roof high importance')
 
   const token = overlay(page).locator('[data-token="priority"]')
@@ -247,12 +247,12 @@ test('a line ending in high importance is coloured as the priority it names', as
 test.describe('at 320px, where a row runs out of room', () => {
   test.use({ viewport: { width: 320, height: 720 } })
 
-  test('the coloured layer and the text it colours are aligned', async ({ page }) => {
+  test('the coloured layer and the text it colours are aligned', async ({ page, account }) => {
     // The failure this guards against is a metric the two layers do not share —
     // a padding, a border width, a letter-spacing. One pixel of disagreement
     // drifts the colouring off the text by the end of a line, so the measurement
     // is of where the run *starts* against where the character actually is.
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     await box(page).fill('Go to gym tomorrow')
     const token = overlay(page).locator('[data-token="planned_on"]')
     await expect(token).toHaveText('tomorrow')
@@ -307,7 +307,7 @@ test('a priority token is told apart from a list of the same colour', async ({
   // halves out of one read, because either alone would pass while the pair is
   // indistinguishable.
   const errands = await makeList(account, 'Errands', 'amber')
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator(`[data-list="${errands.id}"]`)).toBeVisible()
 
   await box(page).fill('Buy milk !1 #errands')

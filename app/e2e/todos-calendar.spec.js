@@ -4,6 +4,7 @@ import {
   groupBy,
   makeTodo,
   makeTodos,
+  openTasks,
   outboxEmpty,
   savesView,
   storedTodos,
@@ -1737,6 +1738,39 @@ test.describe('the two remembered controls', () => {
     await expect(page.locator('[data-body-day]')).toHaveCount(1)
   })
 
+  test('a remembered mode and toggle paint before the preferences read returns', async ({
+    page,
+    account,
+  }) => {
+    // `restore` awaited `ensurePreferences` before applying anything, and that
+    // waits on the network on every reload — so a remembered Day painted as
+    // Week for as long as the connection took, over a snapshot that already
+    // knew. The board had the same defect and applies the snapshot first.
+    await makeTodo(account, { title: 'Feed the cat', planned_at: '09:00' })
+    const held = await (await account.api.get('/api/me/preferences')).json()
+    await account.api.put('/api/me/preferences', {
+      data: { ...held, todos: { ...(held.todos ?? {}), calendar_mode: 'day', calendar_due: true } },
+    })
+    await page.goto('/todos/calendar')
+    await expect(page.locator('[data-mode="day"]')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('[data-body-day]')).toHaveCount(1)
+
+    let release
+    const gate = new Promise((resolve) => (release = resolve))
+    await page.route('**/api/me/preferences', async (route) => {
+      if (route.request().method() !== 'GET') return route.continue()
+      await gate
+      await route.continue().catch(() => {})
+    })
+    await page.reload()
+    await expect(page.locator('[data-mode="day"]')).toHaveAttribute('aria-pressed', 'true', {
+      timeout: 2000,
+    })
+    await expect(page.locator('[data-due-toggle]')).toBeChecked({ timeout: 1000 })
+    await expect(page.locator('[data-body-day]')).toHaveCount(1)
+    release()
+  })
+
   test('a control moved while the preferences are in flight keeps what was chosen', async ({
     page,
     account,
@@ -1771,6 +1805,9 @@ test.describe('the two remembered controls', () => {
     // rather than one flag for the page: the *list* is still restored here,
     // because nobody touched it.
     await makeTodo(account, { title: 'Feed the cat' })
+    // A grouping stored first, so a restore that put it back over the reader's
+    // choice would have something to put back. With nothing stored it could not.
+    await openTasks(page, account, 'date', { path: null })
     await page.route('**/api/me/preferences', async (route) => {
       if (route.request().method() !== 'GET') return route.continue()
       await new Promise((resolve) => setTimeout(resolve, 1200))

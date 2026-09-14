@@ -8,6 +8,7 @@ import {
   login,
   makeTodoList,
   makeTodos,
+  openTasks,
   storedArchive,
   storedTodos,
   systemList,
@@ -246,7 +247,7 @@ test('a task added on either side reaches the other without a reload', async ({
   const groceries = await makeTodoList(owner, 'Groceries')
   await share(owner, groceries, account)
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await onlyList(page, groceries.id)
 
   // The owner, on their own device.
@@ -284,7 +285,7 @@ test('a member cleaning up a shared list fills the owner’s archive, not their 
     { title: 'Buy bread', rank: 'd', list_id: groceries.id },
   ])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await onlyList(page, groceries.id)
   await expect(taskCard(page, 'Buy milk')).toBeVisible()
   await installed(page)
@@ -339,7 +340,7 @@ test('a shared task’s worked total is labelled across everyone, and a private 
 
   const modal = page.locator('[data-task-modal]')
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await onlyList(page, groceries.id)
   await taskCard(page, 'Buy milk').locator('[data-title]').click()
   await expect(modal).toBeVisible()
@@ -370,7 +371,7 @@ test('a member the owner removes loses the list and its tasks without a reload',
   await share(owner, groceries, account)
   await makeTodos(owner, [{ title: 'Buy milk', rank: 'b', list_id: groceries.id }])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await onlyList(page, groceries.id)
   await expect(taskCard(page, 'Buy milk')).toBeVisible()
 
@@ -397,6 +398,7 @@ test('leaving a list takes it and its tasks off this device, and off the owner�
 
   // The landing card counts the shared task before anything is left, so its
   // reading afterwards is a change rather than a count that never included it.
+  await openTasks(page, account, 'date', { path: null })
   await page.goto('/')
   await expect(page.locator('[data-todo-reading]')).not.toHaveText(/…|Nothing planned/)
 
@@ -452,7 +454,7 @@ test('an edit queued against a list you were removed from says why in words a me
   await share(owner, groceries, account)
   await makeTodos(owner, [{ title: 'Buy milk', rank: 'b', list_id: groceries.id }])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await onlyList(page, groceries.id)
   await expect(taskCard(page, 'Buy milk')).toBeVisible()
   await installed(page)

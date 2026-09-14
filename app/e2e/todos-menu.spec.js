@@ -3,6 +3,7 @@ import {
   makeTodo,
   makeTodoList,
   makeTodos,
+  openTasks,
   storedArchive,
   storedTodos,
   systemList,
@@ -83,7 +84,7 @@ test('a right-click on a card opens the menu on that task, and starts no drag', 
   account,
 }) => {
   await makeTodos(account, [{ title: 'Feed the cat' }, { title: 'Wash the bowl' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await rightClick(page, 'Feed the cat')
@@ -137,7 +138,7 @@ test('won’t do from the menu archives the task and says where it went', async 
   // *give up on this* is how one gesture comes to mean two things.
   const archive = await systemList(account, 'archive')
   await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await rightClick(page, 'Feed the cat')
@@ -185,7 +186,7 @@ test('start a pomodoro from a card’s menu takes you to the timer running it', 
   account,
 }) => {
   const seeded = await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await rightClick(page, 'Feed the cat')
@@ -236,7 +237,7 @@ test('send to list moves the task and names the list it went to', async ({ page,
   const errands = await makeTodoList(account, 'Errands', 'sage')
   const archive = await systemList(account, 'archive')
   const seeded = await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await rightClick(page, 'Feed the cat')
@@ -277,7 +278,7 @@ test('Escape, a click elsewhere and a scroll each close the menu', async ({ page
   // menu is positioned against the **viewport** and would otherwise ride down
   // the page over things it no longer describes.
   await makeTodos(account, [{ title: 'Feed the cat' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await rightClick(page, 'Feed the cat')
@@ -306,7 +307,7 @@ test('a right-click on another card moves the menu rather than closing it', asyn
   // follows it, so aiming at a second card has to end with the menu on the
   // second card — not with no menu and a second right-click needed.
   await makeTodos(account, [{ title: 'Feed the cat' }, { title: 'Wash the bowl' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Wash the bowl')).toBeVisible()
 
   await rightClick(page, 'Feed the cat')
@@ -327,7 +328,7 @@ test('a press on another card’s tickbox closes the menu and still ticks', asyn
   // card being ticked underneath it. Both halves are asserted, or the test
   // could pass by breaking the tickbox instead.
   await makeTodos(account, [{ title: 'Feed the cat' }, { title: 'Wash the bowl' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Wash the bowl')).toBeVisible()
 
   await rightClick(page, 'Feed the cat')
@@ -339,7 +340,7 @@ test('a press on another card’s tickbox closes the menu and still ticks', asyn
 
 test('a drag does not leave a menu open behind it', async ({ page, account }) => {
   await makeTodos(account, [{ title: 'Feed the cat', rank: 'n' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await rightClick(page, 'Feed the cat')
@@ -365,7 +366,7 @@ test('a long press opens the menu on touch, and puts the carried card down', asy
   // longer, and the carry is cancelled when the menu wins, so the card is not
   // left in a hand nobody is holding.
   await makeTodos(account, [{ title: 'Feed the cat' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await longPress(page, 'Feed the cat')
@@ -383,7 +384,7 @@ test('a finger that moves is carrying the card, not asking for a menu', async ({
   // a press that travels is a scroll before the lift and a carry after it, and
   // neither of those may end in a menu.
   await makeTodos(account, [{ title: 'Feed the cat' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await longPress(page, 'Feed the cat', { move: 60 })
@@ -391,11 +392,85 @@ test('a finger that moves is carrying the card, not asking for a menu', async ({
   await expect(menu(page)).toHaveCount(0)
 })
 
+/**
+ * Hold a finger on a target for `hold` ms, then lift it the way a browser does.
+ *
+ * The release is a `pointerup` followed by the `click` a browser reports on the
+ * button under the finger, which is the event the modal opens from. Both are
+ * dispatched, because the defect is in what the click is read as.
+ */
+async function holdAndRelease(page, target, hold) {
+  await target.evaluate((node) => node.scrollIntoView({ block: 'center' }))
+  const box = await target.boundingBox()
+  const at = { pointerType: 'touch', pointerId: 11, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 }
+  await target.dispatchEvent('pointerdown', { ...at, button: 0 })
+  await page.waitForTimeout(hold)
+  await target.dispatchEvent('pointerup', { ...at, button: 0 })
+  await target.dispatchEvent('click')
+}
+
+for (const hold of [1000, 2500]) {
+  test(`a long press held ${hold}ms keeps the menu open and opens no task, on a card`, async ({
+    page,
+    account,
+  }) => {
+    // Reported at 390: the menu opened at 600ms and the modal opened on the
+    // release, because the afterglow that swallows the release was counted
+    // from the *opening*. A hold past 1000ms outlived it.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await makeTodos(account, [{ title: 'Feed the cat' }])
+    await openTasks(page, account, 'date')
+    await expect(card(page, 'Feed the cat')).toBeVisible()
+
+    await holdAndRelease(page, card(page, 'Feed the cat').locator('[data-title]'), hold)
+
+    await page.waitForTimeout(300)
+    await expect(menu(page)).toBeVisible()
+    await expect(page.locator('[data-task-modal]')).toHaveCount(0)
+  })
+
+  test(`a long press held ${hold}ms keeps the menu open and opens no task, on a calendar block`, async ({
+    page,
+    account,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await makeTodos(account, [
+      { title: 'Standup', planned_on: '2026-06-15', planned_at: '09:00', duration_minutes: 45 },
+    ])
+    await page.goto('/todos/calendar')
+    const block = page.locator('[data-block]').filter({ hasText: 'Standup' })
+    await expect(block).toBeVisible()
+
+    await holdAndRelease(page, block, hold)
+
+    await page.waitForTimeout(300)
+    await expect(menu(page)).toBeVisible()
+    await expect(page.locator('[data-task-modal]')).toHaveCount(0)
+  })
+}
+
+test('a tap after a long press menu has closed still opens the task', async ({ page, account }) => {
+  // The other half: the release is swallowed, and nothing after it is.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await makeTodos(account, [{ title: 'Feed the cat' }])
+  await openTasks(page, account, 'date')
+  const title = card(page, 'Feed the cat').locator('[data-title]')
+  await expect(title).toBeVisible()
+
+  await holdAndRelease(page, title, 1000)
+  await expect(menu(page)).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(menu(page)).toHaveCount(0)
+  await page.waitForTimeout(500)
+  await title.click()
+  await expect(page.locator('[data-task-modal]')).toBeVisible()
+})
+
 test('the keyboard opens the menu, and the focus lands inside it', async ({ page, account }) => {
   // The pointer gestures are the enhancement; this is the version that works.
   // Both keys, because which one a keyboard has depends on the keyboard.
   await makeTodos(account, [{ title: 'Feed the cat' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await card(page, 'Feed the cat').focus()
@@ -421,7 +496,7 @@ test('the menu never leaves the screen at 320', async ({ page, account }) => {
   // thing.
   await page.setViewportSize({ width: 320, height: 720 })
   await makeTodos(account, [{ title: 'Feed the cat' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   // The bottom-right corner of the card, which is as far into the corner of a
@@ -467,7 +542,7 @@ test('every row of the menu is a thumb tall at 320', async ({ page, account }) =
   await page.setViewportSize({ width: 320, height: 720 })
   await makeTodoList(account, 'Errands', 'sage')
   await makeTodos(account, [{ title: 'Feed the cat' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await rightClick(page, 'Feed the cat')

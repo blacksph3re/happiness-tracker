@@ -1,4 +1,4 @@
-import { expect, groupBy, makeTodo, makeTodos, taskCard, test } from './fixtures.js'
+import { expect, groupBy, makeTodo, makeTodos, openTasks, taskCard, test } from './fixtures.js'
 
 /**
  * The tickbox: how a tick draws itself, and where the box sits on its card.
@@ -90,7 +90,7 @@ test.describe('a tick draws itself', () => {
     account,
   }) => {
     await makeTodo(account, { title: 'Feed the cat' })
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     const card = taskCard(page, 'Feed the cat')
     await expect(card).toHaveAttribute('data-done', 'false')
 
@@ -117,7 +117,7 @@ test.describe('a tick draws itself', () => {
       { title: 'Fed the cat', done_at: '2026-06-15T08:00:00' },
       { title: 'Wash the bowl' },
     ])
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     const done = taskCard(page, 'Fed the cat')
     await expect(done).toHaveAttribute('data-done', 'true')
 
@@ -148,7 +148,7 @@ test.describe('a tick draws itself', () => {
     // like the drag's settle. A card mounted again later — another page and
     // back, without a reload — is a card arriving done.
     await makeTodo(account, { title: 'Feed the cat' })
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     const card = taskCard(page, 'Feed the cat')
     await card.locator('[data-tick]').click()
     await expect.poll(() => drawing(card)).toMatchObject({ drawing: 'true' })
@@ -167,7 +167,7 @@ test.describe('a tick draws itself', () => {
 
   test('unticking is instant: nothing is undrawn', async ({ page, account }) => {
     await makeTodo(account, { title: 'Feed the cat' })
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     const card = taskCard(page, 'Feed the cat')
     await card.locator('[data-tick]').click()
     await expect
@@ -193,7 +193,7 @@ test.describe('a tick draws itself', () => {
       { title: 'chop onions' },
       { title: 'wash up', done_at: '2026-06-15T08:00:00' },
     ])
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     await taskCard(page, 'Cook dinner').locator('[data-title]').click()
     const modal = page.locator('[data-task-modal]')
     await expect(modal).toBeVisible()
@@ -223,7 +223,7 @@ test('under reduced motion the drawing is a snap', async ({ page, account }) => 
   // and never in `animation-delay`.
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(
     true
   )
@@ -357,7 +357,7 @@ test.describe('the tickbox sits on the centre of its card', () => {
     ])
 
     await page.setViewportSize({ width: 1280, height: 900 })
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     await expect(taskCard(page, 'Wash the bowl')).toBeVisible()
     await expectCentred(page, '1280, stacked')
 

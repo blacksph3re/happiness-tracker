@@ -2,6 +2,7 @@ import {
   expect,
   makeTodo,
   makeTodos,
+  openTasks,
   storedArchive,
   storedTodos,
   systemList,
@@ -58,6 +59,12 @@ async function storedPomodoros(page, account, expected, where = () => true) {
   }).toPass({ timeout: 15_000 })
   return rows
 }
+
+// Every test here opens a card on the board, and proved it on the Date grouping:
+// stored once per test, because `open` is handed no account to store it with.
+test.beforeEach(async ({ page, account }) => {
+  await openTasks(page, account, 'date', { path: null })
+})
 
 /** Open the board and the modal on one task, which is a tap on its title. */
 async function open(page, title) {

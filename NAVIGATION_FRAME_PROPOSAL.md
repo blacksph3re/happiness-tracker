@@ -1,9 +1,12 @@
 # Nothing moves when you change view — proposal
 
-*First draft. Asked for as a concept: "the navigation components jump left/right
-when navigating between task views". Nothing is built yet, and the files it
-touches are in use by three other changes, so the answers can come back before
-any of it is. `[assumed: X]` marks a default that will be taken unless answered.*
+***Built.** The frame, the four phone additions below and the Plain view that followed are in the tree, and what is still true is in `CLAUDE.md` under *The todo half has one frame, and content anchors left inside it*, so this document can go. One departure from the decisions: the scrollbar gutter is reserved app-wide from 48rem rather than at every width, because headless Chromium reserved 15px on phone layouts for a scrollbar it hides and a real phone overlays.*
+
+*Second draft, and **decided**. Asked for as a concept: "the navigation
+components jump left/right when navigating between task views". The owner
+accepted all five defaults as proposed, so every mark below that once read
+*assumed* now reads **decided**, and the frame is being built from this
+document.*
 
 ## What actually moves, measured
 
@@ -84,25 +87,25 @@ overlay scrollbars it changes nothing at all.
 **One gutter for the half.** The frame owns the side gutter, so no page picks its
 own. The Lists page needed 12px on a phone to fit six 44px swatches at 320, and
 reopening that measured fix to win back 8px would be worse than giving every todo
-page the same 12px at phone width. `[assumed: 12px on a phone for the whole todo
-half, 20px from the small breakpoint up, as today]`
+page the same 12px at phone width. **decided: 12px on a phone for the whole todo
+half, 20px from the small breakpoint up, as today**
 
 ## What it costs
 
 - **A stacked list on a wide screen sits left, not centred.** At 1920 the Date
   grouping's list starts at the frame's left edge with empty page to its right,
   where today it is centred. This is the visible price of nothing moving, and it
-  is the one real trade-off here. `[assumed: accepted]`
+  is the one real trade-off here. **decided: accepted**
 - **The scrollbar gutter is app-wide.** The jump happens in every half — a long
   Record table against a short Patterns page does it too — and a rule on the root
   element cannot be scoped to one section without being the wrong rule.
-  `[assumed: app-wide]`
+  **decided: app-wide**
 - **`CLAUDE.md` changes one rule.** *A region's width belongs to what it draws*
   becomes *the todo half has one frame, and content anchors left inside it*. The
   half of the old rule that still holds — a heading lines up with the first column
   — is kept by construction.
 - **The grouping pills move to the front of the toolbar**, ahead of the list
-  chips, which is a change a returning user will notice once. `[assumed: fine]`
+  chips, which is a change a returning user will notice once. **decided: fine**
 
 ## Tests
 
@@ -120,10 +123,35 @@ Probes, each failing that test by name: a stacked view centred again; the list
 chips placed before the grouping pills; the layout toggle placed in the flow;
 the gutter rule removed (the computed-style assertion).
 
-## Open questions, marked as defaults
+## Added by the owner while it was being built
 
-1. A stacked view anchored left on a wide screen rather than centred. `[assumed: yes]`
-2. The scrollbar gutter reserved app-wide. `[assumed: app-wide]`
-3. Grouping pills first, list chips second, layout toggle at the right edge. `[assumed: yes]`
-4. Under the Lists grouping, the list selector's place kept with *Every list is a column*. `[assumed: yes]`
-5. One side gutter for every todo page: 12px on a phone, 20px above it. `[assumed: yes]`
+Two more, both the same failure this document is about, and both built with
+the frame rather than after it.
+
+**Ticking a task moves nothing.** On a phone, ticking the first task in a list
+made *Clean up* appear and pushed the whole view down — cause 2 again, a control
+whose arrival moves everything after it, triggered by a tick instead of by
+changing view. A control that appears because of task state rather than a press
+keeps its place, or lives in a row that exists anyway. A confirmation that opens
+because somebody pressed something may take room, since the person is looking
+at exactly that place. Tested by ticking the first task in a list with nothing
+done and asserting that nothing above or beside it moves, sampled over several
+frames at phone and desktop widths.
+
+**A phone never side-scrolls to see the categories.** Below 48rem the pager's
+tab strip scrolled sideways, so Kanban and Eisenhower hid some of their columns
+behind a swipe along the strip. The switcher is now a set of equal cells sized
+to the screen. Eisenhower's four quadrants are a 2×2 grid that mirrors the
+matrix itself. Kanban's four columns and Size's five buckets take one row where
+every label fits readably at 320px and wrap into a grid where they do not —
+measured rather than assumed. The Lists grouping, whose count has no ceiling,
+wraps into rows. A cell keeps everything a tab did: it selects its column, it is
+a drop target meaning the end of that column, and it carries the count.
+
+## Decisions, as accepted
+
+1. A stacked view anchored left on a wide screen rather than centred. **decided: yes**
+2. The scrollbar gutter reserved app-wide. **decided: app-wide**
+3. Grouping pills first, list chips second, layout toggle at the right edge. **decided: yes**
+4. Under the Lists grouping, the list selector's place kept with *Every list is a column*. **decided: yes**
+5. One side gutter for every todo page: 12px on a phone, 20px above it. **decided: yes**

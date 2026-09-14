@@ -52,6 +52,13 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
 
   let weeksBack = $state(WEEKS_PER_PAGE)
   let editing = $state(null)
+
+  /**
+   * Which day of which session is waiting for its Delete to be confirmed, as
+   * `client_id|day`, or null. One click used to take the session straight to
+   * the server, where every other delete in the app asks first.
+   */
+  let confirming = $state(null)
   let adding = $state(null)
   let merged = $state(false)
 
@@ -552,6 +559,7 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
   async function remove(entry, day) {
     await replaceEntry(entry, withoutDay(entry, day, $now, dayOffsets($timeEntries)))
     editing = null
+    confirming = null
   }
 
   /**
@@ -917,15 +925,39 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
                               row.crosses && !row.whole
                                 ? `Delete ${shown.name} on ${dayLabel(day)}`
                                 : `Delete ${shown.name} session`}
-                            <button
-                              class="meta rounded-md border border-white/15 p-2
-                                     hover:border-ember"
-                              aria-label={cut}
-                              title={cut}
-                              onclick={() => remove(only, day)}
-                            >
-                              <IconBin />
-                            </button>
+                            {#if confirming === `${only.client_id}|${day}`}
+                              <!-- In place of the row's controls, the way Focus
+                                   asks: the question and its answers do not sit
+                                   beside the buttons that raised it. -->
+                              <span class="meta hidden normal-case sm:inline">Delete it?</span>
+                              <button
+                                data-delete-confirm
+                                class="meta rounded-md border border-alarm px-3 py-2 text-paper
+                                       hover:bg-alarm/10"
+                                onclick={() => remove(only, day)}
+                              >
+                                Delete
+                              </button>
+                              <button
+                                class="meta rounded-md border border-white/20 px-3 py-2
+                                       hover:border-white/40"
+                                onclick={() => (confirming = null)}
+                              >
+                                Cancel
+                              </button>
+                            {:else}
+                              <!-- Opens the question rather than deleting, so it
+                                   hovers white like any outlined control. -->
+                              <button
+                                class="meta rounded-md border border-white/15 p-2
+                                       hover:border-white/40"
+                                aria-label={cut}
+                                title={cut}
+                                onclick={() => (confirming = `${only.client_id}|${day}`)}
+                              >
+                                <IconBin />
+                              </button>
+                            {/if}
                           {/if}
                         </div>
                       </div>

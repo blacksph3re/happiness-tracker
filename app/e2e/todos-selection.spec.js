@@ -3,6 +3,7 @@ import {
   groupBy,
   makeTodoList,
   makeTodos,
+  openTasks,
   outboxEmpty,
   storedArchive,
   storedTodos,
@@ -58,7 +59,7 @@ test('two selected lists draw their tasks on one board', async ({ page, account 
     { title: 'from errands', rank: 'c', list_id: errands.id },
   ])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(taskCard(page, 'from the inbox')).toBeVisible()
   // One list to start with, which is what a fresh account is left on.
   await expect(taskCard(page, 'from errands')).toHaveCount(0)
@@ -98,7 +99,7 @@ test('the last selected list cannot be deselected', async ({ page, account }) =>
     { title: 'from errands', rank: 'c', list_id: errands.id },
   ])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(taskCard(page, 'from the inbox')).toBeVisible()
   await chip(page, errands).click()
   await chip(page, inbox).click()
@@ -123,7 +124,7 @@ test('All selects every list except the archive', async ({ page, account }) => {
     { title: 'from the archive', rank: 'e', list_id: archive.id },
   ])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(taskCard(page, 'from the inbox')).toBeVisible()
 
   await page.locator('[data-list-all]').click()
@@ -147,7 +148,7 @@ test('the archive chip is exclusive, in both directions', async ({ page, account
     { title: 'from the archive', rank: 'd', list_id: archive.id },
   ])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await chip(page, errands).click()
   expect(await pressed(page)).toEqual([inbox.id, errands.id])
 
@@ -175,7 +176,7 @@ test('a typed task goes into the first selected list, and the box says which', a
   const inbox = await systemList(account, 'inbox')
   const errands = await makeTodoList(account, 'Errands', 'rose')
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-quick-add="today"]')).toBeVisible()
   // With one list on screen the box is obviously about that list, so the line
   // under it says nothing about one.
@@ -223,7 +224,7 @@ test('cleanup takes the done tasks of every selected list and no others', async 
     { title: 'done in work', rank: 'e', list_id: work.id, done_at: `${TODAY}T09:00:00` },
   ])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   const cleanup = page.locator('[data-cleanup]')
   // One list selected, one done task in it.
   await expect(cleanup).toHaveText('Clean up 1 done')
@@ -252,7 +253,7 @@ test('the selected lists are where the account left them', async ({ page, accoun
   const errands = await makeTodoList(account, 'Errands', 'rose')
   await makeTodos(account, [{ title: 'from errands', rank: 'b', list_id: errands.id }])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator(`[data-list="${errands.id}"]`)).toBeVisible()
   await chip(page, errands).click()
   await expect(taskCard(page, 'from errands')).toBeVisible()
@@ -304,7 +305,7 @@ test('the list grouping still ignores the chips entirely', async ({ page, accoun
     { title: 'from errands', rank: 'c', list_id: errands.id },
   ])
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(taskCard(page, 'from the inbox')).toBeVisible()
   await groupBy(page, 'list', String(inbox.id))
 
@@ -357,7 +358,7 @@ test('a card from a list somebody else owns says whose it is', async ({ page, ac
   ])
   await lendToAlice(page, account, groceries)
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await chip(page, groceries).click()
 
   const theirs = taskCard(page, 'from groceries').locator('[data-chip="list"]')
@@ -387,7 +388,7 @@ test('cleanup says whose archive a shared list’s done tasks go to', async ({ p
   ])
   await lendToAlice(page, account, groceries)
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   // One's own list alone: nothing to say.
   await page.locator('[data-cleanup]').click()
   await expect(page.locator('[data-cleanup-asking]')).toHaveText('Archive 1 done task?')

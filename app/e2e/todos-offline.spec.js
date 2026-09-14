@@ -2,6 +2,7 @@ import {
   expect,
   installed,
   makeTodo,
+  openTasks,
   storedTodos,
   test,
 } from './fixtures.js'
@@ -29,7 +30,7 @@ test('a task typed offline survives a reload and arrives when the signal does', 
   context,
 }) => {
   await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
   // Or the reload below fails as ERR_INTERNET_DISCONNECTED, which looks like a
   // broken app and is really a test that cut the connection a moment too early.
@@ -86,7 +87,7 @@ test('starting a pomodoro offline still lands on the timer running the task', as
   // The press navigates after the *local* write and never after the server:
   // the timer paints from the store, so there is nothing to wait for.
   const seeded = await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
   await installed(page)
 
@@ -114,7 +115,7 @@ test('starting a pomodoro does not wait for the server to hear of it', async ({
   // sit on the board for as long as the request did. Offline cannot show
   // this, because a flush that cannot connect fails at once.
   const seeded = await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   // Held rather than refused, and released by a flag rather than by
@@ -147,7 +148,7 @@ test('a write refused while reads work still goes on the next gesture', async ({
   // proxy having a bad minute looks like. The queue must not be the thing that
   // forgets.
   await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await page.route('**/api/sync', (route) => route.abort())
@@ -172,4 +173,65 @@ test('a write refused while reads work still goes on the next gesture', async ({
     'Feed the cat',
     'Ring the vet',
   ])
+})
+
+test('a title edited offline at 390 is the new title, once, on the card and in the modal', async ({
+  page,
+  account,
+  context,
+}) => {
+  // Reported once from a review: offline at 390, after editing a task's title
+  // in the modal the card read "Pay electricity billPay electricity bill
+  // EDITED". Every route out of the modal and back in, with the queued row
+  // reopened in between.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await makeTodo(account, { title: 'Pay electricity bill' })
+  await openTasks(page, account, 'date')
+  await expect(card(page, 'Pay electricity bill')).toBeVisible()
+  await installed(page)
+  await context.setOffline(true)
+
+  const field = page.locator('[data-field="title"]')
+  const modal = page.locator('[data-task-modal]')
+  const open = async (title) => {
+    await card(page, title).locator('[data-title]').click()
+    await expect(modal).toBeVisible()
+  }
+
+  // Replaced and closed with Escape inside the debounce.
+  await open('Pay electricity bill')
+  await field.fill('Pay electricity bill EDITED')
+  await page.keyboard.press('Escape')
+  await expect(modal).toHaveCount(0)
+  await expect(card(page, 'EDITED').locator('[data-title]')).toHaveText('Pay electricity bill EDITED')
+
+  // Reopened on the queued row: the field holds the title once.
+  await open('EDITED')
+  await expect(field).toHaveValue('Pay electricity bill EDITED')
+  // Typed at the end, key by key, past the debounce, then closed.
+  await field.click()
+  await page.keyboard.press('End')
+  await page.keyboard.type(' 2', { delay: 50 })
+  await page.waitForTimeout(900)
+  await expect(field).toHaveValue('Pay electricity bill EDITED 2')
+  await page.keyboard.press('Escape')
+  await expect(card(page, 'EDITED').locator('[data-title]')).toHaveText('Pay electricity bill EDITED 2')
+
+  // Typed, closed by the backdrop button, reopened at once while the queue holds two writes.
+  await open('EDITED 2')
+  await field.fill('Pay electricity bill EDITED 3')
+  await field.blur()
+  await page.keyboard.press('Escape')
+  await open('EDITED 3')
+  await expect(field).toHaveValue('Pay electricity bill EDITED 3')
+  await page.keyboard.press('Escape')
+
+  // Survives a reload offline, and the signal returning.
+  await page.reload()
+  await expect(card(page, 'EDITED 3').locator('[data-title]')).toHaveText('Pay electricity bill EDITED 3')
+  await context.setOffline(false)
+  await page.clock.fastForward('00:30')
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0', { timeout: 15_000 })
+  await expect(card(page, 'EDITED 3').locator('[data-title]')).toHaveText('Pay electricity bill EDITED 3')
+  expect((await storedTodos(account)).map((one) => one.title)).toEqual(['Pay electricity bill EDITED 3'])
 })

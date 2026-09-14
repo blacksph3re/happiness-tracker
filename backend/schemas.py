@@ -1,7 +1,7 @@
-from datetime import date, datetime, time
-from typing import Literal
+from datetime import UTC, date, datetime, time
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 from pydantic.fields import FieldInfo
 
 from config import get_settings
@@ -24,6 +24,35 @@ from models import (
     TodoPriority,
 )
 from templates import DEFAULT_TEMPLATE
+
+
+def _naive_utc(moment: datetime) -> datetime:
+    """Express an incoming instant as the naive UTC every column here stores.
+
+    A device of this app strips the offset before it sends, but `Z` and
+    `+02:00` are both valid ISO 8601 and another client may send either. Left
+    aware, the instant was compared against naive stored rows — a `TypeError`
+    and a 500 that failed every intent in the batch — or written with its
+    offset silently discarded, two hours out.
+
+    Parameters
+    ----------
+    moment : datetime.datetime
+        The instant as parsed, with or without an offset.
+
+    Returns
+    -------
+    datetime.datetime
+        The same instant in UTC, with no `tzinfo`. A naive value is taken to
+        already be UTC and is returned unchanged.
+    """
+    if moment.tzinfo is None:
+        return moment
+    return moment.astimezone(UTC).replace(tzinfo=None)
+
+
+UtcInstant = Annotated[datetime, AfterValidator(_naive_utc)]
+"""An instant a client sends, normalised to naive UTC on the way in."""
 
 
 class Version(BaseModel):
@@ -1097,7 +1126,7 @@ class SyncIntent(BaseModel):
     `todo.upsert` and `step.upsert` are the same shape for the same reason.
     """
 
-    client_updated_at: datetime
+    client_updated_at: UtcInstant
     """The device's clock at the moment of the tap. What decides who wins."""
 
     client_id: str | None = Field(default=None, max_length=36)
@@ -1122,10 +1151,10 @@ class SyncEntryPayload(BaseModel):
     project_id: int
     """The project worked on."""
 
-    started_at: datetime
+    started_at: UtcInstant
     """When the session began, in UTC."""
 
-    ended_at: datetime | None = None
+    ended_at: UtcInstant | None = None
     """When it ended, in UTC, or null while the timer is still running."""
 
     utc_offset: int = Field(ge=-720, le=840)
@@ -1264,7 +1293,7 @@ class TransferRequest(BaseModel):
     project_id: int
     """Where the session should land."""
 
-    started_at: datetime | None = None
+    started_at: UtcInstant | None = None
     """Override for where the session begins, in UTC.
 
     Offered because the natural placement can collide: a project tracked by
@@ -1308,10 +1337,10 @@ class SyncPomodoroPayload(BaseModel):
     task: str | None = Field(default=None, max_length=500)
     """Optional description."""
 
-    started_at: datetime
+    started_at: UtcInstant
     """When the focus began, in UTC."""
 
-    ended_at: datetime | None = None
+    ended_at: UtcInstant | None = None
     """When something stopped it early, in UTC, or null if nothing did."""
 
     utc_offset: int = Field(ge=-720, le=840)
@@ -1641,10 +1670,10 @@ class SyncTodoPayload(BaseModel):
     pomodoro handover creating a task in the inbox, say.
     """
 
-    done_at: datetime | None = None
+    done_at: UtcInstant | None = None
     """When it was ticked, in UTC, or null."""
 
-    archived_at: datetime | None = None
+    archived_at: UtcInstant | None = None
     """When it entered the archive, in UTC, or null.
 
     A field like any other on the wire, but the server has the last word: a
@@ -1653,7 +1682,7 @@ class SyncTodoPayload(BaseModel):
     version of the client sent the row.
     """
 
-    active_since: datetime | None = None
+    active_since: UtcInstant | None = None
     """When the current activation began, in UTC, or null when not active."""
 
     active_seconds: int = Field(default=0, ge=0)
@@ -1683,7 +1712,7 @@ class SyncStepPayload(BaseModel):
     rank: str | None = Field(default=None, max_length=RANK_MAX_LENGTH)
     """Order within its task, or null to append after the last step."""
 
-    done_at: datetime | None = None
+    done_at: UtcInstant | None = None
     """When the step was ticked, in UTC, or null. Ticking every step does not
     tick the task: there is no roll-up, only a counter on the card."""
 

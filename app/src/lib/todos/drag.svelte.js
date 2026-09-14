@@ -153,6 +153,25 @@ export function cardDrag({ onDrop }) {
   let origin = $state(null)
 
   /**
+   * The pager tab under the pointer, by column id, or null.
+   *
+   * Separate from `overColumn`, which a tab and the column on screen can both
+   * name: what the switcher draws as the target is the *cell*, and only while
+   * the pointer is on it.
+   */
+  let overTab = $state(null)
+
+  /**
+   * The line a carried card is kept below while a finger is over a tab, or null.
+   *
+   * A finger hides whatever is under it, and the card it carries hid the rest:
+   * the cell and its count were both under the card. So on touch the card
+   * drops beneath the switcher for as long as the finger is on it. A mouse
+   * pointer is a point and hides nothing, so it keeps its grip.
+   */
+  let tabFloor = $state(null)
+
+  /**
    * Where a card was let go of, for whatever draws it settling into place.
    *
    * The drag resets before the drop is written — a handler that re-renders the
@@ -205,6 +224,8 @@ export function cardDrag({ onDrop }) {
     press = null
     dragging = null
     overColumn = null
+    overTab = null
+    tabFloor = null
     index = 0
     height = 0
     origin = null
@@ -261,6 +282,11 @@ export function cardDrag({ onDrop }) {
     if (dragging) at = { x: point.x, y: point.y }
     const under = document.elementFromPoint(point.x, point.y)
     const tab = under?.closest?.('[data-drop-end]') ?? null
+    overTab = tab ? tab.getAttribute('data-drop-end') : null
+    tabFloor =
+      tab && press && press.pointerType !== 'mouse'
+        ? (tab.closest('[data-pager-tabs]') ?? tab).getBoundingClientRect().bottom
+        : null
     if (tab) {
       overColumn = tab.getAttribute('data-drop-end')
       index = Number.MAX_SAFE_INTEGER
@@ -500,6 +526,14 @@ export function cardDrag({ onDrop }) {
     },
     get overColumn() {
       return overColumn
+    },
+    /** The pager tab under the pointer, by column id, or null. */
+    get overTab() {
+      return overTab
+    },
+    /** The client y a carried card is kept below, or null. See `tabFloor`. */
+    get tabFloor() {
+      return tabFloor
     },
     get index() {
       return index

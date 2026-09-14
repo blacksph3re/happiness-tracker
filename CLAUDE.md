@@ -317,6 +317,13 @@ already looked tidy at the suite's phone width; measured at 320 the two step
 buttons were 51px against the others' 35, which is a label on two lines. A
 layout test at one width would have passed against the thing it was written for.
 
+**The meta font is whatever monospace the device has**, because `--font-meta` is
+a system stack. A label that fits on this machine can split on a phone: TOMORROW
+measured 60.0px in a 61.0px cell here and broke as "TOMORRO / W" on the review's.
+A test asserts that words fit with headroom — 15% to spare — rather than that they
+fit today, and a label never carries `break-words`, which is what let a word
+break inside itself instead of the cell growing honestly.
+
 **A 44px target in a dense row comes from a negative margin, never from
 padding.** `-m-1.5 size-11` around a 32px box occupies its old 32px of layout
 and reaches six pixels past it; padding the same buttons to 44px took the step
@@ -334,6 +341,30 @@ drawn box nowhere — so in an `items-start` row a 32px box sat at the top of an
 card taller than itself, 4px high beside a chip row and 54px high beside a
 seven-line title at 320. `items-center` on the row is the fix, and it keeps the
 hit area exactly as it was.
+
+**iOS Safari zooms into any form control under 16px when it takes focus.** An
+unlayered `@media (pointer: coarse)` rule gives text inputs, textareas and selects
+16px — coarse pointer rather than a width, because the zoom follows the finger: an
+iPad zooms and a narrow desktop window does not. It names `[data-quick-add-overlay]`
+as well, because the quick-add colours its words with a layer drawn behind the
+input and the two must share every metric. Never `maximum-scale` or
+`user-scalable=no` in the viewport tag: that also takes pinch zoom away from
+people who need it. A touch-only rule can only be probed by a test that emulates
+touch; the alignment test runs without it and passed with the overlay left out.
+
+**Where 44px reaches overlap, a disabled button wins the shared pixels.** Its
+opacity lifts it into a layer of its own, so it paints over the enabled neighbour
+and takes that neighbour's taps in the overlap. Gaps between reaches should meet,
+not overlap.
+
+**One checkbox and one slider for the whole app**, both as unlayered shape rules in
+`app.css`: a 16px box with a 4px radius, and one track with a paper thumb whose
+track takes the section's accent. They reach controls in files nobody else may
+edit, which is the point of putting them there.
+
+**Toasts sit at the top, under the header.** The bottom of a phone is where the
+quick-add and the on-screen keyboard are, and a toast there covered the field a
+person was typing into for five seconds.
 
 **Do not add a bare `data-*` attribute whose name is already in use with a
 value.** `data-kind="archive"` is how three specs find the list chips, so a
@@ -601,6 +632,22 @@ heard of a field wipes it on every write, and a partial payload built by a
 careless write path does the same. That cost is paid identically by `icon`,
 `priority`, `colour` and everything added after them, which is the real rule: a
 field whose loss would matter cannot live on this payload.
+
+**Every datetime arriving in a sync payload is normalised to naive UTC in the
+schema**, through the `UtcInstant` type in `schemas.py`, for entries, pomodoros,
+todos, steps, the transfer and `client_updated_at`. The app strips offsets before
+sending, so only another client could send one — and when one did, a `Z` made
+`check_no_overlap` compare an aware time with a naive one and answer 500, failing
+every intent in the batch, while a `+02:00` pomodoro was quietly stored two hours
+out. A validator is the one place both cannot recur.
+
+## An online-only page disables itself in one place
+
+Settings said *Changes here need a connection* while two dozen of its controls
+stayed live offline: a priority unticked offline looked applied, said nothing, and
+came back ticked after the next reload. Every control that needs the server now
+sits inside one `<fieldset disabled={offline}>`, so a control added later cannot
+forget to disable itself, and only what works offline stays outside it.
 
 ## A write that reads server state drains the queue first
 
@@ -1246,6 +1293,44 @@ here:
   question names it. Open tasks only, since a done task's plan is history; they
   land at the end of the target in their old order, as one `saveTodos`.
 
+### Plain is the first view
+
+A list's tasks in their own order, open first and done at the end, with nothing
+but the tickbox and the title on a card — the owner's request, and the default
+where no view is remembered.
+
+- **One column, and a single column is never paged.** Below 48rem a board of one
+  column is drawn stacked whatever layout is remembered, which is also why the
+  archive no longer shows a one-cell switcher.
+- **A drop never crosses between open and done, and clamping the slot is not
+  enough.** The section comes from whether a task is done, so `place` takes both
+  the slot *and* the neighbouring ranks from `dropNeighbours`: each section is
+  sorted separately, so at the boundary the two neighbours' ranks can sort either
+  way, and a key taken between them lands one slot out.
+- **A ticked card waits 1.5s before joining the done end** (`SETTLE_MS` in
+  `tick.js`), long enough to see it struck through in place and untick a mis-tap;
+  unticking is immediate. The `settling` set is a `$derived` over the clock read,
+  gated by a counter that only the tick and a timeout scheduled off the stored
+  tick times ever bump — never an effect, which would be an effect reading what it
+  writes.
+- **A quiet card hides its whole chip row** — planned date, time, due, estimate,
+  priority, steps, notes and owner — but keeps the task's own colour, and a bare
+  list dot replaces the named list chip when several lists are selected. The cost
+  is named rather than hidden: an overdue task shows no red in Plain.
+- **A quiet column draws no heading that repeats the page's.** `Frame.svelte` owns
+  the eyebrow, the title and the one margin below them, and a page passes the
+  cleanup control through its `aside`.
+- **Restoring a remembered view applies the snapshot's copy first**, after
+  `ready()`, and then the confirmed read. Restoring from `ensurePreferences` alone
+  waited on the network on every reload, so a remembered Date grouping painted as
+  Plain until the preferences request came back.
+- **On a phone the grouping pills and the list chips wrap into equal cells** rather
+  than scroll, so every view and every list is on screen. That costs 85px of phone
+  before the first card, which is a density trade the owner decides.
+- **A test states the grouping it depends on through `openTasks`**, which stores it
+  through the preferences API before navigating — not a pill click, whose debounced
+  save a reload would lose.
+
 ### The last slot of a column is reachable
 
 - **A column that scrolls its own cards holds the carried card's height open at
@@ -1466,7 +1551,11 @@ The menu is where the interesting rules are:
   phone's own pinch claims the second.
 - **The release that ends a long press is reported as a click on what was
   pressed**, so the menu carries a `justOpened` afterglow its readers consult,
-  exactly as they consult `drag.justDropped`.
+  exactly as they consult `drag.justDropped`. That afterglow runs from the **release**, not
+  from the opening: the click a browser reports on lift arrives however long the
+  finger was held, so a 400ms window counted from the menu opening let any hold
+  past a second open the task on top of its own menu. Any new press resets it, so
+  a lift that never arrives cannot swallow later taps.
 - **`lib/dismiss.svelte.js` owns the three global listeners now**, extracted
   from `pointer-label.svelte.js` rather than copied: the label's hover half is
   not what a menu wants, but the dismiss half is precisely what it wants. Two
@@ -1499,14 +1588,53 @@ The menu is where the interesting rules are:
   `data-task-colour` on the card rather than `data-colour`, which the picker's
   swatches already use: one name, one meaning.
 
-### A region's width belongs to what it draws
+### The todo half has one frame, and content anchors left inside it
 
-A board laid out in **columns** is sized by its grouping, not by the screen, so
-the page's reading width clipped a five-column grouping at 1280 *and* at 1920 —
-identically, 104px of overflow with 800px of unused page beside it. The width is
-one derived value shared by the heading and the board, and the heading has to
-share it: centred over a full-width board it sat 384px from the first column,
-which only a screenshot showed.
+`Frame.svelte` is fixed by the window, never by the view: full width less the
+gutter, capped at `max-w-todo-frame` (125rem — what Size in five columns
+measured as needing, with the densest card's detail row on one line), and
+centred. It owns the gutter, 12px on a phone and 20px from `sm`, as `--gutter`,
+so rows that bleed to the screen edge use the same number and no page picks its
+own. A column or quadrant board fills the frame; a stack keeps its 1112px
+reading width and starts at the frame's left edge. *Centred* is what moved the
+heading on every change of view — by 192px at 1280 and 512px at 1920 — not
+*wide*, and a heading still lines up with the first column of a wide board.
+
+- **A toolbar runs from stable to conditional.** Grouping pills first, then the
+  list selector — whose place is kept under the Lists grouping, reading *Every
+  list is a column*, and under the archive, where the pills keep their box — then
+  the layout toggle pinned to the right edge. A control that can disappear sits
+  to the right of everything that cannot, so its absence moves nothing that stays.
+- **A control that appears because of task state keeps its place, or sits in a
+  row that exists anyway.** *Clean up N done* lives beside the heading; *Move N
+  to Later* and a Lists column's cleanup are drawn invisible, with no `data-`
+  hook, when there is nothing to do. Only a confirmation opened by a press may
+  take room. The first tick used to push a phone's whole board down 46.5px.
+- **Below 48rem the category switcher is equal cells, never a scrolling strip**:
+  Eisenhower is a 2×2 grid mirroring the matrix, Kanban and Date one row of four,
+  Size three over two, Lists wrapping — each measured at 320. A column is never
+  its own scroll box on a phone, nor on any window under 30rem tall: a phone held
+  sideways at 844×390 counts as wide, and its capped columns hid cards behind a
+  fade.
+- **An empty-row reserve belongs to the grouping, not to the app.** On the phone
+  pager every column's heading row is one height per grouping — a button's height
+  if any column of that grouping draws a heading button, one text line otherwise —
+  or stepping from Later to Past moved the first card 34.5px. Reserving a
+  button's height everywhere cost 10px of the phone budget in Kanban, where no
+  column has a button at all.
+- **`scrollbar-gutter: stable` is reserved from 48rem, not below.** Headless
+  Chromium reserves the room even while it hides the scrollbar, and
+  `clientWidth` does not show it, so at phone widths it cost every layout 15px
+  for a scrollbar that a real phone overlays anyway.
+- **"Nothing moves" is tested by sampling every view and asserting the worst
+  spread** — after `resizeTo`, which waits for the page to report its new size,
+  never on the first frame after the test's own resize, where a gutter and a
+  label were both still at their old widths.
+- **A card's text is unselectable and a long press shows no callout**, on task
+  cards and calendar blocks alike, or a long press on a chip selects text instead
+  of lifting the card. Editing fields stay selectable. Chromium draws neither the
+  iOS callout nor a long-press selection, so the computed `user-select` is what a
+  test can assert.
 
 Four more that came out of using the board rather than reading it:
 
@@ -1524,7 +1652,7 @@ Four more that came out of using the board rather than reading it:
 - **Below 48rem a control group is one scrolling row, not a wrapping block —
   and fixing one group hands the saving straight to the next.** Fixing the list
   chips alone bought 8 pixels of 46, because five grouping pills then wrapped
-  into the space it freed. A pager tab and its column heading are **one name**:
+  into the space it freed. A switcher cell and its column heading are **one name**:
   the count lives on the tab, and the hint, which a tab has no room for, stays
   on the column.
 
@@ -1949,6 +2077,19 @@ the test name, and do not move on until you can make it fail on demand.
   still easing.** The drop index is read ten times at the foot of the column and
   must be one value; `scrollTop` would not do, because with motion on it is still
   settling by a pixel or two when the index already agrees.
+- **A probe that restores a layout must restore its children's classes too.**
+  Putting back only the row's classes let the buttons keep their new sizing, so
+  the row shrank instead of overflowing and the probe passed against the defect it
+  was built to reintroduce.
+- **A probe runner rebuilds in a `finally`.** A probe refused because its search
+  string no longer matched skipped the clean rebuild after it, and the next test
+  ran against a bundle still carrying the previous mutation.
+- **Chromium does not return a slider thumb's computed style**: asked for the
+  thumb, `getComputedStyle` answers for the whole input. Compare what is painted,
+  decoded from a screenshot, instead.
+- **A confirm step makes "the button is gone" prove nothing.** The first click
+  already removes the button, before anything is deleted, so a test waits for what
+  the delete itself changes before it reads `data-pending`.
 - **One backend per worker.** `--workers=8` on a suite whose `global-setup.js`
   started seven sends the extra worker at a port with nothing on it, and every
   test there fails with `login as … failed`. That is the harness, not the app —

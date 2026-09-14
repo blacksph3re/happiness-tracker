@@ -77,10 +77,41 @@
 
   --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-meta: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace;
+
+  /* The todo half's frame (`lib/todos/Frame.svelte`), capped at what the widest
+     column board measurably needs. Size laid out in five columns, with every
+     column heading on one line and the densest card's metadata row - a time, a
+     due date, a priority and a list - unwrapped in each of them, measured
+     1996px; the four-column boards 1484 and the matrix 846. Below that the
+     frame is simply the window less the gutter, so no board is narrower than it
+     was at any desktop width up to 1920. The reading width is the 1112px a
+     stack always had, kept inside the frame and anchored to its left edge. */
+  --container-todo-frame: 125rem;
+  --container-todo-reading: 69.5rem;
 }
 
 :root {
   color-scheme: dark;
+}
+
+/* The scrollbar's room is always reserved, app-wide. On a desktop with classic
+   scrollbars a view taller than the window gains a 15px scrollbar and the page
+   gets 15px narrower, so everything centred - the header, the todo frame -
+   moved 7.5px sideways between a short view and a tall one: Lists against
+   Tasks, and a long Record against a short Patterns in the time half too.
+
+   **From 48rem, the line `lib/media.js` draws between a phone and the rest.**
+   Reserved at every width it took 15px from every phone layout in desktop
+   Chromium - headless included, which hides the scrollbar and still reserves
+   its room - so the six colour swatches on the Lists page wrapped at 320 and
+   the streak span buttons came out 127 and 128px at 390. A phone's scrollbars
+   overlay the page and need no room, and below 48rem nothing here is centred
+   for a scrollbar to move. The suite cannot see the jump itself, so it reads
+   this rule at both widths. */
+@media (min-width: 48rem) {
+  :root {
+    scrollbar-gutter: stable;
+  }
 }
 
 body {
@@ -196,6 +227,84 @@ select:not([size]) {
   input[type='checkbox'],
   input[type='radio'] {
     color: var(--color-dusk);
+  }
+
+  /* One track for every range input. The `accent-*` classes on them were dead
+     CSS, since `appearance-none` leaves nothing for an accent to colour. */
+  input[type='range'] {
+    appearance: none;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background-color: var(--color-dusk-deep);
+    cursor: pointer;
+  }
+}
+
+/* One box for every checkbox, rather than whatever each page happened to write:
+   a native white square on Time Patterns, a dark ring on the calendar, a purple
+   rounded box on Settings. Unlike the colour above this is **unlayered**, so a
+   page's own `rounded-*` or `border-*` beside a checkbox cannot bring a second
+   shape back — the colour is the one thing a utility may still change. The
+   checked fill is untouched: Flowbite paints it `!important`, and an important
+   layered declaration outranks a normal unlayered one. The todo tick is a
+   button, not a checkbox. */
+input[type='checkbox'] {
+  appearance: none;
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid color-mix(in oklab, var(--color-paper) 25%, transparent);
+  border-radius: 0.25rem;
+  background-color: var(--color-ink);
+}
+
+/* And one thumb. Left to the browser, the time smoothing slider drew Chromium's
+   blue and the wellbeing one a faint dot on its own track. Paper rather than a
+   section accent, because a section rebinds its accents and the thumb has to
+   read against the track in all four. Unlayered: a pseudo-element no utility
+   here can reach needs no layer to lose to one. */
+input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  border: 2px solid var(--color-ink);
+  border-radius: 9999px;
+  background-color: var(--color-paper);
+}
+input[type='range']::-moz-range-thumb {
+  width: 1.125rem;
+  height: 1.125rem;
+  border: 2px solid var(--color-ink);
+  border-radius: 9999px;
+  background-color: var(--color-paper);
+}
+input[type='range']:disabled {
+  cursor: not-allowed;
+}
+
+/* A text field under 16px makes iOS Safari zoom the page in when it takes focus,
+   and leaves it zoomed. So on a touch screen every typed control is 16px.
+
+   `pointer: coarse` rather than a width: the zoom belongs to the finger, not to
+   the screen size — an iPad at 1024px zooms exactly as a phone does, and a
+   narrow desktop window does not zoom at all, so a width condition would be
+   wrong in both directions. Unlayered, so it outranks `text-sm` and every other
+   utility, which all live in `@layer utilities`.
+
+   `[data-quick-add-overlay]` is the todo quick-add's colouring layer. It shares
+   every font metric with the input in front of it through one string of
+   utilities, and has no class of its own, so it is named here by its hook:
+   enlarge the input alone and the colours drift out from under the text.
+
+   The viewport meta is deliberately left without `maximum-scale` or
+   `user-scalable=no`: those stop the zoom too, and pinch zoom with it. */
+@media (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'],
+      [type='submit'], [type='reset'], [type='color'], [type='file'], [type='image']),
+  textarea,
+  select,
+  [data-quick-add-overlay] {
+    font-size: max(1rem, 16px);
   }
 }
 

@@ -3,6 +3,7 @@ import {
   installed,
   makeTodoList,
   makeTodos,
+  openTasks,
   systemList,
   taskCard,
   test,
@@ -209,7 +210,7 @@ test('deleting a list takes its tasks off the board with no reload', async ({
     { title: 'going away', rank: 'b', list_id: errands.id },
     { title: 'staying put', rank: 'b' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(taskCard(page, 'staying put')).toBeVisible()
   await page.locator(`[data-list="${errands.id}"]`).click()
   await expect(taskCard(page, 'going away')).toBeVisible()

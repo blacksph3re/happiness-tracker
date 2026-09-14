@@ -24,6 +24,16 @@
      * column.
      */
     columnDate = null,
+    /**
+     * Whether the card is drawn with its tickbox and title and nothing else.
+     *
+     * Plain's cards: no planned day or time, due, estimate, priority, step
+     * count, notes mark or owner. Two things stay, because neither is metadata
+     * about the task so much as which task it is — the task's own colour, and
+     * the list's colour dot where several lists are merged into one column,
+     * without which two lists' tasks could not be told apart at all.
+     */
+    quiet = false,
     list = null,
     showList = false,
     /**
@@ -143,7 +153,12 @@
     carried && carry?.originRect
       ? {
           x: carry.x - carry.grabOffset.x,
-          y: carry.y - carry.grabOffset.y,
+          // Beneath the switcher while a finger is on one of its cells, so the
+          // card never covers the cell it is being dropped onto.
+          y:
+            carry.tabFloor === null
+              ? carry.y - carry.grabOffset.y
+              : Math.max(carry.y - carry.grabOffset.y, carry.tabFloor + 8),
           width: carry.originRect.width,
         }
       : null
@@ -225,6 +240,11 @@
      the browser, which is what keeps a long column scrollable with a thumb —
      and once the card is actually lifted, `drag.svelte.js`'s non-passive
      `touchmove` handler prevents that too. -->
+<!-- `select-none` and no touch callout: a card is something held, and a long
+     press on its title or its chips started the browser's text selection and
+     its copy menu before the drag could lift the card. The cost is on a
+     desktop, where a card's title can no longer be selected for copying; the
+     modal's title field, which is where a title is edited, still can. -->
 <article
   bind:this={node}
   data-client-id={task.client_id}
@@ -233,7 +253,8 @@
   data-carrying={carried ? 'true' : undefined}
   tabindex="0"
   class="flex touch-pan-y items-center gap-3 rounded-lg border border-white/10
-         bg-ink-soft px-3 py-2 hover:border-white/30 hover:bg-dusk/10
+         bg-ink-soft px-3 py-2 select-none [-webkit-touch-callout:none]
+         hover:border-white/30 hover:bg-dusk/10
          focus-visible:border-dusk-lift focus-visible:outline-none
          {carried ? 'transition-none shadow-2xl shadow-black/40' : 'transition'}"
   data-task-colour={task.colour ?? undefined}
@@ -307,7 +328,7 @@
         >{task.title}</span>
     </button>
 
-    {#if chips.length || showPlanned || clock || task.due_on || showList || task.description}
+    {#if !quiet && (chips.length || showPlanned || clock || task.due_on || showList || task.description)}
       <!-- The planned day and the planned time are adjacent, and the due date
            follows them: the two halves of *when this is meant to happen* read
            as one thing, and a due chip between them read as neither. -->
@@ -358,4 +379,16 @@
       </div>
     {/if}
   </div>
+
+  <!-- A quiet card's list, as the dot alone: the name would be the chip row
+       coming back. `role="img"` so the list's name can stand in for it. -->
+  {#if quiet && showList && list}
+    <span
+      class="size-2 shrink-0 rounded-full"
+      style:background={chipColour(list.colour)}
+      role="img"
+      aria-label={`In ${list.name}`}
+      data-list-dot={list.id}
+    ></span>
+  {/if}
 </article>

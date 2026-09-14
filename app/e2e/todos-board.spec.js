@@ -1,4 +1,4 @@
-import { expect, groupBy, makeTodos, storedTodos, test, TODAY } from './fixtures.js'
+import { expect, groupBy, makeTodos, openTasks, storedTodos, test, TODAY } from './fixtures.js'
 
 /**
  * Carrying a card, which is the gesture the whole ordering design is for.
@@ -78,7 +78,7 @@ test('a drag between columns changes the planned date and nothing else', async (
       colour: 'sage',
     },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('1')
 
   await carry(page, card(page, 'Feed the cat'), await into(page, 'tomorrow'))
@@ -110,7 +110,7 @@ test('a drag inside a column changes the order and no field at all', async ({
     { title: 'second', rank: 'c' },
     { title: 'third', rank: 'd' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   expect(await order(account)).toEqual(['first', 'second', 'third'])
 
   // Carried to the foot of its own column.
@@ -140,7 +140,7 @@ test('a task dropped third from the top arrives third', async ({ page, account }
     { title: 'third', rank: 'd' },
     { title: 'fourth', rank: 'e' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   expect(await order(account)).toEqual(['first', 'second', 'third', 'fourth'])
 
   // Just above the third card's top edge: past the second card's middle and
@@ -162,7 +162,7 @@ test('a card dropped back where it came from writes nothing', async ({ page, acc
     { title: 'second', rank: 'c' },
     { title: 'third', rank: 'd' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('3')
   await settled(page)
 
@@ -193,7 +193,7 @@ test('Escape puts a carried card down without moving it', async ({ page, account
     { title: 'first', rank: 'b' },
     { title: 'second', rank: 'c' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await settled(page)
 
   const box = await card(page, 'first').boundingBox()
@@ -238,7 +238,7 @@ test('the gap opens as the pointer moves, and the list never reflows', async ({
     { title: 'third', rank: 'd' },
     { title: 'fourth', rank: 'e' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('4')
 
   /**
@@ -318,7 +318,7 @@ async function busyColumn(page, account, { height = 560, extra = [] } = {}) {
     })),
     ...extra,
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await page.locator('[data-layout="columns"]').click()
   await expect(page.locator('[data-count="today"]')).toHaveText('20')
   return page.locator('[data-column="today"] [data-cards]')
@@ -598,7 +598,7 @@ test('a stacked column does not grow under a carried card', async ({ page, accou
     { title: 'beta', rank: 'c' },
     { title: 'gamma', planned_on: '2026-06-16', rank: 'd' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await page.locator('[data-layout="stacked"]').click()
   await expect(page.locator('[data-count="today"]')).toHaveText('2')
   expect(
@@ -646,7 +646,7 @@ test('a column that is showing all of itself is not marked as continuing', async
   account,
 }) => {
   await makeTodos(account, [{ title: 'Feed the cat', rank: 'n' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await page.locator('[data-layout="columns"]').click()
   await expect(page.locator('[data-count="today"]')).toHaveText('1')
   await expect(page.locator('[data-column-more]')).toHaveCount(0)

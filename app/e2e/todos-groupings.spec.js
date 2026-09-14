@@ -518,6 +518,9 @@ test('the archive column of the list grouping offers the same older page', async
 
 /** The columns each grouping draws that a task can be typed into. */
 const TYPEABLE = {
+  // One column, with no opinion about any field: its quick-add has only the
+  // today default to give, which is exactly the hole this table exists for.
+  plain: ['plain'],
   date: ['past', 'today', 'tomorrow', 'later'],
   board: ['done', 'active', 'planned', 'backlog'],
   matrix: [

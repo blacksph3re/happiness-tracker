@@ -34,7 +34,7 @@ import { LIFT_MS, THRESHOLD } from './drag.svelte.js'
 const MENU_MS = LIFT_MS * 4
 
 /**
- * How long after a long press a release is still part of it.
+ * How long after the finger lifts a click is still that release.
  *
  * A card's title and a calendar block are both buttons that open the task, and
  * the release that ends a long press is reported as a click on whichever one
@@ -42,6 +42,12 @@ const MENU_MS = LIFT_MS * 4
  * afterglow `drag.justDropped` is, for the same reason, and read the same way:
  * from an event handler rather than from markup, since a getter over the clock
  * would make anything drawing it re-render for ever.
+ *
+ * **Counted from the release, never from the opening.** It used to start when
+ * the menu opened, at `MENU_MS`, so a finger held a second or more lifted after
+ * the afterglow had run out and its click opened the task under the menu —
+ * measured at holds of 1000, 1400 and 2500ms. Until the pointer that opened the
+ * menu comes up, every click is its release, however long the hold.
  */
 const AFTERGLOW_MS = 400
 
@@ -73,8 +79,11 @@ export function taskMenu() {
   /** The press in progress, none of it reactive. */
   let press = null
 
-  /** When the menu last opened from a long press, so a release is not a tap. */
-  let opened = 0
+  /** The pointer whose long press opened the menu and has not lifted yet, or null. */
+  let holding = null
+
+  /** When that pointer lifted, so the click its release reports is not a tap. */
+  let released = 0
 
   /** When it last opened at all, for the scroll that its own opening caused. */
   let shownAt = 0
@@ -144,12 +153,24 @@ export function taskMenu() {
       if (travelled > THRESHOLD) clear()
     }
     const end = (event) => {
+      if (holding !== null && event.pointerId === holding) {
+        holding = null
+        // A cancel reports no click, so only a real lift starts the afterglow.
+        if (event.type === 'pointerup') released = Date.now()
+      }
       if (press && event.pointerId === press.pointerId) clear()
     }
+    // Any new press is a new gesture, so a lift that never arrived — a pointer
+    // lost to a tab switch — cannot keep swallowing clicks after it.
+    const down = () => {
+      holding = null
+    }
+    globalThis.addEventListener('pointerdown', down, true)
     globalThis.addEventListener('pointermove', move)
     globalThis.addEventListener('pointerup', end, true)
     globalThis.addEventListener('pointercancel', end)
     return () => {
+      globalThis.removeEventListener('pointerdown', down, true)
       globalThis.removeEventListener('pointermove', move)
       globalThis.removeEventListener('pointerup', end, true)
       globalThis.removeEventListener('pointercancel', end)
@@ -161,9 +182,9 @@ export function taskMenu() {
     get shown() {
       return shown
     },
-    /** Whether the menu opened so recently that a click is really its release. */
+    /** Whether a click is really the release of the press that opened the menu. */
     get justOpened() {
-      return Date.now() - opened < AFTERGLOW_MS
+      return holding !== null || Date.now() - released < AFTERGLOW_MS
     },
     close,
     set oncarry(handler) {
@@ -226,9 +247,9 @@ export function taskMenu() {
       }
       press.timer = setTimeout(() => {
         if (!press) return
-        const { task: held, at } = press
+        const { task: held, at, pointerId } = press
         clear()
-        opened = Date.now()
+        holding = pointerId
         // The carry first: the card has been in hand since `LIFT_MS` and has to
         // be put back before anything is drawn over it.
         carry?.()

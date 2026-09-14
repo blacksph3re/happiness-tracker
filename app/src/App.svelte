@@ -53,6 +53,22 @@
 
   let menuOpen = $state(false)
 
+  /** The button that opens the phone menu, where Escape hands focus back. */
+  let menuButton = $state(null)
+
+  /**
+   * Close the phone menu on Escape, as every other overlay here closes.
+   *
+   * Focus goes back to the button that opened it only when it was inside the
+   * menu, so an Escape meant for something else does not move the reader.
+   */
+  function closeMenuOnEscape(event) {
+    if (event.key !== 'Escape' || !menuOpen) return
+    const inside = document.activeElement?.closest?.('[data-phone-menu]')
+    menuOpen = false
+    if (inside) menuButton?.focus()
+  }
+
   $effect(() => {
     if ($signedIn) {
       ensureMe()
@@ -227,6 +243,7 @@
         </div>
 
         <button
+          bind:this={menuButton}
           class="rounded-md border border-white/15 p-2 md:hidden"
           aria-label="Menu"
           aria-expanded={menuOpen}
@@ -239,7 +256,7 @@
       </nav>
 
       {#if menuOpen}
-        <div class="flex flex-col border-t border-white/8 px-5 py-2 md:hidden">
+        <div class="flex flex-col border-t border-white/8 px-5 py-2 md:hidden" data-phone-menu>
           {#each MENU as [href, label] (href)}
             <a {href} use:link class="meta py-3" onclick={() => (menuOpen = false)}>
               {label}
@@ -274,5 +291,7 @@
     {/if}
   </div>
 {/if}
+
+<svelte:window onkeydown={closeMenuOnEscape} />
 
 <Toasts />

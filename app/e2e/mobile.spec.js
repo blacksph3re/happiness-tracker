@@ -4,6 +4,7 @@ import {
   makeHabit,
   makeProject,
   makeTodo,
+  openTasks,
   privateCatalogue,
   realQuestions,
   recentDays,
@@ -370,7 +371,7 @@ test.describe('at phone width', () => {
     // the drawing says nothing about the hit area.
     await page.setViewportSize({ width: NARROW, height: PHONE.height })
     await makeTodo(account, { title: 'Feed the cat' })
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
 
     const card = page.locator('article[data-client-id]').first()
     await expect(card).toBeVisible()

@@ -33,9 +33,11 @@
   )
 </script>
 
+<!-- 44px to aim at, drawn at its old 28px: the negative margin keeps the row's
+     layout and the span carries the look, including the hover. -->
 <button
   type="button"
-  class="shrink-0 rounded-md p-1 transition {running ? '' : 'hover:bg-white/10'}"
+  class="group -m-2 flex size-11 shrink-0 items-center justify-center"
   disabled={running}
   aria-pressed={running ? undefined : tainted}
   aria-label={running
@@ -45,6 +47,7 @@
   data-tainted={tainted}
   {onclick}
 >
+  <span class="rounded-md p-1 transition {running ? '' : 'group-hover:bg-white/10'}">
   <svg
     width="20"
     height="20"
@@ -76,4 +79,5 @@
       />
     {/if}
   </svg>
+</span>
 </button>

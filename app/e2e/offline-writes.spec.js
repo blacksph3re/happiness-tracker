@@ -220,6 +220,7 @@ test('a session deleted offline is gone when the queue drains', async ({
 
   await context.setOffline(true)
   await page.locator(`[data-day="${TODAY}"]`).getByRole('button', { name: /^Delete/ }).click()
+  await page.locator(`[data-day="${TODAY}"] [data-delete-confirm]`).click()
   await expect(page.locator(`[data-day="${TODAY}"] [data-row]`)).toHaveCount(0)
 
   await context.setOffline(false)

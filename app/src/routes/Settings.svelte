@@ -342,6 +342,14 @@
 
   <AdminOffline does="Your account settings are kept in one place, on the server" />
 
+  <!-- One switch for every control below that talks to the server, rather
+       than `disabled={offline}` on each: four of twenty-eight carried it, and
+       an unticked priority offline looked applied, said nothing, and came back
+       ticked after a reload. A disabled fieldset disables every descendant, so
+       a control added later cannot be the one that forgot. About stays
+       outside, since reloading to update needs no answer from the server. -->
+  <fieldset disabled={offline} title={hint} class="m-0 min-w-0 border-0 p-0" data-needs-server>
+
   <div class="rounded-xl border border-white/10 bg-ink-soft p-6">
     <h2 class="font-semibold">Default catalogue</h2>
     <p class="mt-1 text-sm text-haze">The set of questions you answer each day.</p>
@@ -450,7 +458,6 @@
               const wanted = event.currentTarget.checked
               if (!chooseImportant(priority, wanted)) event.currentTarget.checked = !wanted
             }}
-            class="h-4 w-4 rounded border-white/25 bg-ink"
           />
           <span class="text-sm">{PRIORITY_LABELS[priority]}</span>
         </label>
@@ -796,6 +803,7 @@
       Change password
     </button>
   </form>
+  </fieldset>
 
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-about>
     <h2 class="font-semibold">About</h2>
@@ -883,3 +891,13 @@
     {/if}
   </div>
 </section>
+
+<style>
+  /* Dimmed the way the controls that carried `disabled:opacity-40` already
+     were. That variant reads the control's own `:disabled`, which a fieldset
+     does set, but most controls here never had the class. */
+  fieldset:disabled :is(input, select, button) {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+</style>

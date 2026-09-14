@@ -1,4 +1,4 @@
-import { expect, makeTodos, storedArchive, storedTodos, test, TODAY } from './fixtures.js'
+import { expect, makeTodos, openTasks, storedArchive, storedTodos, test, TODAY } from './fixtures.js'
 
 /**
  * A gesture bigger than one request.
@@ -34,7 +34,7 @@ test('a cleanup larger than one request empties the outbox anyway', async ({
     }))
   )
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   const cleanup = page.locator('[data-cleanup]')
   await expect(cleanup).toHaveText(`Clean up ${TOO_MANY} done`, { timeout: 30_000 })
 
@@ -69,7 +69,7 @@ test('a cleanup larger than one request empties the outbox anyway', async ({
   expect(rest.next).toBeNull()
 })
 
-test('a write the server refuses says so where the gesture was made', async ({ page }) => {
+test('a write the server refuses says so where the gesture was made', async ({ page, account }) => {
   // A conflict retires from the queue — it has to, or every later flush would
   // collect the same refusal for ever — so the card drawn from the queue
   // vanishes and the write is gone. The only thing that said so was a count
@@ -92,7 +92,7 @@ test('a write the server refuses says so where the gesture was made', async ({ p
     })
   })
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   const box = page.locator('[data-quick-add="today"]')
   await box.fill('Feed the cat')
   await box.press('Enter')

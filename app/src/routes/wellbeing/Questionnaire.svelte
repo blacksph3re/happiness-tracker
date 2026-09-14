@@ -219,7 +219,16 @@
   // Small enough to read as part of the date line it flanks.
   const DAY_STEP =
     'meta rounded-md border border-white/15 px-2 py-1 leading-none transition ' +
-    'hover:border-white/40'
+    'group-hover:border-white/40'
+
+  // The 44px the arrow is aimed with, around the 26×21 it is drawn at. The
+  // negative margin gives the row back exactly what the size took from it, and
+  // it reaches up rather than evenly: the header's next line sits 8px below and
+  // paints over anything reaching further, so the reach down is exactly that
+  // gap and the rest goes into the page's own top space. The top padding keeps
+  // the drawn box where it was.
+  const DAY_STEP_HIT =
+    'group -mx-[9px] -mt-[15px] -mb-[8px] flex size-11 items-start justify-center pt-[15px]'
 
   /**
    * Move to another day by changing the URL and nothing else.
@@ -278,13 +287,13 @@
     <header class="mb-8 flex flex-col gap-2">
       <!-- The arrows sit either side of the date they move, sized to it: they
            belong to that line rather than being a separate control block. -->
-      <div class="flex items-center gap-2">
-        <button class={DAY_STEP} aria-label="Previous day" onclick={() => changeDay(-1)}>
-          ←
+      <div class="flex items-center gap-4">
+        <button class={DAY_STEP_HIT} aria-label="Previous day" onclick={() => changeDay(-1)}>
+          <span class={DAY_STEP}>←</span>
         </button>
         <p class="meta">{dayLabel(day)}</p>
-        <button class={DAY_STEP} aria-label="Next day" onclick={() => changeDay(1)}>
-          →
+        <button class={DAY_STEP_HIT} aria-label="Next day" onclick={() => changeDay(1)}>
+          <span class={DAY_STEP}>→</span>
         </button>
       </div>
 
@@ -339,7 +348,7 @@
                the row the height it looks. -->
           <button
             type="button"
-            class="group -my-2 flex-1 cursor-pointer py-2"
+            class="group -mx-[3px] -my-[19px] flex-1 cursor-pointer px-[3px] py-[19px]"
             aria-label="Question {position + 1}: {question.prompt}"
             aria-current={position === index ? 'step' : undefined}
             onclick={() => jumpTo(position)}

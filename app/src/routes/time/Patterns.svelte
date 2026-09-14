@@ -761,8 +761,8 @@
                readings surround it on however wide a span is chosen, and only
                stays a gap where the whole window has nothing. This toggle's
                job ends at the average a neighbour sees. -->
-          <label class="flex shrink-0 items-center gap-2">
-            <input type="checkbox" bind:checked={showGaps} class="accent-dusk" />
+          <label class="flex min-w-0 items-center gap-2">
+            <input type="checkbox" bind:checked={showGaps} class="shrink-0" />
             <span class="meta">Leave untracked days out of the average</span>
           </label>
         </div>

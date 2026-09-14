@@ -11,12 +11,12 @@ import {
   urgentDays,
 } from '../todo-settings.js'
 import { banked } from './fields.js'
-import { compareRank } from './rank.js'
+import { between, compareRank } from './rank.js'
 
 /**
  * What a column of the board means, and what dropping into one does.
  *
- * Six of the seven views in the brief are one component: they differ in exactly
+ * All but one of the views are one component: they differ in exactly
  * two functions — which columns tasks fall into, and what dropping into a
  * column does to the task. Those two functions are a *grouping*, and they are
  * pure, which is why almost every interesting rule in this feature is tested
@@ -28,14 +28,15 @@ import { compareRank } from './rank.js'
  * what makes *place it exactly where it was dropped* one behaviour rather than
  * one per grouping.
  *
- * **Every grouping is called with the same four arguments**, whether it reads
- * them or not: `columns(tasks, today, settings, lists)`,
+ * **Every grouping is called with the same arguments**, whether it reads
+ * them or not: `columns(tasks, today, settings, lists, options)`,
  * `drop(task, columnId, today, settings, lists)` and
  * `preset(columnId, today, settings, lists)`. One caller, one call, so a
  * grouping added later cannot need a signature the board does not already
- * pass — the reason `lists` is in there at all is that `list` needs it, and
- * `settings` that `matrix` and `size` do. A grouping that reads fewer declares
- * fewer, which is the JavaScript spelling of *ignored*, not of *absent*.
+ * pass — the reason `lists` is in there at all is that `list` needs it,
+ * `settings` that `matrix` and `size` do, and `options` (a `ColumnOptions`,
+ * optional) that `plain` does. A grouping that reads fewer declares fewer,
+ * which is the JavaScript spelling of *ignored*, not of *absent*.
  *
  * The principle every `drop` obeys, stated once:
  *
@@ -63,6 +64,18 @@ import { compareRank } from './rank.js'
  * And one place it is simply applied, which used to be written otherwise:
  * `board`'s Done holds **every** done task, on any day, so a drop into it
  * ticks and leaves the planned day where it was.
+ *
+ * **`plain` is the one grouping whose column is not in rank order alone.** It
+ * draws open tasks by rank and then done tasks by rank, in one column, and its
+ * `drop` names no field at all — which section a card is in is its tick, never
+ * where it was dropped. Two sections in one column are what the rest of this
+ * file never had to say, so the column carries `doneFrom`, and `dropRange`,
+ * `clampDrop`, `dropNeighbours` and `newTaskRank` read it. They live here rather
+ * than in `dropindex.js` because they are about what a column *means* — its
+ * sections and a task's tick — where `dropindex.js` is pointer geometry, and
+ * because `place` is the one path every move takes: a keyboard move and a drop
+ * on a pager tab never call `dropIndex`, so a clamp sitting there would cover
+ * the pointer and nothing else.
  */
 
 /**
@@ -99,6 +112,32 @@ import { compareRank } from './rank.js'
  *   grouping names the target and nothing more: what the move *writes* is that
  *   target's own `drop`, so there is no second rule for where a swept task
  *   lands, and the rank is the route's to decide as it is for every move.
+ * @property {boolean} [quiet] Whether a card here is drawn with its tickbox and
+ *   title and nothing else — no planned, due, size, priority or list chip. Only
+ *   *Plain* sets it, because showing the tasks without their metadata is the
+ *   whole of what that view is for.
+ * @property {number} [doneFrom] The index in `tasks` where the **done section**
+ *   starts, and `tasks.length` when it is empty. Cards before it are drawn as
+ *   the open section — which can include a task that is already done but still
+ *   *settling* (see `ColumnOptions`) — and cards from it on are drawn done.
+ *   Absent on a column with no sections. Where it is set, a drop may not cross
+ *   it: `place` takes its slot from `clampDrop` and its neighbours' ranks from
+ *   `dropNeighbours`, never from the raw index, and a quick-add takes
+ *   `newTaskRank`, which is the end of the open section rather than of the
+ *   column.
+ */
+
+/**
+ * What a board passes to `columns` beyond the four arguments every grouping
+ * gets. Optional, and every grouping but `plain` ignores it.
+ *
+ * @typedef {object} ColumnOptions
+ * @property {Set<string>} [settling] The `client_id`s of tasks that should
+ *   still be drawn **as open** for now, though they are done. The board passes
+ *   the tasks ticked on this device a moment ago, so a card stays in its slot
+ *   through its tick animation and a short grace before it joins the done
+ *   section. A task in the set that is not done is open anyway, so the set
+ *   never has to be pruned for correctness.
  */
 
 /**
@@ -807,15 +846,188 @@ const list = {
 }
 
 /**
+ * A list's tasks in their own order, open first and done at the end.
+ *
+ * No grouping at all: one column, every task it is handed — the caller has
+ * already chosen the lists and left the archive out — and cards drawn `quiet`.
+ */
+const plain = {
+  id: 'plain',
+  label: 'Plain',
+  layouts: ['stacked'],
+
+  /**
+   * Draw every task in one column: open tasks by rank, then done tasks by rank.
+   *
+   * **A tick moves a card to the end without rewriting its rank.** The two
+   * sections are sorted separately, so a task ticked at the top of a list is
+   * drawn after every open task however low its rank is, and unticking it puts
+   * it back exactly where it was.
+   *
+   * @param {Array<import('../generated/types.gen').TodoOut>} tasks
+   * @param {string} today A `YYYY-MM-DD` day. Unused.
+   * @param {object} settings A `TodoSettings`. Unused.
+   * @param {Array<import('../generated/types.gen').TodoListOut>} lists Unused.
+   * @param {ColumnOptions} [options] `settling` names done tasks still drawn
+   *   in the open section.
+   * @returns {Array<Column>} Exactly one column, empty or not.
+   */
+  columns(tasks, today, settings, lists, { settling } = {}) {
+    const open = []
+    const done = []
+    for (const task of tasks ?? []) {
+      const finished = task.done_at && !settling?.has(task.client_id)
+      ;(finished ? done : open).push(task)
+    }
+    return [
+      {
+        id: 'plain',
+        label: 'Tasks',
+        hint: null,
+        date: null,
+        quiet: true,
+        doneFrom: open.length,
+        tasks: [...ordered(open), ...ordered(done)],
+      },
+    ]
+  },
+
+  /**
+   * What dropping a task changes about it: nothing, ever.
+   *
+   * One column, so there is nowhere else to have been dropped, and the section
+   * a card is drawn in is read off its tick — a drop that could tick or untick
+   * would be a second way to do what the tickbox already does. The slot is
+   * `clampDrop`'s to decide.
+   *
+   * @returns {object} Always `{}`.
+   */
+  drop() {
+    return {}
+  },
+
+  /**
+   * What the quick-add fills in: nothing of its own.
+   *
+   * The planned day is `newTaskFields`'s today default, as for every grouping
+   * with no opinion about one, and the rank is `newTaskRank`'s.
+   *
+   * @returns {object} Always `{}`.
+   */
+  preset() {
+    return {}
+  },
+}
+
+/**
+ * Which slots a drop of `task` into `column` may use.
+ *
+ * In the coordinates `place` uses — an index **among the column's other
+ * cards**, the carried one left out — and inclusive at both ends. A column
+ * with no `doneFrom` allows every slot, `0` to the number of other cards,
+ * which is the clamp `place` has always applied.
+ *
+ * A column with sections allows only the carried card's own. Which section
+ * that is comes from **where the card is drawn**, when it is in the column: a
+ * settling card is done and drawn open, and moving it must not make it jump
+ * the boundary it has not crossed yet. A card that is not in the column is
+ * sectioned by its tick.
+ *
+ * @param {Column} column The column being dropped into.
+ * @param {import('../generated/types.gen').TodoOut} task The carried task.
+ * @returns {{from: number, to: number}} The first and last legal slot.
+ */
+export function dropRange(column, task) {
+  const rows = column?.tasks ?? []
+  const was = rows.findIndex((row) => row.client_id === task.client_id)
+  const count = was === -1 ? rows.length : rows.length - 1
+  if (typeof column?.doneFrom !== 'number') return { from: 0, to: count }
+  const drawnOpen = was !== -1 && was < column.doneFrom
+  const open = was === -1 ? !task.done_at : drawnOpen
+  const boundary = drawnOpen ? column.doneFrom - 1 : column.doneFrom
+  return open ? { from: 0, to: boundary } : { from: boundary, to: count }
+}
+
+/**
+ * The slot a raw drop index resolves to, inside the range `dropRange` allows.
+ *
+ * A pointer below the last open card with an open card in hand lands last
+ * among the open ones; an arrow key pressed past the boundary goes nowhere,
+ * which `place` then sees as a drop back where it came from.
+ *
+ * @param {Column} column
+ * @param {import('../generated/types.gen').TodoOut} task
+ * @param {number} index Where the pointer, the key or the tab asked for.
+ * @returns {number} The slot, among the column's other cards.
+ */
+export function clampDrop(column, task, index) {
+  const { from, to } = dropRange(column, task)
+  return Math.min(Math.max(index, from), to)
+}
+
+/**
+ * The clamped slot and the ranks either side of it, inside its own section.
+ *
+ * **Clamping the slot is not enough to place a card exactly there.** `place`
+ * takes the new rank from the cards either side of the slot, and at the
+ * boundary those are one open card and one done card — whose ranks can be in
+ * either order, since a section is sorted alone. `between(lastOpen, firstDone)`
+ * with the done task ranked lower comes back *above* both, and the card lands a
+ * slot late. So the neighbour on the far side of the boundary is not a
+ * neighbour: it is `null`, and the rank is measured against the section alone.
+ * Without sections this is exactly the pair `place` has always read.
+ *
+ * @param {Column} column
+ * @param {import('../generated/types.gen').TodoOut} task
+ * @param {number} index The raw drop index.
+ * @returns {{at: number, lower: string|null, upper: string|null}} The slot
+ *   among the other cards, and the ranks to hand to `between`.
+ */
+export function dropNeighbours(column, task, index) {
+  const { from, to } = dropRange(column, task)
+  const at = clampDrop(column, task, index)
+  const others = (column?.tasks ?? []).filter((row) => row.client_id !== task.client_id)
+  return {
+    at,
+    lower: at > from ? others[at - 1].rank : null,
+    upper: at < to ? others[at].rank : null,
+  }
+}
+
+/**
+ * The rank a task typed into a column's quick-add takes.
+ *
+ * After the last task of the **open section** where the column has one, so a
+ * new task lands last among the open ones whatever the done tasks are ranked —
+ * including after a settling task, which is still drawn there. Elsewhere after
+ * the column's last task by rank, which is what the quick-add has always
+ * written.
+ *
+ * @param {Column} column The column the task was typed into.
+ * @returns {string} A rank for the new task.
+ */
+export function newTaskRank(column) {
+  const rows = column?.tasks ?? []
+  const open = typeof column?.doneFrom === 'number' ? rows.slice(0, column.doneFrom) : rows
+  const last = open.toSorted(compareRank).at(-1)
+  return between(last?.rank ?? null, null)
+}
+
+/**
  * Every grouping the board can be shown in, by id.
  *
  * A map rather than an array so a saved preference names one by id and a
  * preference naming one that no longer exists falls back rather than breaking.
+ * Its key order is the order the pills are drawn in, so `plain` comes first.
  */
-export const GROUPINGS = { date, board, matrix, size, list }
+export const GROUPINGS = { plain, date, board, matrix, size, list }
 
-/** The grouping a board opens on when nothing is remembered. */
-export const DEFAULT_GROUPING = 'date'
+/**
+ * The grouping a board opens on when nothing is remembered.
+ *
+ * Only that: an account that has chosen a grouping keeps it.
+ */
+export const DEFAULT_GROUPING = 'plain'
 
 /**
  * The grouping a preference names, or the default when it names nothing known.

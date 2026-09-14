@@ -940,6 +940,7 @@ test('deleting one day of a session over midnight keeps the other', async ({
   const cut = today.getByRole('button', { name: /^Delete/ })
   await expect(cut).toHaveAttribute('aria-label', 'Delete Night shift on Mon, Jun 15')
   await cut.click()
+  await page.locator(`[data-day="${TODAY}"] [data-delete-confirm]`).click()
 
   // Today is gone entirely; yesterday keeps every minute it had.
   await expect(page.locator(`[data-day="${TODAY}"]`)).toHaveCount(0)
@@ -964,6 +965,7 @@ test('deleting the middle day of a session splits it in two', async ({ page, acc
     .locator('[data-day="2026-06-14"]')
     .getByRole('button', { name: /^Delete/ })
     .click()
+  await page.locator('[data-day="2026-06-14"] [data-delete-confirm]').click()
 
   // The day taken out is gone and the days either side of it both survive -
   // which is the split, and which one row moving would also satisfy if only
@@ -1015,6 +1017,39 @@ test('a session that ran yesterday offers no resume', async ({ page, account }) 
   await expect(card(page, project.id).locator('[data-resume]')).toHaveCount(0)
 })
 
+test('deleting from the record asks first, and Cancel sends nothing', async ({
+  page,
+  account,
+}) => {
+  // One click used to take the session off the server outright, where every
+  // other delete in the app asks. Reported as twelve sessions becoming eleven.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  await page.goto('/time/record')
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('3h 00m')
+
+  await day.getByRole('button', { name: /^Delete The rewrite/ }).click()
+  await expect(day.locator('[data-delete-confirm]')).toBeVisible()
+  // Nothing has happened yet: the row is drawn and nothing was queued.
+  await expect(day.locator('[data-row]')).toHaveCount(1)
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0')
+
+  await day.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(day.locator('[data-delete-confirm]')).toHaveCount(0)
+  await expect(day.getByRole('button', { name: /^Delete The rewrite/ })).toBeVisible()
+  const kept = await (await account.api.get('/api/time/entries')).json()
+  expect(kept).toHaveLength(1)
+
+  await day.getByRole('button', { name: /^Delete The rewrite/ }).click()
+  await day.locator('[data-delete-confirm]').click()
+  await expect(page.locator(`[data-day="${TODAY}"] [data-row]`)).toHaveCount(0)
+  await expect
+    .poll(async () => (await (await account.api.get('/api/time/entries')).json()).length)
+    .toBe(0)
+})
+
 test('an accidental timer can be deleted from the record', async ({ page, account }) => {
   const project = await makeProject(account, 'The rewrite')
 
@@ -1023,6 +1058,7 @@ test('an accidental timer can be deleted from the record', async ({ page, accoun
 
   await page.goto('/time/record')
   await page.locator(`[data-day="${TODAY}"]`).getByRole('button', { name: /^Delete/ }).click()
+  await page.locator(`[data-day="${TODAY}"] [data-delete-confirm]`).click()
   await expect(page.locator(`[data-day="${TODAY}"] [data-row]`)).toHaveCount(0)
 
   await page.goto('/time')

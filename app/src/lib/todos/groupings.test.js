@@ -1,7 +1,16 @@
 import { describe, expect, test } from 'vitest'
 
 import { shiftDay } from '../day.js'
-import { GROUPINGS, groupingFor } from './groupings.js'
+import {
+  DEFAULT_GROUPING,
+  GROUPINGS,
+  clampDrop,
+  dropNeighbours,
+  dropRange,
+  groupingFor,
+  newTaskRank,
+} from './groupings.js'
+import { REBALANCE_AT, between, compareRank, needsRebalance } from './rank.js'
 import { DEFAULT_TODO_SETTINGS } from '../todo-settings.js'
 
 /**
@@ -9,11 +18,19 @@ import { DEFAULT_TODO_SETTINGS } from '../todo-settings.js'
  *
  * Written over `GROUPINGS` rather than over each grouping by name, so a
  * grouping added later inherits the assertions that matter instead of being
- * tested by whoever remembers to. Every one of the five is held to the same
- * six: it names a column for every task it draws, it draws its empty columns,
- * a drop into the column a task is already in changes nothing, a drop lands
- * the task in the column it was dropped on, a drop is idempotent, and a
- * quick-add's preset lands in the column it was typed into.
+ * tested by whoever remembers to. Every one of the six is held to the same
+ * rules: it names a column for every task it draws and draws each exactly once,
+ * it draws its empty columns, a drop into the column a task is already in
+ * changes nothing, a drop lands the task in the column it was dropped on, a
+ * drop is idempotent, and a quick-add's preset lands in the column it was typed
+ * into.
+ *
+ * **`plain` holds all of them, one of them emptily.** It has a single column,
+ * so *a drop lands the task in the column it was dropped on* can only ever be a
+ * drop into the column the task is already in: the assertion runs and passes,
+ * and it cannot see a move between columns because there is none to make. What
+ * a drop in Plain *can* get wrong is the slot, across the open/done boundary,
+ * and that is asserted by its own round trip further down.
  *
  * **`size` is not exempted from the round trip, and that is the point.** It is
  * a stated exception to the smallest-distance rule — a drop writes the
@@ -106,6 +123,15 @@ for (const [id, grouping] of Object.entries(GROUPINGS)) {
         // and cleanup's count one number.
         expect(ids, `${one.client_id} is in no column`).toContain(columnOf(grouping, one))
       }
+    })
+
+    test('draws every task exactly once', () => {
+      // Counted rather than found: `columnOf` stops at the first column that
+      // holds a task, so it cannot see a task drawn twice.
+      const drawn = grouping
+        .columns(SUBJECTS, TODAY, SETTINGS, LISTS)
+        .flatMap((column) => column.tasks.map((held) => held.client_id))
+      expect(drawn.toSorted()).toEqual(SUBJECTS.map((one) => one.client_id).toSorted())
     })
 
     test('draws its empty columns too', () => {
@@ -753,14 +779,334 @@ describe('the list grouping in particular', () => {
   })
 })
 
+describe('the plain grouping in particular', () => {
+  const plain = GROUPINGS.plain
+  const DONE = '2026-06-15T10:00:00'
+
+  /** Draw a Plain board and return its one column. */
+  function drawn(tasks, options) {
+    const [only] = plain.columns(tasks, TODAY, SETTINGS, LISTS, options)
+    return only
+  }
+
+  /** The identities a column draws, in order. */
+  const ids = (column) => column.tasks.map((one) => one.client_id)
+
+  test('is the first grouping, the default, and stacked only', () => {
+    expect(Object.keys(GROUPINGS)[0]).toBe('plain')
+    expect(DEFAULT_GROUPING).toBe('plain')
+    expect(groupingFor(undefined).id).toBe('plain')
+    expect(plain.layouts).toEqual(['stacked'])
+  })
+
+  test('is one column, whatever it is handed', () => {
+    expect(plain.columns([], TODAY, SETTINGS, LISTS)).toHaveLength(1)
+    const [only] = plain.columns(SUBJECTS, TODAY, SETTINGS, LISTS)
+    expect(only.tasks).toHaveLength(SUBJECTS.length)
+  })
+
+  test('open tasks come first by rank, then done tasks by rank', () => {
+    const rows = [
+      task({ client_id: 'done late', rank: 'x', done_at: DONE }),
+      task({ client_id: 'open late', rank: 'q' }),
+      task({ client_id: 'done early', rank: 'd', done_at: DONE }),
+      task({ client_id: 'open early', rank: 'c' }),
+    ]
+    expect(ids(drawn(rows))).toEqual(['open early', 'open late', 'done early', 'done late'])
+  })
+
+  test('a done task ranked before every open task still comes after all of them', () => {
+    // The order is not rank alone: a task ticked at the top of a list goes to
+    // the end of it, and its rank is not rewritten to get it there.
+    const rows = [
+      task({ client_id: 'open', rank: 'n' }),
+      task({ client_id: 'ticked first', rank: 'b', done_at: DONE }),
+      task({ client_id: 'also open', rank: 'p' }),
+    ]
+    expect(ids(drawn(rows))).toEqual(['open', 'also open', 'ticked first'])
+  })
+
+  test('ties are settled by client_id, in both sections', () => {
+    const rows = [
+      task({ client_id: 'b', rank: 'n' }),
+      task({ client_id: 'a', rank: 'n' }),
+      task({ client_id: 'd', rank: 'n', done_at: DONE }),
+      task({ client_id: 'c', rank: 'n', done_at: DONE }),
+    ]
+    expect(ids(drawn(rows))).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  test("several lists' tasks are merged into one order by rank", () => {
+    // The caller hands in the selected lists' tasks; Plain does not group them.
+    const rows = [
+      task({ client_id: 'home', list_id: 4, rank: 'k' }),
+      task({ client_id: 'inbox', list_id: 1, rank: 'e' }),
+      task({ client_id: 'errand', list_id: 2, rank: 'h' }),
+      task({ client_id: 'inbox again', list_id: 1, rank: 'm' }),
+    ]
+    expect(ids(drawn(rows))).toEqual(['inbox', 'errand', 'home', 'inbox again'])
+  })
+
+  test('the column is quiet and says where its done section starts', () => {
+    const rows = [
+      task({ client_id: 'one', rank: 'c' }),
+      task({ client_id: 'two', rank: 'd', done_at: DONE }),
+      task({ client_id: 'three', rank: 'e' }),
+    ]
+    const column = drawn(rows)
+    expect(column.quiet).toBe(true)
+    expect(column.doneFrom).toBe(2)
+    expect(column.date).toBeNull()
+    expect(drawn([]).doneFrom).toBe(0)
+    expect(drawn([task({ client_id: 'o' })]).doneFrom).toBe(1)
+    expect(drawn([task({ client_id: 'd', done_at: DONE })]).doneFrom).toBe(0)
+  })
+
+  test('no other grouping draws quiet cards or a done section', () => {
+    // A card elsewhere keeps its chips, and `place` there keeps the whole
+    // column as the range a drop may use.
+    for (const other of Object.values(GROUPINGS).filter((one) => one.id !== 'plain')) {
+      for (const column of other.columns(SUBJECTS, TODAY, SETTINGS, LISTS)) {
+        expect(column.quiet, `${other.id} ${column.id}`).toBeFalsy()
+        expect(column.doneFrom, `${other.id} ${column.id}`).toBeUndefined()
+      }
+    }
+  })
+
+  const TICKED = [
+    task({ client_id: 'first', rank: 'b' }),
+    task({ client_id: 'just ticked', rank: 'c', done_at: DONE }),
+    task({ client_id: 'third', rank: 'd' }),
+    task({ client_id: 'long done', rank: 'a', done_at: DONE }),
+  ]
+
+  test('a settling task keeps its open position', () => {
+    const column = drawn(TICKED, { settling: new Set(['just ticked']) })
+    expect(ids(column)).toEqual(['first', 'just ticked', 'third', 'long done'])
+    expect(column.doneFrom).toBe(3)
+  })
+
+  test('without settling a ticked task is in the done section', () => {
+    const column = drawn(TICKED)
+    expect(ids(column)).toEqual(['first', 'third', 'long done', 'just ticked'])
+    expect(column.doneFrom).toBe(2)
+    expect(ids(drawn(TICKED, {}))).toEqual(ids(column))
+    expect(ids(drawn(TICKED, { settling: new Set() }))).toEqual(ids(column))
+  })
+
+  test('a settling task is drawn once, and settling an open task changes nothing', () => {
+    const column = drawn(TICKED, { settling: new Set(['just ticked', 'first']) })
+    expect(ids(column).toSorted()).toEqual(TICKED.map((one) => one.client_id).toSorted())
+    expect(ids(column)).toEqual(['first', 'just ticked', 'third', 'long done'])
+  })
+
+  test('a drop never changes a field', () => {
+    // One column, and which section a card is drawn in is read off its tick
+    // rather than off where it was dropped.
+    const settling = task({ client_id: 'settling', done_at: DONE })
+    for (const one of [...SUBJECTS, settling]) {
+      expect(plain.drop(one, 'plain', TODAY, SETTINGS, LISTS), one.client_id).toEqual({})
+      expect(plain.drop(one, 'anything', TODAY, SETTINGS, LISTS), one.client_id).toEqual({})
+    }
+  })
+
+  test('a quick-add presets nothing', () => {
+    // A new task's planned day is `newTaskFields`'s, as for every grouping
+    // with no opinion about it.
+    expect(plain.preset('plain', TODAY, SETTINGS, LISTS)).toEqual({})
+  })
+
+  describe('where a drop may land', () => {
+    // Open c, f, k and done b, p: one done task ranks below every open one and
+    // one above, so neither section's neighbours can stand in for the other's.
+    const ROWS = [
+      task({ client_id: 'o1', rank: 'c' }),
+      task({ client_id: 'o2', rank: 'f' }),
+      task({ client_id: 'o3', rank: 'k' }),
+      task({ client_id: 'd1', rank: 'b', done_at: DONE }),
+      task({ client_id: 'd2', rank: 'p', done_at: DONE }),
+    ]
+    /** Drawn inside each test, so a missing grouping fails tests rather than the file. */
+    const board = () => drawn(ROWS)
+    const RAW = [-3, -1, 0, 1, 2, 3, 4, 5, 6, 9]
+    const clamp = (raw, from, to) => Math.min(Math.max(raw, from), to)
+
+    test('an open card lands only among the open cards, at every raw index', () => {
+      for (const id of ['o1', 'o2', 'o3']) {
+        const carried = ROWS.find((one) => one.client_id === id)
+        expect(dropRange(board(), carried), id).toEqual({ from: 0, to: 2 })
+        for (const raw of RAW) {
+          expect(clampDrop(board(), carried, raw), `${id} at ${raw}`).toBe(clamp(raw, 0, 2))
+        }
+      }
+    })
+
+    test('a done card lands only among the done cards, at every raw index', () => {
+      for (const id of ['d1', 'd2']) {
+        const carried = ROWS.find((one) => one.client_id === id)
+        expect(dropRange(board(), carried), id).toEqual({ from: 3, to: 4 })
+        for (const raw of RAW) {
+          expect(clampDrop(board(), carried, raw), `${id} at ${raw}`).toBe(clamp(raw, 3, 4))
+        }
+      }
+    })
+
+    test('a card not already in the column is sectioned by its tick', () => {
+      const open = task({ client_id: 'elsewhere' })
+      const done = task({ client_id: 'elsewhere done', done_at: DONE })
+      expect(dropRange(board(), open)).toEqual({ from: 0, to: 3 })
+      expect(dropRange(board(), done)).toEqual({ from: 3, to: 5 })
+      for (const raw of RAW) {
+        expect(clampDrop(board(), open, raw), `open at ${raw}`).toBe(clamp(raw, 0, 3))
+        expect(clampDrop(board(), done, raw), `done at ${raw}`).toBe(clamp(raw, 3, 5))
+      }
+    })
+
+    test('a settling card is sectioned by where it is drawn, not by its tick', () => {
+      const settled = drawn(TICKED, { settling: new Set(['just ticked']) })
+      const carried = TICKED.find((one) => one.client_id === 'just ticked')
+      expect(dropRange(settled, carried)).toEqual({ from: 0, to: 2 })
+    })
+
+    test('an empty section is one slot at the boundary', () => {
+      const lonelyOpen = [
+        task({ client_id: 'only open', rank: 'm' }),
+        task({ client_id: 'x', rank: 'c', done_at: DONE }),
+        task({ client_id: 'y', rank: 'q', done_at: DONE }),
+      ]
+      const noDone = [task({ client_id: 'a', rank: 'c' }), task({ client_id: 'b', rank: 'd' })]
+      const cases = [
+        [drawn(lonelyOpen), lonelyOpen[0], 0, 0],
+        [drawn(lonelyOpen.slice(1)), task({ client_id: 'new open' }), 0, 0],
+        [drawn(noDone), task({ client_id: 'new done', done_at: DONE }), 2, 2],
+        [drawn([]), task({ client_id: 'nothing yet' }), 0, 0],
+        [drawn([]), task({ client_id: 'nothing yet done', done_at: DONE }), 0, 0],
+      ]
+      for (const [where, carried, from, to] of cases) {
+        expect(dropRange(where, carried), carried.client_id).toEqual({ from, to })
+        for (const raw of RAW) {
+          expect(clampDrop(where, carried, raw), `${carried.client_id} at ${raw}`).toBe(from)
+        }
+      }
+    })
+
+    test('a column with no done section allows every index, as `place` always has', () => {
+      const [, today] = GROUPINGS.date.columns(ROWS, TODAY, SETTINGS)
+      const carried = ROWS[1]
+      expect(dropRange(today, carried)).toEqual({ from: 0, to: ROWS.length - 1 })
+      for (const raw of RAW) {
+        expect(clampDrop(today, carried, raw)).toBe(clamp(raw, 0, ROWS.length - 1))
+      }
+    })
+
+    test("a drop lands at its clamped slot, whatever the other section's ranks", () => {
+      // The round trip. `place` takes the rank from the two neighbours of the
+      // slot; across the boundary those belong to different sections, and a
+      // done task ranked below the last open one would put `between` the wrong
+      // way round and land the card a slot late.
+      for (const carried of board().tasks) {
+        for (const raw of RAW) {
+          const { at, lower, upper } = dropNeighbours(board(), carried, raw)
+          expect(at, `${carried.client_id} at ${raw}`).toBe(clampDrop(board(), carried, raw))
+          const moved = { ...carried, rank: between(lower, upper) }
+          const after = drawn([...ROWS.filter((one) => one !== carried), moved])
+          expect(ids(after).indexOf(carried.client_id), `${carried.client_id} at ${raw}`).toBe(at)
+        }
+      }
+    })
+
+    test('a column with no done section takes the neighbours `place` always did', () => {
+      const [, today] = GROUPINGS.date.columns(ROWS, TODAY, SETTINGS)
+      const carried = today.tasks[2]
+      const others = today.tasks.filter((one) => one !== carried)
+      for (const raw of RAW) {
+        const at = clamp(raw, 0, others.length)
+        expect(dropNeighbours(today, carried, raw)).toEqual({
+          at,
+          lower: others[at - 1]?.rank ?? null,
+          upper: others[at]?.rank ?? null,
+        })
+      }
+    })
+  })
+
+  describe('a new task', () => {
+    test("ranks after every open task, whatever the done tasks' ranks", () => {
+      for (const doneRank of ['b', 'g', 'z', 'zzz']) {
+        const rows = [
+          task({ client_id: 'o1', rank: 'c' }),
+          task({ client_id: 'o2', rank: 'f' }),
+          task({ client_id: 'd', rank: doneRank, done_at: DONE }),
+        ]
+        const rank = newTaskRank(drawn(rows))
+        for (const open of rows.filter((one) => !one.done_at)) {
+          expect(rank > open.rank, `${rank} after ${open.rank}, done at ${doneRank}`).toBe(true)
+        }
+        const after = drawn([...rows, task({ client_id: 'fresh', rank })])
+        expect(ids(after).indexOf('fresh'), `done at ${doneRank}`).toBe(after.doneFrom - 1)
+        expect(after.tasks.at(-1).client_id).toBe('d')
+      }
+    })
+
+    test("does not inherit the length of the done tasks' keys", () => {
+      // A rank after *every* task would also land last among the open ones, so
+      // order alone cannot tell the two apart. What measuring from the open
+      // section buys is the key: a done task whose rank has grown long would
+      // otherwise lengthen every task typed after it, towards `needsRebalance`.
+      const rows = [
+        task({ client_id: 'o', rank: 'c' }),
+        task({ client_id: 'd', rank: 'z'.repeat(REBALANCE_AT), done_at: DONE }),
+      ]
+      const rank = newTaskRank(drawn(rows))
+      expect(rank).toBe(between('c', null))
+      expect(needsRebalance(rank)).toBe(false)
+    })
+
+    test('lands last among the open tasks, after a settling one too', () => {
+      const options = { settling: new Set(['just ticked']) }
+      const rank = newTaskRank(drawn(TICKED, options))
+      const after = drawn([...TICKED, task({ client_id: 'fresh', rank })], options)
+      expect(ids(after)).toEqual(['first', 'just ticked', 'third', 'fresh', 'long done'])
+    })
+
+    test('on a board with no open tasks is the only open task', () => {
+      const rows = [task({ client_id: 'd', rank: 'n', done_at: DONE })]
+      const rank = newTaskRank(drawn(rows))
+      expect(ids(drawn([...rows, task({ client_id: 'fresh', rank })]))).toEqual(['fresh', 'd'])
+      expect(newTaskRank(drawn([]))).toBe(between(null, null))
+    })
+
+    test('in a column with no done section is appended after its last task by rank', () => {
+      // What the quick-add has always written, so every grouping can call it.
+      const rows = [task({ client_id: 'a', rank: 'q' }), task({ client_id: 'b', rank: 'e' })]
+      const [, today] = GROUPINGS.date.columns(rows, TODAY, SETTINGS)
+      const last = rows.toSorted(compareRank).at(-1)
+      expect(newTaskRank(today)).toBe(between(last.rank, null))
+    })
+  })
+})
+
+describe('settling', () => {
+  test('every grouping but plain ignores it', () => {
+    const everything = { settling: new Set(SUBJECTS.map((one) => one.client_id)) }
+    for (const grouping of Object.values(GROUPINGS).filter((one) => one.id !== 'plain')) {
+      expect(grouping.columns(SUBJECTS, TODAY, SETTINGS, LISTS, everything), grouping.id).toEqual(
+        grouping.columns(SUBJECTS, TODAY, SETTINGS, LISTS)
+      )
+    }
+  })
+})
+
 describe('choosing a grouping', () => {
-  test('all five groupings are registered', () => {
-    expect(Object.keys(GROUPINGS)).toEqual(['date', 'board', 'matrix', 'size', 'list'])
+  test('all six groupings are registered, plain first', () => {
+    // The pill row is drawn in this order, so the first key is the first pill.
+    expect(Object.keys(GROUPINGS)).toEqual(['plain', 'date', 'board', 'matrix', 'size', 'list'])
   })
 
   test('a remembered id that no longer exists falls back to the default', () => {
-    expect(groupingFor('burndown').id).toBe('date')
-    expect(groupingFor(undefined).id).toBe('date')
+    expect(groupingFor('burndown').id).toBe('plain')
+    expect(groupingFor(undefined).id).toBe('plain')
     expect(groupingFor('matrix').id).toBe('matrix')
+    expect(groupingFor('date').id).toBe('date')
   })
 })

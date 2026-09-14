@@ -3,7 +3,9 @@ import {
   groupBy,
   makeTodoList,
   makeTodos,
+  openTasks,
   outboxEmpty,
+  resizeTo,
   storedTodos,
   systemList,
   taskCard,
@@ -219,7 +221,7 @@ test.describe('at phone width', () => {
     // there is nothing for the pager to solve and four headings a thumb can
     // scroll past is the better picture.
     await makeTodos(account, [{ title: 'here now', rank: 'b' }])
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     await expect(page.locator('[data-column]')).toHaveCount(4)
     await expect(page.locator('[data-pager-tabs]')).toHaveCount(0)
   })
@@ -321,7 +323,16 @@ test.describe('the chrome above the first card', () => {
   // are what says *why* it came down, and neither can drift quietly. What is
   // left is mostly the page heading, and shrinking that is a density decision
   // about every page here rather than about this one.
-  const BUDGET = { 390: 380, 320: 380 }
+  //
+  // **Moved to 460, deliberately: 368 → 453 at 390 and at 320.** The scrolling
+  // rows went — six grouping pills and the list chips each scrolled sideways
+  // and ended in a cut cell at 320, the complaint already made about the
+  // category tabs — and equal cells that wrap cost one row of each, 85px. Every
+  // grouping and every list is now on screen without a sideways swipe. Whether
+  // that is worth 85px of a phone is a density call; the guard is set against
+  // the measurement so a third row, which would be a cell squeezed rather than
+  // a row wrapping, still fails.
+  const BUDGET = { 390: 460, 320: 460 }
 
   for (const size of [PHONE, NARROW]) {
     test(`leaves the board most of a ${size.width}px screen`, async ({ page, account }) => {
@@ -342,10 +353,10 @@ test.describe('the chrome above the first card', () => {
         `the first card starts at y=${top} on a ${size.width}×${size.height} screen`
       ).toBeLessThanOrEqual(BUDGET[size.width])
 
-      // One row each, for both control groups: the row is no taller than the
-      // control inside it, which is the claim rather than a count of how many
-      // fitted. Both, because five grouping pills wrapped to two rows and gave
-      // straight back what the chips had saved.
+      // Neither control group scrolls sideways, which is what the two rows of
+      // cells are paid for with; `todos-frame.spec.js` samples the same claim
+      // for the worst value, with every label read. Two rows each at most: a
+      // third would mean a cell had been squeezed into wrapping, not the row.
       const rows = await page.evaluate(() =>
         [
           ['chips', '[data-list-chips]', '[data-list]'],
@@ -355,16 +366,19 @@ test.describe('the chrome above the first card', () => {
           const one = row.querySelector(item)
           return {
             name,
+            sideways: row.scrollWidth - row.clientWidth,
             row: Math.round(row.getBoundingClientRect().height),
             item: Math.round(one.getBoundingClientRect().height),
           }
         })
       )
+      console.log(`chrome ${size.width}: first card at ${top}`, JSON.stringify(rows))
       for (const row of rows) {
+        expect(row.sideways, `the ${row.name} scrolls sideways`).toBe(0)
         expect(
           row.row,
           `the ${row.name} took ${row.row}px for a ${row.item}px control`
-        ).toBeLessThanOrEqual(row.item + 4)
+        ).toBeLessThanOrEqual(2 * row.item + 8)
       }
     })
   }
@@ -373,47 +387,122 @@ test.describe('the chrome above the first card', () => {
 test.describe('what the pager says about itself', () => {
   test.use({ viewport: PHONE })
 
-  test('a tab strip with more tabs than room says so at the edge', async ({ page, account }) => {
-    // At 390 the Eisenhower strip showed one tab and half of the next, with two
-    // off-screen and no arrow, dot or fade — so there was nothing on the page
-    // saying the strip continued. Both directions, because the marker at the
-    // near edge is what says you can go back.
-    const inbox = await systemList(account, 'inbox')
-    for (const name of ['Errands', 'Reading', 'House', 'Garden']) {
-      await makeTodoList(account, name, 'rose')
-    }
-    await makeTodos(account, [{ title: 'here now', rank: 'b' }])
-    await page.goto('/todos')
-    await groupBy(page, 'list', String(inbox.id))
+  for (const size of [PHONE, NARROW]) {
+    test(`every grouping's switcher fits a ${size.width}px screen`, async ({ page, account }) => {
+      // The pager's categories were a strip that scrolled sideways, so Kanban and
+      // Eisenhower showed one tab and part of the next with the rest off screen.
+      // Reported from use as "side-scrolling to see all categories". Now a grid
+      // of equal cells that always fits. A negative claim — nothing overflows,
+      // nothing is cut — so every grouping is sampled and the worst decides.
+      test.setTimeout(60_000)
+      const inbox = await systemList(account, 'inbox')
+      for (const name of ['Errands', 'Reading', 'House', 'Garden']) {
+        await makeTodoList(account, name, 'rose')
+      }
+      // Double-digit counts, the realistic worst for a cell's width.
+      await makeTodos(
+        account,
+        Array.from({ length: 12 }, (_, n) => ({ title: `task ${n}`, rank: `b${n}` }))
+      )
+      await page.goto('/todos')
 
-    const strip = page.locator('[data-pager-tabs]')
-    const room = await strip.evaluate((node) => node.scrollWidth - node.clientWidth)
-    expect(room, 'the strip did not overflow, so there is nothing to mark').toBeGreaterThan(20)
+      for (const [grouping, layout, settled] of [
+        ['date', 'columns', 'today'],
+        ['board', null, 'planned'],
+        ['size', 'columns', 'none'],
+        ['matrix', null, 'important-urgent'],
+        ['list', null, String(inbox.id)],
+      ]) {
+        // A layout is chosen where its toggle is drawn, then the window put back.
+        // Both resizes are this test's own doing; see `resizeTo` for why the
+        // first frame after one is not a sample.
+        await resizeTo(page, { width: 1280, height: 900 })
+        await groupBy(page, grouping, settled)
+        if (layout) await page.locator(`[data-layout="${layout}"]`).click()
+        await resizeTo(page, size)
+        const tabs = page.locator('[data-pager-tabs] [role="tab"]')
+        await expect(tabs.first()).toBeVisible()
 
-    // At the near edge: more ahead, nothing behind.
-    await expect(page.locator('[data-tabs-more="end"]')).toBeVisible()
-    await expect(page.locator('[data-tabs-more="start"]')).toHaveCount(0)
+        let worst = { overflow: 0, outside: 0, cut: [] }
+        let seen = null
+        for (let sample = 0; sample < 6; sample += 1) {
+          seen = await page.evaluate(() => {
+            const strip = document.querySelector('[data-pager-tabs]')
+            if (!strip) return null
+            const cells = [...strip.querySelectorAll('[role="tab"]')]
+            return {
+              overflow: strip.scrollWidth - strip.clientWidth,
+              outside: Math.max(
+                0,
+                ...cells.map((cell) => {
+                  const box = cell.getBoundingClientRect()
+                  return Math.max(-box.left, box.right - innerWidth)
+                })
+              ),
+              // A label that is not all there, on either axis: wider than its box,
+              // or wrapped past the two lines it is allowed.
+              cut: cells
+                .filter((cell) => {
+                  const label = cell.querySelector('[data-tab-label]') ?? cell
+                  return (
+                    label.scrollWidth > label.clientWidth + 1 ||
+                    label.scrollHeight > label.clientHeight + 1
+                  )
+                })
+                .map((cell) => cell.textContent.trim()),
+              // How much room the tightest label has on one line, for the report:
+              // the cell's content box less the label's own width unwrapped. The
+              // label's box shrinks to its text, so it cannot be the yardstick.
+              spare: Math.min(
+                ...cells.map((cell) => {
+                  const label = cell.querySelector('[data-tab-label]')
+                  if (!label) return Infinity
+                  const style = getComputedStyle(cell)
+                  const room =
+                    cell.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+                  label.style.whiteSpace = 'nowrap'
+                  const natural = label.scrollWidth
+                  label.style.whiteSpace = ''
+                  return Math.round(room - natural)
+                })
+              ),
+              boxes: cells.map((cell) => {
+                const box = cell.getBoundingClientRect()
+                return { left: Math.round(box.left), top: Math.round(box.top) }
+              }),
+            }
+          })
+          expect(seen, 'the switcher is not drawn').not.toBeNull()
+          worst = {
+            overflow: Math.max(worst.overflow, seen.overflow),
+            outside: Math.max(worst.outside, seen.outside),
+            cut: seen.cut.length > worst.cut.length ? seen.cut : worst.cut,
+          }
+          await page.waitForTimeout(80)
+        }
 
-    await strip.evaluate((node) => node.scrollTo({ left: node.scrollWidth }))
-    await expect(page.locator('[data-tabs-more="start"]')).toBeVisible()
-    await expect(page.locator('[data-tabs-more="end"]')).toHaveCount(0)
-  })
-
-  test('a strip that fits is not marked as continuing', async ({ page, account }) => {
-    // The other half of the claim, or the marker could simply be always on.
-    // 700px is still the pager — the break is 48rem — and is wide enough for
-    // the four kanban tabs, which overflow a 390px screen by 2px.
-    await page.setViewportSize({ width: 700, height: 800 })
-    await makeTodos(account, [{ title: 'here now', rank: 'b' }])
-    await page.goto('/todos')
-    await groupBy(page, 'board', 'planned')
-
-    const room = await page
-      .locator('[data-pager-tabs]')
-      .evaluate((node) => node.scrollWidth - node.clientWidth)
-    expect(room, 'the four kanban tabs no longer fit, so this proves nothing').toBeLessThanOrEqual(1)
-    await expect(page.locator('[data-tabs-more]')).toHaveCount(0)
-  })
+        expect(worst.overflow, `the ${grouping} switcher scrolls sideways`).toBeLessThanOrEqual(0)
+        expect(worst.outside, `a ${grouping} cell leaves the screen`).toBeLessThanOrEqual(1)
+        const rows = new Set(seen.boxes.map((box) => box.top))
+        console.log(
+          `switcher ${size.width} ${grouping}: ${seen.boxes.length} cells in ${rows.size} rows, tightest label ${seen.spare}px to spare`
+        )
+        if (grouping === 'matrix') {
+          // The matrix drawn as the matrix: two rows of two, in two columns.
+          const lefts = new Set(seen.boxes.map((box) => box.left))
+          expect(
+            { rows: rows.size, columns: lefts.size },
+            'the quadrants are not a 2×2 grid'
+          ).toEqual({ rows: 2, columns: 2 })
+        }
+        // Every list name is somebody's own text, so only there may a long one be
+        // cut short; every other label is the app's, and fits.
+        if (grouping !== 'list') {
+          expect(worst.cut, `the ${grouping} labels do not fit their cells`).toEqual([])
+        }
+      }
+    })
+  }
 
   test('the column on screen does not repeat its own tab', async ({ page, account }) => {
     // `PAST 3` on the tab and `Past 3` as a heading 30px under it is the
@@ -436,7 +525,7 @@ test.describe('what the pager says about itself', () => {
     // The other half: nothing above a stack names its columns, so the heading
     // is the only thing that does.
     await makeTodos(account, [{ title: 'here now', rank: 'b' }])
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     await expect(page.locator('[data-column="today"] h2')).toHaveText('Today')
     await expect(page.locator('[data-count="today"]')).toHaveText('1')
   })
@@ -475,3 +564,161 @@ test.describe('moving the past on a phone', () => {
   })
 })
 
+/**
+ * On a phone, a column never hides a card.
+ *
+ * Reported from use as tasks "cut off in the past/tomorrow list with a
+ * gradient". Measured before the fix: at 390 and 320 in portrait no column was
+ * its own scroll box — the pager already passed `filled: false` — and the
+ * gradients a portrait phone drew were the tab strip's edge markers, which the
+ * switcher removed. The cut cards were on a phone **on its side**: 844×390 is
+ * past 48rem, so columns sat side by side capped at 60vh, which is **234px**,
+ * holding 1152–2652px of cards behind a 40px fade. A page that already scrolls
+ * does not need a second scroll inside it, and a 234px box is three cards.
+ *
+ * So the portrait half of this test passed before the fix, and says so: what
+ * shows it can fail is the landscape case, and the probe that forces the cap
+ * back onto a phone column.
+ */
+test.describe('a phone column never hides a card', () => {
+  for (const size of [PHONE, NARROW, { width: 844, height: 390 }]) {
+    test(`every card is in the page at ${size.width}×${size.height}`, async ({ page, account }) => {
+      test.setTimeout(90_000)
+      const inbox = await systemList(account, 'inbox')
+      // Twenty in one column of every grouping: planned today, no estimate, no
+      // priority, no due date — Today, Planned, No duration, the last quadrant
+      // and the inbox.
+      await makeTodos(
+        account,
+        Array.from({ length: 20 }, (_, n) => ({
+          title: `task ${String(n).padStart(2, '0')}`,
+          rank: `b${String(n).padStart(2, '0')}`,
+        }))
+      )
+      await page.goto('/todos')
+
+      for (const [grouping, layout, column] of [
+        ['date', 'columns', 'today'],
+        ['board', null, 'planned'],
+        ['size', 'columns', 'none'],
+        ['matrix', null, 'not-important-not-urgent'],
+        ['list', null, String(inbox.id)],
+      ]) {
+        await resizeTo(page, { width: 1280, height: 900 })
+        await groupBy(page, grouping, column)
+        if (layout) await page.locator(`[data-layout="${layout}"]`).click()
+        await resizeTo(page, size)
+        if (size.width < 768) await page.locator(`[data-tab="${column}"]`).click()
+        await expect(taskCard(page, 'task 19')).toHaveCount(1)
+
+        let scrollers = []
+        let fades = 0
+        for (let sample = 0; sample < 5; sample += 1) {
+          const seen = await page.evaluate(() => {
+            const found = []
+            for (const node of document.querySelectorAll('[data-column], [data-column] *')) {
+              const style = getComputedStyle(node)
+              if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1) {
+                // The window size goes in the message: once, in a loaded run, a
+                // quadrant read 540px — 60vh of the 900px window before the
+                // resize — and nothing since has reproduced it.
+                found.push(
+                  `${node.closest('[data-column]').dataset.column}: ${node.clientHeight} of ${node.scrollHeight}px in a ${innerWidth}×${innerHeight} window`
+                )
+              }
+            }
+            return { found, fades: document.querySelectorAll('[data-column-more]').length }
+          })
+          if (seen.found.length > scrollers.length) scrollers = seen.found
+          fades = Math.max(fades, seen.fades)
+          await page.waitForTimeout(80)
+        }
+        expect(scrollers, `a ${grouping} column scrolls its own cards`).toEqual([])
+        expect(fades, `a ${grouping} column draws a fade over its cards`).toBe(0)
+
+        // The last card is reached by scrolling the **page**, and is then what is
+        // on top at its own centre — a card in a capped box scrolled by the page
+        // alone stays under the box's edge or its fade.
+        const reached = await page.evaluate(() => {
+          const card = [...document.querySelectorAll('article[data-client-id]')].find(
+            (node) => node.textContent.includes('task 19')
+          )
+          const box = card.getBoundingClientRect()
+          window.scrollTo(0, box.top + scrollY - innerHeight / 2 + box.height / 2)
+          const now = card.getBoundingClientRect()
+          const hit = document.elementFromPoint(now.left + now.width / 2, now.top + now.height / 2)
+          return Boolean(hit && card.contains(hit))
+        })
+        expect(reached, `the last ${grouping} card cannot be reached by scrolling the page`).toBe(true)
+        await page.evaluate(() => window.scrollTo(0, 0))
+      }
+    })
+  }
+})
+
+/**
+ * A long press on a card lifts it, and selects nothing.
+ *
+ * Reported from use: holding a card on a phone on the small text under its
+ * title selected that text and opened the copy menu instead of lifting the
+ * card. Measured before the fix: the card, its title and its chips all computed
+ * `user-select: auto`.
+ *
+ * **What Chromium can and cannot show here.** It draws neither iOS's callout
+ * nor a long-press text selection for a synthetic touch: a 1.2s CDP touch held
+ * on a card's chip text, with `select-none` absent, selected nothing. So the
+ * empty selection below is true either way and proves only the lift; the
+ * computed style is the assertion that fails when `select-none` is removed.
+ */
+test.describe('a long press on a card lifts it and selects nothing', () => {
+  test('a card, its title, its chips and a calendar block cannot be selected; editing can', async ({
+    page,
+    account,
+  }) => {
+    await makeTodos(account, [{ title: 'Feed the cat', rank: 'b', duration_minutes: 45 }])
+    await openTasks(page, account, 'date')
+    const card = taskCard(page, 'Feed the cat')
+    await expect(card).toBeVisible()
+
+    const styles = await card.evaluate((node) => ({
+      card: getComputedStyle(node).userSelect,
+      title: getComputedStyle(node.querySelector('[data-title]')).userSelect,
+      chip: getComputedStyle(node.querySelector('.meta')).userSelect,
+    }))
+    expect(styles, 'a card can still be selected').toEqual({ card: 'none', title: 'none', chip: 'none' })
+
+    // Where a title is typed, it is still text.
+    const quickAdd = page.locator('[data-quick-add]').first()
+    expect(await quickAdd.evaluate((node) => getComputedStyle(node).userSelect)).not.toBe('none')
+    await card.locator('[data-title]').click()
+    const titleField = page.locator('input[data-field="title"]')
+    await expect(titleField).toBeVisible()
+    expect(await titleField.evaluate((node) => getComputedStyle(node).userSelect)).not.toBe('none')
+
+    await page.goto('/todos/calendar')
+    const block = page.locator('[data-block]').first()
+    await expect(block).toBeVisible()
+    expect(
+      await block.evaluate((node) => getComputedStyle(node).userSelect),
+      'a calendar block can still be selected'
+    ).toBe('none')
+  })
+
+  test('a touch held on a card’s chip text lifts the card', async ({ page, account }) => {
+    await page.setViewportSize(PHONE)
+    await makeTodos(account, [{ title: 'Feed the cat', rank: 'b', duration_minutes: 45 }])
+    await openTasks(page, account, 'date')
+    const card = taskCard(page, 'Feed the cat')
+    const chip = card.locator('.meta').first()
+    await expect(chip).toBeVisible()
+    const box = await chip.boundingBox()
+    const at = { clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 }
+
+    await chip.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId: 9, isPrimary: true, ...at })
+    // Past the drag's 150ms lift and short of the menu's 600ms.
+    await page.waitForTimeout(350)
+    await expect(card).toHaveAttribute('data-carrying', 'true')
+    expect(await page.evaluate(() => getSelection().toString())).toBe('')
+    await chip.dispatchEvent('pointerup', { pointerType: 'touch', pointerId: 9, isPrimary: true, ...at })
+  })
+})

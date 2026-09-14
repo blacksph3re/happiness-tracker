@@ -2,6 +2,7 @@ import {
   expect,
   makeTodo,
   makeTodos,
+  openTasks,
   resolveColours,
   storedArchive,
   storedTodos,
@@ -35,7 +36,7 @@ test('a task typed into a column is on screen at once and on the server after', 
   account,
 }) => {
   const inbox = await systemList(account, 'inbox')
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible()
 
   const box = page.locator('[data-quick-add="today"]')
@@ -68,7 +69,7 @@ test('a task typed into a column is on screen at once and on the server after', 
 test('a task typed under Tomorrow is planned for tomorrow', async ({ page, account }) => {
   // The column's preset, which is the same function a drop into that column
   // uses — so what Enter does and what a drag does cannot disagree.
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   const box = page.locator('[data-quick-add="tomorrow"]')
   await box.fill('Ring the vet')
   await box.press('Enter')
@@ -81,7 +82,7 @@ test('a task typed under Tomorrow is planned for tomorrow', async ({ page, accou
 
 test('a task is ticked and unticked from its card', async ({ page, account }) => {
   await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
 
   const tick = card(page, 'Feed the cat').locator('[data-tick]')
   await tick.click()
@@ -108,7 +109,7 @@ test('cleanup moves the done tasks to the archive and then offers nothing', asyn
   await makeTodo(account, { title: 'Feed the cat', rank: 'b' })
   await makeTodo(account, { title: 'Ring the vet', rank: 'c' })
   await makeTodo(account, { title: 'Book the trip', rank: 'd' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('3')
 
   await card(page, 'Feed the cat').locator('[data-tick]').click()
@@ -153,7 +154,7 @@ test('the archive chip shows what was cleaned up, and offers no cleanup of its o
   await makeTodo(account, { title: 'Feed the cat', list_id: archive.id })
   await makeTodo(account, { title: 'Ring the vet' })
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Ring the vet')).toBeVisible()
   // Not on the board: everything outside the archive is what the board draws.
   await expect(card(page, 'Feed the cat')).toHaveCount(0)
@@ -179,7 +180,7 @@ test('the list and the grouping are where the account left them', async ({
   const archive = await systemList(account, 'archive')
   await makeTodo(account, { title: 'Feed the cat', list_id: archive.id })
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await page.locator('[data-kind="archive"]').click()
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
@@ -203,7 +204,7 @@ test('a task planned in the past sits under Past and says since when', async ({
   account,
 }) => {
   await makeTodo(account, { title: 'Feed the cat', planned_on: '2026-06-11' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
 
   // *Past*, not *Overdue*: a plan for a day that has gone is not lateness
   // unless something was due, and the column is named for what it holds.
@@ -232,7 +233,7 @@ test('only a due date that has passed is drawn in the alarm colour', async ({
     { title: 'due yesterday', rank: 'c', planned_on: '2026-06-20', due_on: '2026-06-14' },
     { title: 'due today', rank: 'd', planned_on: '2026-06-20', due_on: TODAY },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'due today')).toBeVisible()
 
   // Sampled after the row has settled: a computed style read during a
@@ -271,7 +272,7 @@ test('a card says its date only where the column does not', async ({ page, accou
   // nothing, so it could only ever have agreed with whatever was on screen.
   await makeTodo(account, { title: 'Feed the cat' })
   await makeTodo(account, { title: 'Book the trip', planned_on: '2026-06-22' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
 
   await expect(card(page, 'Feed the cat').locator('[data-chip="planned"]')).toHaveCount(0)
   const later = card(page, 'Book the trip').locator('[data-chip="planned"]')
@@ -283,7 +284,7 @@ test('a card with notes says there is something more to read', async ({ page, ac
   // what the card owes the reader is the fact that opening it is worth a tap.
   await makeTodo(account, { title: 'Feed the cat', description: 'Two of them now' })
   await makeTodo(account, { title: 'Ring the vet' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
 
   const mark = card(page, 'Feed the cat').locator('[data-chip="description"]')
   await expect(mark).toBeVisible()
@@ -359,7 +360,7 @@ test('the archive offers an older page while the server holds a cursor', async (
     await route.fulfill({ json: cursor ? second : first })
   })
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await page.locator('[data-kind="archive"]').click()
   const titles = page.locator('[data-column="archive"] [data-title]')
   await expect(titles).toHaveText(['newest', 'middle'])
@@ -412,7 +413,7 @@ test('cleanup asks before it archives anything', async ({ page, account }) => {
     { title: 'Feed the cat', rank: 'b', done_at: `${TODAY}T09:00:00` },
     { title: 'Ring the vet', rank: 'c', done_at: `${TODAY}T09:00:00` },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('2')
   await settled(page)
 
@@ -441,11 +442,11 @@ test('cleanup asks before it archives anything', async ({ page, account }) => {
   ])
 })
 
-test('an empty column says so, in the app’s own voice', async ({ page }) => {
+test('an empty column says so, in the app’s own voice', async ({ page, account }) => {
   // A new account's board was four headings, four boxes and four preset lines,
   // where the rest of the app names its emptiness — *Nothing tracked in this
   // window.*, *No projects yet*.
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible()
   await expect(page.locator('[data-empty]')).toHaveCount(4)
   await expect(page.locator('[data-empty="today"]')).toHaveText('Nothing here yet')
@@ -454,7 +455,7 @@ test('an empty column says so, in the app’s own voice', async ({ page }) => {
 test('a column with a card in it says nothing about being empty', async ({ page, account }) => {
   // The other half, or the line could simply always be there.
   await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
   await expect(page.locator('[data-empty="today"]')).toHaveCount(0)
   await expect(page.locator('[data-empty="later"]')).toBeVisible()
@@ -469,13 +470,13 @@ test('the grouping is pills, like every other window switcher here', async ({ pa
 
   await expect(page.locator('[data-grouping] select')).toHaveCount(0)
   const pills = page.locator('[data-grouping-option]')
-  await expect(pills).toHaveCount(5)
+  await expect(pills).toHaveCount(6)
   expect(await pills.evaluateAll((nodes) => nodes.map((node) => node.dataset.groupingOption))).
-    toEqual(['date', 'board', 'matrix', 'size', 'list'])
+    toEqual(['plain', 'date', 'board', 'matrix', 'size', 'list'])
 
-  // Exactly one pressed, and it is the one whose columns are drawn.
+  // Exactly one pressed, and on an account that has chosen nothing it is Plain.
   await expect(page.locator('[data-grouping-option][aria-pressed="true"]')).toHaveCount(1)
-  await expect(page.locator('[data-grouping-option="date"]')).toHaveAttribute(
+  await expect(page.locator('[data-grouping-option="plain"]')).toHaveAttribute(
     'aria-pressed',
     'true'
   )
@@ -485,7 +486,7 @@ test('the grouping is pills, like every other window switcher here', async ({ pa
     'aria-pressed',
     'true'
   )
-  await expect(page.locator('[data-grouping-option="date"]')).toHaveAttribute(
+  await expect(page.locator('[data-grouping-option="plain"]')).toHaveAttribute(
     'aria-pressed',
     'false'
   )
@@ -515,7 +516,7 @@ test('a card spells both of its days the same way, and keeps the time beside the
     },
     { title: 'far', rank: 'c', planned_on: '2026-06-22', due_on: '2026-06-23' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="later"]')).toHaveText('2')
   await expect(page.locator('[data-count="past"]')).toHaveText('1')
 
@@ -558,7 +559,7 @@ test('a card paints the colour chosen for the task, and paints nothing otherwise
     { title: 'in rose', colour: 'rose' },
     { title: 'in nothing' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'in rose')).toBeVisible()
   // Sampled after the row has settled: a computed style read during a
   // transition is an interpolated value, and a card fades its own border.
@@ -618,7 +619,7 @@ test('a colour survives a tick and a cleanup', async ({ page, account }) => {
   // through `saveTodos`, which are the two shapes there are.
   const archive = await systemList(account, 'archive')
   await makeTodos(account, [{ title: 'Feed the cat', colour: 'amber' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(card(page, 'Feed the cat')).toBeVisible()
 
   await card(page, 'Feed the cat').locator('[data-tick]').click()
@@ -671,7 +672,7 @@ test('the past column offers no move while nothing open is in it', async ({
     { title: 'fed the cat', rank: 'b', planned_on: '2026-06-12', done_at: '2026-06-12T09:00:00' },
     { title: 'for today', rank: 'c' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="past"]')).toHaveText('1')
   await expect(card(page, 'fed the cat')).toBeVisible()
   await expect(page.locator('[data-sweep]')).toHaveCount(0)
@@ -697,7 +698,7 @@ test('moving the past to later takes the open tasks, in one request, to the end 
   ])
   const idOf = Object.fromEntries(seeded.map((one) => [one.title, one.client_id]))
 
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   const sweep = page.locator('[data-sweep="past"]')
   // The count on the button is what it will move: three open, not four.
   await expect(sweep).toHaveText('Move 3 to Later')
@@ -750,7 +751,7 @@ test('a task moved out of the past that was overdue is still drawn as overdue', 
   account,
 }) => {
   await makeTodo(account, { title: 'the tax return', planned_on: '2026-06-10', due_on: '2026-06-12' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await page.locator('[data-sweep="past"]').click()
   await page.locator('[data-sweep-confirm="past"]').click()
 
@@ -764,7 +765,7 @@ test('a task moved out of the past that was overdue is still drawn as overdue', 
 
 test('the move asks first, and cancelling moves nothing', async ({ page, account }) => {
   await makeTodo(account, { title: 'Feed the cat', planned_on: '2026-06-12' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await page.locator('[data-sweep="past"]').click()
   await expect(page.locator('[data-sweep-asking="past"]')).toHaveText(
     'Move 1 past task to Later? They will be planned for Wed, Jun 17.'

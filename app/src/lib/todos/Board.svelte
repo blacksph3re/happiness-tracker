@@ -1,7 +1,7 @@
 <script>
   import Column from './Column.svelte'
   import { swipe } from '../swipe.js'
-  import { wide } from '../media.js'
+  import { tall, wide } from '../media.js'
 
   /**
    * The columns of a grouping, arranged.
@@ -22,20 +22,22 @@
    * | `quadrants` | A 2×2 grid, which is what Eisenhower is |
    * | the pager | What `columns` and `quadrants` become below 48rem |
    *
-   * **Below 48rem a column is a page, not a squeeze.** A tab strip names every
-   * column with its count, exactly one column is on screen, and a swipe or a
-   * tap on a tab moves between them. A two-column picture does not fit a phone,
+   * **Below 48rem a column is a page, not a squeeze.** A switcher of equal
+   * cells names every column with its count, exactly one column is on screen,
+   * and a swipe or a tap on a cell moves between them. A two-column picture does not fit a phone,
    * and the answer is not to draw it narrower — it is to draw one of them. The
    * column itself is the same markup either way, so there is one card, one
    * quick-add and one drop handler rather than two of each.
    *
    * Carrying a card between pages is the other half: held against the left or
-   * right **screen** edge, the pager turns with the card still in hand, and the
-   * tab strip is itself a drop target that lands a card at the end of its
+   * right **screen** edge, the pager turns with the card still in hand, and a
+   * switcher cell is itself a drop target that lands a card at the end of its
    * column. That is TickTick's model, and it keeps positional placement on the
    * device where the picture cannot fit.
    */
   let {
+    /** Which grouping is drawn, which decides how the phone's switcher lays out. */
+    grouping = null,
     columns,
     today,
     /** The lists a `#tag` in a quick-add may name. */
@@ -76,7 +78,19 @@
    */
   let visible = $state(0)
 
-  const paging = $derived(layout !== 'stacked' && !$wide)
+  /**
+   * The arrangement actually drawn, which a single column overrules on a phone.
+   *
+   * **One column is never a pager.** A switcher of one cell names the only
+   * thing on screen, and a `columns` layout of one column would be a column
+   * scrolling its own cards inside a page that already scrolls — so below
+   * 48rem a board of one column is stacked whatever layout is remembered. That
+   * is Plain always (it has one column by definition) and the archive under a
+   * remembered column layout, which drew a one-cell switcher on a phone.
+   */
+  const arrangement = $derived(!$wide && columns.length <= 1 ? 'stacked' : layout)
+
+  const paging = $derived(arrangement !== 'stacked' && !$wide)
 
   /** Clamped rather than reset, so a column disappearing does not blank the page. */
   const at = $derived(Math.min(visible, Math.max(columns.length - 1, 0)))
@@ -156,19 +170,50 @@
     }
   })
 
+  /**
+   * How tall every pager column's heading row is kept, or null off the pager.
+   *
+   * The pager draws one column at a time in one place, so a column with a hint
+   * or a heading button above its cards and one without put the first card at
+   * two heights — measured 34.5px apart on Date, 24.5 on Size. The reserve is
+   * the **grouping's** tallest row and not a button's always: every Kanban
+   * column has a hint and none a button, and a button's height there cost 10px
+   * of the phone's budget for nothing. Decided from the same inputs `Column`
+   * decides `canClear` and `canSweep` from.
+   *
+   * @type {'button' | 'line' | null}
+   */
+  const head = $derived.by(() => {
+    if (!paging) return null
+    const buttons = columns.some(
+      (one) => !one.readonly && (Boolean(oncleanup) || Boolean(onsweep && one.sweepTo))
+    )
+    if (buttons) return 'button'
+    return columns.some((one) => one.hint) ? 'line' : null
+  })
+
   /** The class the columns sit in, per arrangement. */
   const frame = $derived(
     paging
       ? 'flex flex-col'
-      : layout === 'quadrants'
+      : arrangement === 'quadrants'
         ? 'grid grid-cols-2 gap-4'
-        : layout === 'columns'
+        : arrangement === 'columns'
           ? 'flex gap-6 overflow-x-auto pb-2'
           : 'flex flex-col gap-8'
   )
 
-  /** Whether a column fills its height and scrolls its own cards. */
-  const filled = $derived(!paging && layout !== 'stacked')
+  /**
+   * Whether a column fills its height and scrolls its own cards.
+   *
+   * Only where columns sit beside each other **and** the window has the height
+   * for a box worth scrolling. On a phone the page already scrolls, so a column
+   * never becomes a second scroll box with a fade over cards: the pager is one
+   * column in the page, and a phone on its side (past 48rem, short of 30rem
+   * tall) keeps every card in the page too. The end-of-column spacer follows
+   * this flag, so it never appears in a column that does not scroll.
+   */
+  const filled = $derived(!paging && arrangement !== 'stacked' && $tall)
 
   /**
    * Whether the four columns are being drawn as a matrix rather than as a row.
@@ -180,53 +225,55 @@
    * empty half of a matrix. The border is what makes that emptiness legible,
    * which is why the heights stay equal instead of being let go ragged.
    */
-  const celled = $derived(!paging && layout === 'quadrants')
+  const celled = $derived(!paging && arrangement === 'quadrants')
 
   /**
-   * The tab strip, and whether it is showing all of itself.
+   * How the column switcher's cells are laid out below 48rem, per grouping.
    *
-   * At 390px the Eisenhower strip was one tab and half of the next, with two
-   * off-screen and nothing — no arrow, dot or fade — saying so. Read from the
-   * element rather than from the column count, because whether four labels fit
-   * depends on the labels.
+   * **Equal cells sized to the screen, never a strip that scrolls.** The strip
+   * showed one Eisenhower tab and part of the next at 390, with the rest off
+   * screen behind a fade. A cell is its label over its count, so only the
+   * label's width decides whether a row of them fits — measured at 320, where
+   * a row has 296px: Kanban's widest label is *Backlog* and Date's *Tomorrow*,
+   * and a quarter cell there left 61px — which *Tomorrow* filled to 60 in this
+   * machine's monospace and overran in a phone's, splitting as "TOMORRO / W".
+   * Both stay **one row of four**, because two by two cost 51px of a 320px
+   * phone against the budget `todos-mobile.spec.js` keeps; below 24rem the
+   * cell gives the label its padding back and the label draws at 0.02em
+   * tracking rather than the meta's 0.08em, which leaves the word 15% to
+   * spare; Size's *No
+   * duration* is not inside a fifth and is inside a third by 3px, so it is
+   * **three columns** — its label wraps rather than clips if a font runs wider
+   * — (and five from
+   * `sm`, where the pager still is and a fifth has room); Eisenhower is **two
+   * by two** because that is the matrix; the Lists grouping has as many cells
+   * as lists and **wraps** them. Literal strings, because a class assembled at
+   * runtime generates no CSS.
    */
-  let strip = $state(null)
-  let edges = $state({ start: false, end: false })
-
-  function measureEdges() {
-    if (!strip) {
-      edges = { start: false, end: false }
-      return
-    }
-    const room = strip.scrollWidth - strip.clientWidth
-    edges = { start: strip.scrollLeft > 2, end: room > 2 && strip.scrollLeft < room - 2 }
+  const CELLS = {
+    date: 'grid-cols-4',
+    board: 'grid-cols-4',
+    size: 'grid-cols-3 sm:grid-cols-5',
+    matrix: 'grid-cols-2',
+    list: 'grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))]',
   }
 
-  // Reads the columns and the arrangement and writes only `edges`, which
-  // neither is derived from. A resize changes `clientWidth` with no scroll and
-  // no re-render, so the listener is the other half.
-  $effect(() => {
-    columns.length
-    paging
-    measureEdges()
-    globalThis.addEventListener('resize', measureEdges)
-    return () => globalThis.removeEventListener('resize', measureEdges)
-  })
+  /** The switcher's grid. Never one cell: a single column is not paged at all. */
+  const cells = $derived(CELLS[grouping] ?? CELLS.list)
 </script>
 
 {#if paging}
   <!-- A real tablist: one tab per column, named and counted, because a count is
        what tells you a column off screen has something in it. `data-drop-end`
        is the drop half — a tab names a column without naming a place inside it,
-       so it resolves to the end of that column. -->
-  <div class="relative -mx-5 mb-4">
+       so it resolves to the end of that column. A grid rather than a strip, so
+       every category is on screen at once; `auto-rows-fr` keeps every cell one
+       height, because equal padding does not make equal buttons. -->
   <div
     role="tablist"
     aria-label="Columns"
     data-pager-tabs
-    bind:this={strip}
-    onscroll={measureEdges}
-    class="flex items-stretch gap-1 overflow-x-auto px-5 pb-1"
+    class="mb-4 grid auto-rows-fr gap-1 {cells}"
   >
     {#each columns as column, index (column.id)}
       <button
@@ -234,40 +281,31 @@
         id={`todo-tab-${column.id}`}
         data-tab={column.id}
         data-drop-end={drag?.dragging ? column.id : undefined}
+        data-tab-target={drag?.dragging && drag.overTab === column.id ? '' : undefined}
         aria-selected={index === at}
         tabindex={index === at ? 0 : -1}
-        class="meta flex shrink-0 items-center gap-2 rounded-md border px-3 py-2
-               whitespace-nowrap transition
+        class="meta flex min-h-11 min-w-0 flex-col items-center justify-center rounded-md
+               border px-0.5 py-1.5 transition min-[24rem]:px-1
                {index === at
           ? 'border-ember bg-ember/10 text-paper'
-          : 'border-white/15 hover:border-white/40'}"
+          : 'border-white/15 hover:border-white/40'}
+               {drag?.dragging && drag.overTab === column.id ? 'ring-2 ring-ember' : ''}"
         onclick={() => (visible = index)}
       >
-        {column.label}
+        <!-- Wraps between words to a second line rather than losing letters, and
+             **never inside a word**: `break-words` split *Tomorrow* at 320 on a
+             phone. Two lines at most, so a long list name is still cut after
+             that. -->
+        <span
+          class="line-clamp-2 max-w-full text-center [overflow-wrap:normal]
+                 max-[24rem]:tracking-[0.02em]"
+          data-tab-label
+        >
+          {column.label}
+        </span>
         <span class="numeral" data-tab-count={column.id}>{column.tasks.length}</span>
       </button>
     {/each}
-  </div>
-    <!-- What says there is more strip than screen, and which way. Drawn only
-         when there is something off-screen in that direction, or a marker that
-         is always on says nothing. `pointer-events: none`, so it never eats a
-         tap aimed at the tab beneath it — a tab is also a drop target. -->
-    {#if edges.start}
-      <div
-        data-tabs-more="start"
-        aria-hidden="true"
-        class="pointer-events-none absolute inset-y-0 left-0 w-8"
-        style="background-image: linear-gradient(to right, var(--color-ink), transparent)"
-      ></div>
-    {/if}
-    {#if edges.end}
-      <div
-        data-tabs-more="end"
-        aria-hidden="true"
-        class="pointer-events-none absolute inset-y-0 right-0 w-8"
-        style="background-image: linear-gradient(to left, var(--color-ink), transparent)"
-      ></div>
-    {/if}
   </div>
 {/if}
 
@@ -283,6 +321,11 @@
   role={paging ? 'tabpanel' : undefined}
   aria-labelledby={paging && shown ? `todo-tab-${shown.id}` : undefined}
 >
+  <!-- A quiet column draws no title of its own: Plain's one column is called
+       *Tasks* under a page heading called *Tasks*, which is the same sentence
+       twice — and it made `getByRole('heading', { name: 'Tasks' })` name two
+       elements. The label still names the quick-add and the keyboard's
+       announcement, where it is not restating anything. -->
   {#each onScreen as column (column.id)}
     <!-- `min-w-52` and not wider: five columns at a 224px floor plus four
          24px gaps came to 1216px, which no desktop width could show — the row
@@ -291,7 +334,7 @@
          column may get before the row scrolls instead. -->
     <div
       data-quadrant={celled ? column.id : undefined}
-      class="{paging || layout === 'stacked' ? '' : 'flex min-w-52 flex-1 basis-0'}
+      class="{paging || arrangement === 'stacked' ? '' : 'flex min-w-52 flex-1 basis-0'}
              {celled ? 'rounded-xl border border-white/10 bg-ink-soft/25 p-4' : ''}
              {stowed?.id === column.id
         ? 'pointer-events-none absolute top-0 left-[-9999px] w-80'
@@ -299,7 +342,8 @@
     >
       <Column
         {column}
-        titled={!paging}
+        titled={!paging && !column.quiet}
+        steady={head}
         {today}
         {lists}
         {listsById}

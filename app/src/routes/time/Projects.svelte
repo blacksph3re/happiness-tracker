@@ -297,27 +297,41 @@
                 </p>
               </div>
             </div>
-            <div class="flex shrink-0 items-center gap-2">
-              <span class="flex items-center gap-1">
+            <!-- Wraps rather than refusing to shrink: at 320 the five controls
+                 are wider than the row, and `shrink-0` pushed Import CSV off
+                 the card. The arrows stay one group of their own. -->
+            <div class="flex flex-wrap items-center gap-2">
+              <!-- The gap is exactly the two arrows' reach, so their 44px meet
+                   without overlapping: a disabled arrow's opacity paints it
+                   above its neighbour, and a shared 2px went to the arrow that
+                   cannot be pressed. The side padding is the same reach toward
+                   Edit's drawn box. -->
+              <span class="flex items-center gap-[18px] px-1.5">
+                <!-- 44px to aim at, drawn at its old 26×35: the negative margin
+                     keeps the layout and the span carries the look. -->
                 <button
-                  class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
+                  class="group -mx-[9px] -my-[4.5px] flex size-11 items-center justify-center
                          disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Move {project.name} earlier"
                   disabled={offline || position === 0}
                   title={hint}
                   onclick={() => move(project, -1)}
                 >
-                  ↑
+                  <span class="meta rounded-md border border-white/15 px-2 py-2
+                               group-enabled:group-hover:border-white/40">↑</span>
                 </button>
+                <!-- 44px to aim at, drawn at its old 26×35: the negative margin
+                     keeps the layout and the span carries the look. -->
                 <button
-                  class="meta rounded-md border border-white/15 px-2 py-2 hover:border-white/40
+                  class="group -mx-[9px] -my-[4.5px] flex size-11 items-center justify-center
                          disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Move {project.name} later"
                   disabled={offline || position === projects.length - 1}
                   title={hint}
                   onclick={() => move(project, 1)}
                 >
-                  ↓
+                  <span class="meta rounded-md border border-white/15 px-2 py-2
+                               group-enabled:group-hover:border-white/40">↓</span>
                 </button>
               </span>
               <button
@@ -494,7 +508,7 @@
                 </p>
               </div>
             </div>
-            <div class="flex shrink-0 items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               {#each COLOURS as colour (colour)}
                 <button
                   aria-label="Colour {colour} for {tag.name}"

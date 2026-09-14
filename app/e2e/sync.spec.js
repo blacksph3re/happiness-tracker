@@ -4,6 +4,7 @@ import {
   expectSettled,
   makeProject,
   makeTodo,
+  openTasks,
   realQuestions,
   recentDays,
   recordSession,
@@ -418,7 +419,7 @@ test('the tasks view paints from the store while its loads are still in the air'
   await makeTodo(account, { title: 'Feed the cat' })
 
   // Once through, so this device has a snapshot of the account to restore.
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('article[data-client-id]')).toContainText('Feed the cat')
 
   // Held from a cold load, so nothing has been fetched this session and every
@@ -447,6 +448,7 @@ test('the tasks view paints from the store while its loads are still in the air'
 
 test('the tasks view settles instead of re-reading itself', async ({ page, account }) => {
   await makeTodo(account, { title: 'Feed the cat' })
+  await openTasks(page, account, 'date', { path: null })
   await expectSettled(page, '/todos', '[data-column="today"]')
 })
 
@@ -463,7 +465,7 @@ test('a task typed while the tasks are being read is not lost by the reply', asy
 
   // Warmed first, so the board paints from the snapshot and there is something
   // to type into while the read is outstanding.
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('article[data-client-id]')).toContainText('Feed the cat')
 
   // What the server held *before* the new task, read through the account's own
@@ -573,7 +575,7 @@ test('a task deleted while the tasks are being read is not brought back by the r
   // baseline still held the task and it came back on screen, deleted on the
   // server and sitting on the board until the next read.
   await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('article[data-client-id]')).toContainText('Feed the cat')
 
   // Written from somewhere that is not this browser, and before the body below
@@ -625,7 +627,7 @@ test('a step deleted while the tasks are being read is not brought back by the r
   // of its own in the merge map — what survives a read is a whole task, so a
   // step deleted during one travels as its parent minus the step.
   await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   const parent = page.locator('article[data-client-id]').filter({ hasText: 'Feed the cat' })
   await expect(parent).toBeVisible()
 
@@ -684,7 +686,7 @@ test('a task re-created after the read it was deleted during is read back', asyn
   // task re-created under the same identity, which is what a correction to a
   // task another device deleted is, would never arrive.
   const seeded = await makeTodo(account, { title: 'Feed the cat' })
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   const doomed = page.locator('article[data-client-id]').filter({ hasText: 'Feed the cat' })
   await expect(doomed).toBeVisible()
 
@@ -983,6 +985,11 @@ test('a session deleted while the sessions are being read is not brought back by
   await page.goto('/time/record')
   await expect(cut).toBeVisible()
   await cut.click()
+  await page.locator(`[data-day="${TODAY}"] [data-delete-confirm]`).click()
+  // The row leaving is the proof the delete reached the store. The button
+  // alone is not, now that the first click already swaps it for the question,
+  // and `data-pending` reads 0 before a write is queued as well as after.
+  await expect(page.locator(`[data-day="${TODAY}"]`)).toHaveCount(0)
   await expect(cut).toHaveCount(0)
   await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0')
 
@@ -1027,6 +1034,7 @@ test('a session split while the sessions are being read is not put back together
   const middle = page.locator('[data-day="2026-06-14"]')
   await expect(middle).toBeVisible()
   await middle.getByRole('button', { name: /^Delete Night shift/ }).click()
+  await middle.locator('[data-delete-confirm]').click()
 
   await expect(middle).toHaveCount(0)
   await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0')

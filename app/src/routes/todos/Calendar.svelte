@@ -1,7 +1,9 @@
 <script>
   import { untrack } from 'svelte'
+  import { get } from 'svelte/store'
 
   import CalendarBody from '../../lib/todos/Calendar.svelte'
+  import Frame from '../../lib/todos/Frame.svelte'
   import TaskMenu from '../../lib/todos/TaskMenu.svelte'
   import { taskMenu } from '../../lib/todos/task-menu.svelte.js'
   import TaskModal from '../../lib/todos/TaskModal.svelte'
@@ -18,6 +20,7 @@
     persistPreferences,
     preferenceSection,
     preferences,
+    ready,
     saveTodo,
     settleActiveTasks,
     todoLists,
@@ -105,9 +108,29 @@
     restore()
   })
 
-  /** Put the page back on the mode and the toggle it was last left on. */
+  /**
+   * Put the page back on the mode and the toggle it was last left on.
+   *
+   * **From the snapshot first, and then from the read**, as the board does.
+   * `ensurePreferences` waits on the network on every reload, so applying only
+   * its answer painted a remembered Day as Week for as long as the connection
+   * took, over a snapshot that already knew. The confirmed read still lands on
+   * top, so another device's change arrives; saving waits for it as before.
+   */
   async function restore() {
-    const stored = preferenceSection(await ensurePreferences(), 'todos')
+    await ready()
+    const held = get(preferences)
+    if (held) apply(preferenceSection(held, 'todos'))
+    apply(preferenceSection(await ensurePreferences(), 'todos'))
+    restored = true
+  }
+
+  /**
+   * Take one stored view, leaving every control the reader has already moved.
+   *
+   * @param {object} stored The `todos` section of the preferences document.
+   */
+  function apply(stored) {
     if (
       !steered.has('calendar_mode') &&
       (stored.calendar_mode === 'day' || stored.calendar_mode === 'week')
@@ -115,7 +138,6 @@
       mode = stored.calendar_mode
     }
     if (!steered.has('calendar_due')) showDue = Boolean(stored.calendar_due)
-    restored = true
   }
 
   $effect(() => {
@@ -240,11 +262,7 @@
 
 </script>
 
-<section class="mx-auto w-full max-w-6xl px-5 py-8">
-  <div class="mb-6">
-    <p class="meta">Tasks on a clock</p>
-    <h1 class="mt-1 text-3xl font-bold tracking-tight">Calendar</h1>
-  </div>
+<Frame eyebrow="Tasks on a clock" title="Calendar">
 
   <!-- One row for both controls, above the picture they change — the same
        reason the board's toolbar is one row: a control that decides what is on
@@ -304,7 +322,7 @@
       onresize={resize}
     />
   {/if}
-</section>
+</Frame>
 
 <!-- Positioned against the viewport, so it is drawn outside the section that
      scrolls the hours. -->

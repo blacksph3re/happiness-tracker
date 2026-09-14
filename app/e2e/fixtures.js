@@ -732,6 +732,47 @@ export async function groupBy(page, grouping, settled) {
   ).toBeVisible()
 }
 
+/**
+ * Open the task board on a named grouping, stored before the page loads.
+ *
+ * **A test sets the grouping it depends on rather than inheriting a default.**
+ * The board opened on *Date* for as long as it existed, so about ninety call
+ * sites assumed its columns without saying so; *Plain* is the default now, and
+ * the next change of default must not silently re-point them.
+ *
+ * Stored through the account's own API rather than chosen with a pill, for two
+ * reasons: a pill's save is debounced, so a test that reloads straight after
+ * would take the save down with the page and come back on the default; and the
+ * page then opens on the grouping *as remembered*, which is the state every
+ * reload and offline snapshot in these tests reads. The rest of the document is
+ * carried through, since a `PUT` replaces it.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {{api: import('@playwright/test').APIRequestContext}} account Whose
+ *   preferences to write — the account `page` is signed in as.
+ * @param {string} grouping A grouping id.
+ * @param {{path?: string, wait?: boolean}} [options] `path` to open instead of
+ *   `/todos` (nothing, to store without navigating); `wait: false` for a test
+ *   that holds the preferences read and so cannot wait for the pill.
+ */
+export async function openTasks(page, account, grouping, { path = '/todos', wait = true } = {}) {
+  const held = await account.api.get('/api/me/preferences')
+  expect(held.ok(), await held.text()).toBeTruthy()
+  const doc = await held.json()
+  const put = await account.api.put('/api/me/preferences', {
+    data: { ...doc, todos: { ...(doc.todos ?? {}), grouping } },
+  })
+  expect(put.ok(), await put.text()).toBeTruthy()
+  if (!path) return
+  await page.goto(path)
+  if (wait) {
+    await expect(page.locator(`[data-grouping-option="${grouping}"]`)).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  }
+}
+
 /** Every task the account holds outside the archive, in stored order. */
 export async function storedTodos(account) {
   const response = await account.api.get('/api/todos')
@@ -786,4 +827,29 @@ export async function resolveColours(target, tokens) {
       })
     )
   }, tokens)
+}
+
+/**
+ * Resize the window, and wait until the page is laid out at the new size.
+ *
+ * A test that resizes and then samples a negative claim — nothing moves,
+ * nothing overflows, no column scrolls — must not be sampling its own resize.
+ * Twice here the first read after `setViewportSize` was the page between two
+ * sizes: under the suite's reduced motion every element passes through a 0.01ms
+ * transition, so at 390 the frame still had the 1280 gutter (a heading at 20
+ * where it belongs at 12), and at 320 a switcher cell was 5px short of its own
+ * label. Waits for the page to report the size — a positive claim, so polling
+ * is the right tool — and then two frames for anything easing into it.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {{width: number, height: number}} size
+ */
+export async function resizeTo(page, size) {
+  await page.setViewportSize(size)
+  await expect
+    .poll(() => page.evaluate(() => [innerWidth, innerHeight]))
+    .toEqual([size.width, size.height])
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+  )
 }

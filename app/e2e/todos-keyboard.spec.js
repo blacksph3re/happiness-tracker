@@ -2,6 +2,7 @@ import {
   expect,
   groupBy,
   makeTodos,
+  openTasks,
   outboxEmpty,
   storedTodos,
   taskCard,
@@ -40,7 +41,7 @@ test('the arrows reorder a card within its column and change no field', async ({
     { title: 'second', rank: 'c' },
     { title: 'third', rank: 'd' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('3')
   expect(await order(account)).toEqual(['first', 'second', 'third'])
 
@@ -72,7 +73,7 @@ test('an arrow at the end of a column writes nothing', async ({ page, account })
     { title: 'first', rank: 'b' },
     { title: 'second', rank: 'c' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('2')
   await outboxEmpty(page)
 
@@ -101,7 +102,7 @@ test('sideways moves a card to the next column, at the same index', async ({
     { title: 'second', rank: 'c' },
     { title: 'waiting', rank: 'b', planned_on: TOMORROW },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('2')
 
   await taskCard(page, 'second').focus()
@@ -133,7 +134,7 @@ test('sideways clamps to a shorter column rather than refusing', async ({ page, 
     { title: 'second', rank: 'c' },
     { title: 'third', rank: 'd' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('3')
 
   await taskCard(page, 'third').focus()
@@ -171,7 +172,7 @@ test('sideways under another grouping applies that grouping’s patch', async ({
 
 test('Enter opens the modal and Space ticks', async ({ page, account }) => {
   await makeTodos(account, [{ title: 'Feed the cat', rank: 'n' }])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(taskCard(page, 'Feed the cat')).toBeVisible()
 
   await taskCard(page, 'Feed the cat').focus()
@@ -201,7 +202,7 @@ test('the live region says something new for the same move twice', async ({
     { title: 'second', rank: 'c' },
     { title: 'third', rank: 'd' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('3')
 
   const region = page.locator('[data-moved]')
@@ -241,7 +242,7 @@ test('a card keeps the focus across a move, so a second arrow also moves it', as
     { title: 'waiting', rank: 'b', planned_on: TOMORROW },
     { title: 'target', rank: 'b', planned_on: '2026-06-20' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="later"]')).toHaveText('1')
 
   const focused = () =>

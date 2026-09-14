@@ -2,6 +2,7 @@
   import AdminOffline, { OFFLINE_HINT } from '../../lib/AdminOffline.svelte'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
+  import Frame from '../../lib/todos/Frame.svelte'
   import { attempt, unwrap } from '../../lib/api.js'
   import {
     createTodoList,
@@ -311,13 +312,12 @@
   }
 </script>
 
-<!-- `px-3` below `sm`, not `px-5`: at 320 the six colour swatches need 264px of
-     the 320 for six 44px targets that do not overlap, and a 40px gutter plus a
-     40px card inset left 238. 12px is the gutter every other row here can
-     afford at that width. -->
-<section class="mx-auto w-full max-w-4xl px-3 py-8 sm:px-5">
-  <p class="meta">Where tasks live</p>
-  <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">Lists</h1>
+<!-- The gutter is the frame's, and its 12px on a phone was this page's first:
+     at 320 the six colour swatches need 264px of the 320 for six 44px targets
+     that do not overlap, and a 20px gutter plus a 20px card inset left 238. The
+     rows keep their reading width and start at the frame's left edge. -->
+<Frame eyebrow="Where tasks live" title="Lists">
+<div class="max-w-4xl">
 
   <AdminOffline does="Lists are shared between your devices" />
 
@@ -790,4 +790,5 @@
       list takes its tasks with it, and leaves anything already archived alone.
     </p>
   {/if}
-</section>
+</div>
+</Frame>

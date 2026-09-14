@@ -126,8 +126,6 @@ def sync_intents(
 
     for intent in payload.intents:
         claimed = intent.client_updated_at
-        if claimed.tzinfo is not None:
-            claimed = claimed.astimezone(UTC).replace(tzinfo=None)
         if (claimed - now).total_seconds() > MAX_CLOCK_SKEW:
             results.append(
                 SyncResult(

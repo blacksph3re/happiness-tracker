@@ -514,7 +514,10 @@
               {formatDuration(split.focus)}
             </span>
 
-            <span class="flex items-center gap-2 justify-self-end">
+            <!-- gap-3.5 is exactly two 7px reaches, so Edit's and Delete's 44px
+                 meet without overlapping: at gap-2 the later button took 6px
+                 of Edit's. -->
+            <span class="flex items-center gap-3.5 justify-self-end">
             {#if live}
               <!-- No controls until it is over: an end time that is still
                    moving is not something to correct. -->
@@ -526,40 +529,42 @@
               <!-- Hidden on a phone, where the row has no width to spare and
                    two buttons named Delete and Cancel are their own question. -->
               <span class="meta hidden shrink-0 normal-case sm:inline">Delete it?</span>
+              <!-- 44px tall to aim at, drawn at the old 27: the negative margin
+                   keeps the row the height it was. -->
               <button
                 data-delete-confirm
-                class="meta shrink-0 rounded border border-alarm px-2 py-1 text-paper
-                       transition hover:bg-alarm/10"
+                class="group -my-[8.5px] flex h-11 shrink-0 items-center"
                 onclick={() => discard(pomodoro)}
               >
-                Delete
+                <span class="meta rounded border border-alarm px-2 py-1 text-paper transition
+                             group-hover:bg-alarm/10">Delete</span>
               </button>
               <button
-                class="meta shrink-0 rounded border border-white/20 px-2 py-1 transition
-                       hover:border-white/40"
+                class="group -my-[8.5px] flex h-11 shrink-0 items-center"
                 onclick={() => (confirming = null)}
               >
-                Cancel
+                <span class="meta rounded border border-white/20 px-2 py-1 transition
+                             group-hover:border-white/40">Cancel</span>
               </button>
             {:else}
               <button
-                class="shrink-0 rounded border border-white/15 p-1.5 transition
-                       hover:border-white/40"
+                class="group -m-[7px] flex size-11 shrink-0 items-center justify-center"
                 aria-label="Edit pomodoro"
                 onclick={() => (editing?.client_id === id ? (editing = null) : startEditing(pomodoro))}
               >
-                <IconPencil />
+                <span class="rounded border border-white/15 p-1.5 transition
+                             group-hover:border-white/40"><IconPencil /></span>
               </button>
               <!-- Opens the question rather than doing anything, so it hovers
                    white like every other outlined control; the ember belongs on
                    the button that actually deletes. -->
               <button
-                class="shrink-0 rounded border border-white/15 p-1.5 transition
-                       hover:border-white/40"
+                class="group -m-[7px] flex size-11 shrink-0 items-center justify-center"
                 aria-label="Delete pomodoro"
                 onclick={() => (confirming = id)}
               >
-                <IconBin />
+                <span class="rounded border border-white/15 p-1.5 transition
+                             group-hover:border-white/40"><IconBin /></span>
               </button>
             {/if}
             </span>

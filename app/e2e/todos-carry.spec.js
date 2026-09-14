@@ -3,6 +3,7 @@ import {
   groupBy,
   intoColumn,
   makeTodos,
+  openTasks,
   storedTodos,
   taskCard,
   test,
@@ -65,7 +66,7 @@ test('a lifted card follows the pointer', async ({ page, account }) => {
     { title: 'second', rank: 'c' },
     { title: 'third', rank: 'd' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('3')
   // Nothing is in hand until something is picked up.
   await expect(carried(page)).toHaveCount(0)
@@ -109,7 +110,7 @@ test('the slot a lifted card left keeps its height', async ({ page, account }) =
     { title: 'second', rank: 'c' },
     { title: 'third', rank: 'd' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('3')
 
   const cards = page.locator('[data-column="today"] [data-cards]')
@@ -145,7 +146,7 @@ test('a dropped card ends up exactly in the slot it landed in', async ({ page, a
     { title: 'first', rank: 'b' },
     { title: 'second', rank: 'c' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('2')
 
   await liftByCentre(page, taskCard(page, 'first'))
@@ -193,7 +194,7 @@ test('a cancelled drag puts the card back in its own slot', async ({ page, accou
     { title: 'first', rank: 'b' },
     { title: 'second', rank: 'c' },
   ])
-  await page.goto('/todos')
+  await openTasks(page, account, 'date')
   await expect(page.locator('[data-count="today"]')).toHaveText('2')
 
   const card = taskCard(page, 'first')
@@ -288,7 +289,7 @@ test.describe('with the transitions the app actually ships', () => {
       { title: 'first', rank: 'b' },
       { title: 'second', rank: 'c' },
     ])
-    await page.goto('/todos')
+    await openTasks(page, account, 'date')
     await expect(page.locator('[data-count="today"]')).toHaveText('2')
 
     // Whether it animates is read as an **event**, not as a position sampled
