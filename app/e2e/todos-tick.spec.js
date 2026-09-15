@@ -322,8 +322,10 @@ test.describe('the tickbox sits on the centre of its card', () => {
    * The three cases, read out of one sample, once each is on screen.
    *
    * A single-line title with no chips, a single-line title with a chip row, and
-   * a title on exactly two lines — whichever of the two long titles that is at
-   * this width.
+   * a title on two lines or more. Not *exactly* two: at 390 in the pager neither
+   * long title is two lines — measured four and one — so a poll waiting for one
+   * could never pass however centred every box was (all four read offset 0). A
+   * taller card is the stronger case for centring, not a weaker one.
    *
    * @param {import('@playwright/test').Page} page
    * @param {string} where Named in the failure message.
@@ -336,7 +338,7 @@ test.describe('the tickbox sits on the centre of its card', () => {
           const cases = {
             plain: all.find((one) => one.lines === 1 && !one.chips),
             chipped: all.find((one) => one.lines === 1 && one.chips),
-            wrapped: all.find((one) => one.lines === 2 && !one.chips),
+            wrapped: all.find((one) => one.lines >= 2 && !one.chips),
           }
           const worst = Math.max(
             ...Object.values(cases).map((one) => (one ? Math.abs(one.offset) : Infinity))

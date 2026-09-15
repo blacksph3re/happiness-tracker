@@ -170,8 +170,21 @@ test.describe('at phone width', () => {
     expect(Math.min(seen.menu.w, seen.menu.h), 'the menu button is under a thumb').toBeGreaterThanOrEqual(44)
     expect(seen.reach).toEqual({ mark: true, badge: true })
     expect(seen.overlap, 'the two reaches overlap').toBeLessThanOrEqual(0.5)
-    // Measured on the tree before the change, at 390.
-    expect(seen.drawn).toEqual(DRAWN_AT_390)
+    // Measured on the tree before the change, at 390 — except the two numbers
+    // the device's font decides. The mark is set in Inter, which is not bundled,
+    // so on a device without it "DT" draws narrower: 24.5px here against the
+    // 28.5px recorded. The mark's reach is `min-w-11` less 16px of padding, so
+    // it is never narrower than 28px, and the badge sits `gap-2` past it; the
+    // owner accepted that a narrower glyph moves the badge by that difference,
+    // so the badge's x is derived from the glyph actually drawn and everything
+    // the font cannot touch is still held to the pixel.
+    const glyph = seen.drawn.glyph
+    expect(glyph.w, 'the mark is not drawn').toBeGreaterThan(16)
+    expect(seen.drawn).toEqual({
+      ...DRAWN_AT_390,
+      glyph: { ...DRAWN_AT_390.glyph, w: glyph.w },
+      cloud: { ...DRAWN_AT_390.cloud, x: glyph.x + Math.max(glyph.w, 28) + 8 },
+    })
   })
 })
 
@@ -259,14 +272,37 @@ test.describe('the shell', () => {
       await page.keyboard.press('Tab')
       const skip = page.getByRole('link', { name: 'Skip to content' })
       await expect(skip, path).toBeFocused()
-      const seen = await skip.evaluate((node) => {
-        const box = node.getBoundingClientRect()
-        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
-        return { width: box.width, height: box.height, onTop: node.contains(hit) }
-      })
+      // Read once it holds still, and only then asked whether it is on top. The
+      // link slides into view on focus, and under the config's reduced motion
+      // every element carries a transition, so in the frame of the Tab it is
+      // still where it was: measured covered on /time and /settings at once and
+      // on top two frames later. Each sample is two reads two frames apart,
+      // because a poll can otherwise be satisfied by a transient.
+      let seen
+      await expect
+        .poll(
+          async () => {
+            seen = await skip.evaluate(async (node) => {
+              const read = () => {
+                const box = node.getBoundingClientRect()
+                const hit = document.elementFromPoint(
+                  box.left + box.width / 2,
+                  box.top + box.height / 2
+                )
+                return { top: box.top, width: box.width, height: box.height, onTop: node.contains(hit) }
+              }
+              const first = read()
+              await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+              const last = read()
+              return { ...last, settled: first.top === last.top && first.onTop === last.onTop }
+            })
+            return seen.settled && seen.onTop
+          },
+          { message: `${path}: the skip link is covered` }
+        )
+        .toBe(true)
       expect(seen.width, `${path}: the skip link is not drawn`).toBeGreaterThan(40)
       expect(seen.height).toBeGreaterThan(16)
-      expect(seen.onTop, `${path}: the skip link is covered`).toBe(true)
 
       await page.keyboard.press('Enter')
       await expect(page.locator('main')).toBeFocused()

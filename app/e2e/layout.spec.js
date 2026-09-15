@@ -92,24 +92,63 @@ test('an enum with long labels grows rather than clipping them', async ({
   account,
   admin,
 }) => {
+  // Twice `HUGE`, and the need for room asserted rather than assumed. With one
+  // `HUGE` the label measured 150px against the 184px the 224px floor leaves
+  // inside its padding, so on a device whose font sets it that narrow the card
+  // never had to grow — and the test passed only when a one-shot read caught
+  // the next card mid-flip at 738px. Whether a label outgrows the floor is a
+  // property of the device's font, so it is checked by name below.
+  const LONGER = `${HUGE} ${HUGE}`
   await privateCatalogue(admin, account, [
     { kind: 'discrete', prompt: 'Discrete', min_value: 0, max_value: 5, min_label: 'Low', max_label: 'High' },
     {
       kind: 'enum',
       prompt: 'Enum huge',
-      options: Array.from({ length: 6 }, () => ({ label: HUGE })),
+      options: Array.from({ length: 6 }, () => ({ label: LONGER })),
     },
   ])
   await page.setViewportSize({ width: 1280, height: 1000 })
   await page.goto('/answer')
 
+  const heading = page.getByRole('heading', { level: 1 })
   const card = page.locator('[data-card]')
-  const baseline = Math.round((await card.boundingBox()).height)
+  // A height only once two reads two frames apart agree, or null: the card
+  // flips between questions, and a poll takes the first sample that matches.
+  const stillHeight = () =>
+    card.evaluate(async (node) => {
+      const first = node.getBoundingClientRect().height
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+      const last = node.getBoundingClientRect().height
+      return first === last ? Math.round(last) : null
+    })
+  const settled = async () => {
+    let height = null
+    await expect.poll(async () => (height = await stillHeight())).not.toBeNull()
+    return height
+  }
+
+  await expect(heading).toHaveText('Discrete')
+  const baseline = await settled()
   await page.getByRole('button', { name: 'Skip →' }).click()
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Enum huge')
+  await expect(heading).toHaveText('Enum huge')
+  const grown = await settled()
+
+  // The precondition, by name: a label taller than the room the floor leaves it.
+  const room = await page
+    .getByRole('group')
+    .getByRole('button')
+    .first()
+    .evaluate((node) => {
+      const style = getComputedStyle(node)
+      return {
+        label: node.querySelector('span').getBoundingClientRect().height,
+        floor: parseFloat(style.minHeight) - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+      }
+    })
+  expect(room.label, 'the label fits inside the floor, so growth cannot be seen').toBeGreaterThan(room.floor)
 
   // The shared height is a floor, not a ceiling.
-  expect(Math.round((await card.boundingBox()).height)).toBeGreaterThan(baseline)
+  expect(grown, 'the card did not grow past the shared height').toBeGreaterThan(baseline)
 
   // And every label is fully readable rather than cut off.
   const option = page.getByRole('group').getByRole('button').first()

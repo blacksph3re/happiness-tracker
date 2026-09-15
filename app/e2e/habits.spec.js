@@ -439,6 +439,51 @@ test('a view named in the URL beats the one last left open', async ({
   await expect(page.locator('[data-streaks]')).toHaveCount(0)
 })
 
+test('tapping back to the stored view inside the save debounce stores that view', async ({
+  page,
+  account,
+}) => {
+  // Measured before the fix, three runs in three: arriving on `?view=streaks`
+  // schedules a save of Streaks, and tapping Totals inside its 600ms debounce
+  // found Totals equal to what the server held and returned early — leaving the
+  // Streaks save waiting. It went out, so the page read Totals while the server
+  // stored Streaks, and the next visit opened on a view nobody had left open.
+  // `a view named in the URL beats the one last left open` could not see it: it
+  // waits for a save and never reads what was stored.
+  await makeHabit(account, {
+    prompt: 'Went to gym?',
+    options: [
+      ['Yes', true],
+      ['No', false],
+    ],
+  })
+  const questions = realQuestions(await catalogueOf(account.api))
+  await seedAnswers(account.api, questions, recentDays(6))
+
+  // Totals stored as the page's own whole state, the way a reader leaves it.
+  // A bare `{ view: 'totals' }` never compares equal to that, and a probe seeded
+  // with one reproduced nothing.
+  await page.goto('/stats')
+  await savesView(page, () => page.getByRole('button', { name: 'Totals' }).click())
+
+  const read = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'GET' && response.url().includes('/api/me/preferences')
+  )
+  await page.goto('/stats?view=streaks')
+  await read
+  await expect(page.locator('[data-streaks]')).toBeVisible()
+  // Long enough for the confirmed read to be applied and the arrival's save to
+  // be scheduled, and well inside that save's 600ms. A tap before the read
+  // lands is a different case, and correctly sends nothing.
+  await page.waitForTimeout(150)
+  await savesView(page, () => page.getByRole('button', { name: 'Totals' }).click())
+
+  const stored = await (await account.api.get('/api/me/preferences')).json()
+  expect(stored.stats.view, 'the server stored the view from before the tap').toBe('totals')
+  await expect(page.locator('[data-streaks]')).toHaveCount(0)
+})
+
 test('the icon is chosen from a set, never typed as text', async ({ page, account }) => {
   // The field used to be the preview, so whatever was typed *was* the icon and
   // a habit could be labelled "AAAA" — letters rendered where an icon belongs.

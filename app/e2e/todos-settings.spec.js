@@ -302,11 +302,47 @@ test('the settings and the remembered view live in one section without erasing e
  * @param {import('@playwright/test').Locator} box
  */
 async function paint(box) {
-  const own = await box.evaluate((node) => {
-    const style = getComputedStyle(node)
-    return { colour: style.color, background: style.backgroundColor }
+  const own = await box.evaluate(async (node) => {
+    const read = () => {
+      const style = getComputedStyle(node)
+      return { colour: style.color, background: style.backgroundColor }
+    }
+    const first = read()
+    // Two frames: long enough for any transition the last change started to end.
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+    const last = read()
+    return {
+      ...last,
+      settled: first.colour === last.colour && first.background === last.background,
+    }
   })
   return { ...own, ...(await resolveColours(box, { accent: '--color-dusk', brand: '--color-brand' })) }
+}
+
+/**
+ * `paint`, once the fill has stopped changing and is the accent.
+ *
+ * Checking a box changes its fill, and `app.css` gives every element a
+ * transition under `prefers-reduced-motion`, so a read in the same frame as the
+ * check returns the unchecked fill — `ink-soft` measured before, `ink` now —
+ * and the one-shot read failed full runs under load while passing alone. A
+ * sample counts only once it is still as well as right, because a poll can be
+ * satisfied by a transient.
+ *
+ * @param {import('@playwright/test').Locator} box
+ */
+async function settledPaint(box) {
+  let seen
+  await expect
+    .poll(
+      async () => {
+        seen = await paint(box)
+        return seen.settled && seen.background === seen.accent
+      },
+      { message: 'the checked fill never reached the accent' }
+    )
+    .toBe(true)
+  return seen
 }
 
 test('a checked box is painted the accent of the section it is in', async ({ page }) => {
@@ -317,7 +353,7 @@ test('a checked box is painted the accent of the section it is in', async ({ pag
   await page.goto('/settings')
   const important = page.locator('[data-important]:checked').first()
   await expect(important).toBeVisible()
-  const settings = await paint(important)
+  const settings = await settledPaint(important)
   expect(settings.colour, 'a checked box is still Flowbite blue').not.toBe(settings.brand)
   expect(settings.colour).toBe(settings.accent)
   expect(settings.background).toBe(settings.accent)
@@ -328,7 +364,7 @@ test('a checked box is painted the accent of the section it is in', async ({ pag
   const due = page.locator('[data-due-toggle]')
   await expect(due).toBeVisible()
   if (!(await due.isChecked())) await due.check()
-  const todo = await paint(due)
+  const todo = await settledPaint(due)
   expect(todo.colour, 'the calendar box is still Flowbite blue').not.toBe(todo.brand)
   expect(todo.colour).toBe(todo.accent)
   expect(todo.background).toBe(todo.accent)

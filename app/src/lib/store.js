@@ -864,7 +864,18 @@ export function persistPreferences(section, values) {
   const next = { ...(held ?? {}), [section]: values }
   held = next
   const serialised = JSON.stringify(next)
-  if (serialised === persisted) return
+  if (serialised === persisted) {
+    // Back to exactly what the server holds — and a save still waiting in the
+    // debounce carries the state from *before* this call, so it is cancelled
+    // here rather than merely not scheduled. Arriving on `?view=streaks`
+    // scheduled a Streaks save; a tap back to Totals inside its 600ms returned
+    // early, the Streaks save went out anyway, and the page read Totals while
+    // the server stored Streaks — three runs in three. The store is told too,
+    // or it goes on holding the state this call just replaced.
+    clearTimeout(saveTimer)
+    preferences.set(next)
+    return
+  }
 
   preferences.set(next)
   clearTimeout(saveTimer)

@@ -469,31 +469,47 @@ const SAVES_QUIET_MS = 1200
  * @param {() => Promise<void>} act What changes the view state.
  */
 export async function savesView(page, act) {
-  let lastSaveAt = null
-  const noteSave = (response) => {
-    const request = response.request()
-    if (
-      request.method() === 'PUT' &&
-      request.url().includes('/api/me/preferences')
-    ) {
-      lastSaveAt = Date.now()
-    }
+  // Quiet, never "a save happened". An act that leaves the view where the server
+  // already has it sends nothing, and that is correct: tapping Totals before the
+  // preferences read lands, on a page whose stored view is Totals, measured no
+  // PUT at all three runs in three — and demanding one failed a full suite run
+  // after a 20s wait. Waiting SAVES_QUIET_MS past the act still covers a save it
+  // did prompt, since that is longer than the debounce. Saves are counted from
+  // the request going out to it finishing, so one in the air is waited for
+  // rather than read as silence.
+  let inFlight = 0
+  let lastActivity = null
+  const isSave = (request) =>
+    request.method() === 'PUT' && request.url().includes('/api/me/preferences')
+  const started = (request) => {
+    if (!isSave(request)) return
+    inFlight += 1
+    lastActivity = Date.now()
   }
-  page.on('response', noteSave)
+  const settled = (request) => {
+    if (!isSave(request)) return
+    inFlight = Math.max(0, inFlight - 1)
+    lastActivity = Date.now()
+  }
+  page.on('request', started)
+  page.on('requestfinished', settled)
+  page.on('requestfailed', settled)
   try {
     await act()
     const actedAt = Date.now()
     await expect
       .poll(
         () =>
-          lastSaveAt !== null &&
-          Date.now() - lastSaveAt > SAVES_QUIET_MS &&
-          Date.now() - actedAt > SAVES_QUIET_MS,
+          inFlight === 0 &&
+          Date.now() - actedAt > SAVES_QUIET_MS &&
+          (lastActivity === null || Date.now() - lastActivity > SAVES_QUIET_MS),
         { timeout: 20_000, intervals: [100] }
       )
       .toBe(true)
   } finally {
-    page.off('response', noteSave)
+    page.off('request', started)
+    page.off('requestfinished', settled)
+    page.off('requestfailed', settled)
   }
 }
 

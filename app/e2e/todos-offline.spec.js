@@ -212,7 +212,12 @@ test('a title edited offline at 390 is the new title, once, on the card and in t
   await expect(field).toHaveValue('Pay electricity bill EDITED')
   // Typed at the end, key by key, past the debounce, then closed.
   await field.click()
-  await page.keyboard.press('End')
+  // To the end by selection, not by the End key. The title is a textarea, and
+  // on macOS End in a multi-line field scrolls without moving the insertion
+  // point: the keydown reached the field unprevented and the caret stayed where
+  // the click put it, 22 of 27, so ' 2' landed inside the word. The claim is
+  // typing at the end past the debounce, not what one platform's End does.
+  await field.evaluate((node) => node.setSelectionRange(node.value.length, node.value.length))
   await page.keyboard.type(' 2', { delay: 50 })
   await page.waitForTimeout(900)
   await expect(field).toHaveValue('Pay electricity bill EDITED 2')

@@ -2495,6 +2495,46 @@ the test name, and do not move on until you can make it fail on demand.
   tapped the heading, which lay under the open menu, and so followed a link.
 - **`pkill -f pattern` matches the shell running it.** Write `pkill -f
   "[p]attern"`, or the command kills itself before anything else.
+- **A preference save that returns early cancels the one still waiting.**
+  `persistPreferences` skips a state equal to what the server holds — but a
+  save already in its 600ms debounce carries the state from *before* that call.
+  Arriving on `/stats?view=streaks` scheduled a Streaks save; tapping back to
+  Totals inside the debounce returned early, the Streaks save went out, and the
+  page read Totals while the server stored Streaks — three runs in three. The
+  early return now clears the timer and publishes the state to the store.
+  *tapping back to the stored view inside the save debounce stores that view*
+  holds the cancel; removing the store publish alone passes it, which is the
+  honest limit of that probe. Seed a probe with the page's **whole** snapshot:
+  a bare `{ view: 'totals' }` never compares equal to it and reproduced nothing.
+- **`savesView` waits for quiet, never for a save.** An act that leaves the view
+  where the server already has it correctly sends nothing — Totals tapped before
+  the preferences read lands, on a page whose stored view is Totals — and
+  demanding a PUT failed a full run after 20s. Saves are counted from request
+  to finish, so one in the air is waited for rather than read as silence. Every
+  caller proves the save by reading the state back, not by the wait.
+- **This machine is not the environment the suite was last green on, and three
+  tests said so.** On macOS, End in a multi-line field scrolls without moving
+  the caret, so a title test typing at "the end" of a textarea inserted mid-word
+  — place the caret with `setSelectionRange`. The mark is set in Inter, which is
+  not bundled, so a pixel baseline recorded where Inter was installed failed
+  here by the glyph's 4px; the header test now derives the glyph-dependent
+  positions, and the owner accepted that on a font narrower than 28px the badge
+  sits 3.5px further right than before the thumb targets grew. And a fixture
+  that must outgrow a floor asserts that precondition by name: the enum label
+  fitted the 224px option floor with this font, so "the card grew" could not be
+  seen, and a one-shot read had passed on a 738px mid-flip transient.
+- **A fixture's shape can stop existing when widths change.** The tickbox test
+  waited for a card of *exactly* two lines; after the navigation rework no card
+  at the 390 pager was two lines (four and one), so the poll could never pass
+  while every tickbox read offset 0. It accepts two lines or more.
+- **Three probe-tooling slips, each of which reported something false.** zsh
+  does not word-split an unquoted `$FILES`, so `git checkout -- $FILES` restored
+  nothing and a guard built on the same variable was vacuous — name each file.
+  `$"..."` in bash is a locale string, not ANSI-C, so its `\n` stays a backslash
+  and an anchor holding a newline matched nothing; keep such literals in a
+  quoted heredoc. And a refusal guard checks that each **original** anchor is
+  present exactly once, never searches for a mutated form: `shadow-xl"` also
+  ends two unrelated class strings in `App.svelte`, and refused a clean tree.
 - **One backend per worker.** `--workers=8` on a suite whose `global-setup.js`
   started seven sends the extra worker at a port with nothing on it, and every
   test there fails with `login as … failed`. That is the harness, not the app —
