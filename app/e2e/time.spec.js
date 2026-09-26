@@ -1323,13 +1323,51 @@ test('a tap holds a lane label open, the way the charts do', async ({ page, acco
   // And scrolling takes it away rather than carrying it down the page: it is
   // positioned against the viewport, so it would otherwise stick to the screen
   // over blocks it no longer describes.
+  //
+  // Only on a page that can scroll. The Day window's totals arrive after its
+  // lanes, and until they do the charts and the table are one "Loading…" line,
+  // the page is shorter than the window and `scrollBy` moves nothing — so no
+  // scroll event fires and the label rightly stays. Two full runs in six
+  // scrolled 10–25ms before that read landed; holding it fails every run.
+  await expect
+    .poll(() => page.evaluate(() => document.scrollingElement.scrollHeight - innerHeight), {
+      message: 'the page has no room to scroll',
+    })
+    .toBeGreaterThanOrEqual(200)
   await page.dispatchEvent('[data-timeline] [data-span]', 'pointerdown', {
     pointerType: 'touch',
     ...at,
   })
   await expect(page.locator('[data-span-tip]')).toBeVisible()
   await page.evaluate(() => window.scrollBy(0, 200))
+  expect(await page.evaluate(() => scrollY), 'the page did not scroll').toBeGreaterThan(0)
   await expect(page.locator('[data-span-tip]')).toHaveCount(0)
+})
+
+test('a window whose totals have not arrived states no total', async ({ page, account }) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+
+  // The heading is drawn before the window's totals are read, and it used to
+  // add them up anyway: over no rows that is "0h 00m tracked", above a timeline
+  // already drawing three hours. Not a number anybody told the page — the
+  // archive's *0 · Nothing here yet*, one half along.
+  let release
+  const released = new Promise((done) => (release = done))
+  await page.route(
+    (url) => url.pathname === '/api/time/summary',
+    async (route) => {
+      await released
+      await route.continue()
+    }
+  )
+
+  await page.goto('/time/patterns')
+  await expect(page.getByText('Loading…', { exact: true })).toBeVisible()
+  await expect(page.locator('[data-period]')).toHaveText('June 2026')
+
+  release()
+  await expect(page.locator('[data-period]')).toHaveText('June 2026 · 3h 00m tracked')
 })
 
 test('tagged projects group together on patterns', async ({ page, account }) => {
@@ -1845,13 +1883,14 @@ test('every landing card routes to its own half, both ways in', async ({ page })
   // halves to each other: this is the one page allowed to know all four.
   //
   // The todo half has no patterns page, so its second action is the calendar —
-  // the other way of looking at the same tasks. The attribute keeps the name
-  // the other three use rather than earning a special case here.
+  // the other way of looking at the same tasks — and the time half's is its
+  // record, which is where people actually go next. The attribute keeps the
+  // name the other three use rather than earning a special case here.
   const routes = [
     ['wellbeing', 'record', '/answer'],
     ['wellbeing', 'patterns', '/stats'],
     ['time', 'record', '/time'],
-    ['time', 'patterns', '/time/patterns'],
+    ['time', 'patterns', '/time/record'],
     ['focus', 'record', '/focus'],
     ['focus', 'patterns', '/focus/patterns'],
     ['todos', 'record', '/todos'],

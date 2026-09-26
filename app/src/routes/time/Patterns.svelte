@@ -533,6 +533,24 @@
 
   const rows = $derived(summary.data ?? [])
   const loading = $derived(summary.loading && rows.length === 0)
+
+  /**
+   * The window's total as its heading states it, and nothing while it is unknown.
+   *
+   * "reported" wherever a rule moved the number, in either direction, because
+   * it is then not the hours worked and must not read as though it were. No
+   * figure at all until the window's totals have been read: `tracked` over no
+   * rows is zero, and "0h 00m tracked" above a timeline already drawing three
+   * hours was the page stating a number nobody had told it. One string, because
+   * text beside an `{#if}` loses the space before it.
+   */
+  const figure = $derived(
+    loading
+      ? ''
+      : ` · ${formatDuration(tracked)}${adjusted ? ' reported' : ''}${
+          by === 'tag' ? ' across tags' : adjusted ? '' : ' tracked'
+        }`
+  )
 </script>
 
 <Frame column={COLUMN}>
@@ -614,17 +632,7 @@
   <!-- Which week, which month, which quarter — and a way to the one before.
        A window you cannot step through can only ever show the present. -->
   <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-    <p class="meta" data-period>
-      {dayView ? dayLabel(anchor) : shown.label}
-      <!-- "reported" wherever a rule moved the number, in either direction,
-           because it is then not the hours worked and must not read as though
-           it were. -->
-      · {formatDuration(tracked)}{adjusted ? ' reported' : ''}{by === 'tag'
-        ? ' across tags'
-        : adjusted
-          ? ''
-          : ' tracked'}
-    </p>
+    <p class="meta" data-period>{dayView ? dayLabel(anchor) : shown.label}{figure}</p>
     <div class="flex gap-2">
       <!-- Custom is steered by its own sliders; a Previous that slid the window
            by its length would be a second way to say the same thing. -->

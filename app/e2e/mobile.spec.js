@@ -127,7 +127,7 @@ test.describe('at phone width', () => {
   test('every landing card offers two actions of one size', async ({ page }) => {
     // Each card carries a way in and a way to the patterns behind it, side by
     // side at phone width. Equal padding does not make equal buttons — a card
-    // whose labels differ in length ("Check out" against "Patterns") is exactly
+    // whose labels differ in length ("Check out" against "Record") is exactly
     // where that shows — so the pair is a two-column grid with stretched items,
     // and this measures the result rather than trusting the classes.
     await page.goto('/')

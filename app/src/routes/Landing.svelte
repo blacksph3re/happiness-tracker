@@ -77,7 +77,24 @@ import { elapsed } from '../lib/time/duration.js'
    * column row leaves one alone on a line of its own. Two at `sm` is what keeps
    * a phone one column and a tablet two.
    */
-  const CARDS = 'grid gap-4 sm:grid-cols-2 xl:grid-cols-4'
+  const CARDS = 'grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4'
+
+  /**
+   * A section card, sized by what it holds.
+   *
+   * No minimum height and no `justify-between`: those held every card at 208px
+   * whatever it said, with the reading at the top and the actions at the bottom
+   * of a gap, and on a phone put the last card's actions below the first
+   * screen. `mt-auto` on the actions still lines them up across a row, where
+   * the grid stretches every card to the tallest.
+   */
+  const CARD = 'flex flex-col rounded-xl border border-white/10 bg-ink-soft p-4 sm:p-5'
+
+  /** The one line a card reports. */
+  const READING = 'mt-1 text-xl font-semibold'
+
+  /** The card's pair of actions, pushed to its foot. */
+  const PAIR = 'mt-auto grid grid-cols-2 items-stretch gap-2 pt-3'
 
   // True only while there is genuinely nothing to show. A restored snapshot
   // brings the account back with everything else it holds, so `me` standing in
@@ -229,13 +246,13 @@ import { elapsed } from '../lib/time/duration.js'
 
 <!-- `max-w-6xl`, not the `4xl` three cards had: four columns inside 56rem draw
      each card narrower than any card here has ever been, and a card's width is
-     what decides whether "Check out" and "Patterns" sit side by side. 72rem
+     what decides whether "Check out" and "Record" sit side by side. 72rem
      over four is within a hair of 56rem over three, so nothing but the count
      changed. -->
 <Frame column="max-w-6xl">
 <section class="max-w-6xl">
   <p class="meta">Today</p>
-  <h1 class="mt-1 mb-8 text-3xl font-bold tracking-tight">What are you recording?</h1>
+  <h1 class="mt-1 mb-5 text-3xl font-bold tracking-tight">What are you recording?</h1>
 
   <div class={CARDS}>
     <!-- Each card is a section rather than a link now: it carries two of them,
@@ -246,11 +263,7 @@ import { elapsed } from '../lib/time/duration.js'
 
     <!-- Wellbeing keeps the app's own accents; the time card previews the other
          half's, so the difference is visible before you go there. -->
-    <section
-      data-card="wellbeing"
-      class="flex min-h-52 flex-col justify-between rounded-xl border border-white/10
-             bg-ink-soft p-6"
-    >
+    <section data-card="wellbeing" class={CARD}>
       <div>
         <!-- The streak used to ride on this label. It is in the habits strip
              below now, as one habit among the others: the same number in two
@@ -258,7 +271,7 @@ import { elapsed } from '../lib/time/duration.js'
              codebase, and a fourth line here pushed the button off the fold on
              a phone. -->
         <p class="meta">Wellbeing</p>
-        <p class="mt-3 text-2xl font-semibold">
+        <p class={READING}>
           {#if loading}
             …
           {:else if questions.length === 0}
@@ -270,7 +283,7 @@ import { elapsed } from '../lib/time/duration.js'
           {/if}
         </p>
       </div>
-      <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
+      <div class={PAIR}>
         <a href="/answer" use:link data-go="record" class={ACTION}>
           {outstanding === 0 && questions.length > 0 ? 'Review' : 'Answer'}
         </a>
@@ -278,17 +291,13 @@ import { elapsed } from '../lib/time/duration.js'
       </div>
     </section>
 
-    <section
-      data-card="time"
-      class="section-time flex min-h-52 flex-col justify-between rounded-xl border
-             border-white/10 bg-ink-soft p-6"
-    >
+    <section data-card="time" class="section-time {CARD}">
       <div>
         <p class="meta">Time</p>
         {#if loading}
-          <p class="mt-3 text-2xl font-semibold">…</p>
+          <p class={READING}>…</p>
         {:else if running.length}
-          <ul class="mt-3 flex flex-col gap-1.5">
+          <ul class="mt-1 flex flex-col gap-1">
             <!-- Keyed on the device's own identity: a timer started with no
                  connection has no row id yet, so two of them would key alike. -->
             {#each running as row (row.entry.client_id ?? row.entry.id)}
@@ -305,34 +314,32 @@ import { elapsed } from '../lib/time/duration.js'
             {/each}
           </ul>
         {:else}
-          <p class="mt-3 text-2xl font-semibold">
+          <p class={READING}>
             {projectCount === 0 ? 'No projects yet' : 'Nothing running'}
           </p>
         {/if}
       </div>
-      <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
+      <div class={PAIR}>
         <a href="/time" use:link data-go="record" class={ACTION}>
           {running.length ? 'Check out' : 'Check in'}
         </a>
-        <a href="/time/patterns" use:link data-go="patterns" class={ACTION}>Patterns</a>
+        <!-- The record rather than the patterns: it is where people go from
+             here, and the patterns are one tab away inside the half. -->
+        <a href="/time/record" use:link data-go="patterns" class={ACTION}>Record</a>
       </div>
     </section>
 
-    <section
-      data-card="focus"
-      class="section-focus flex min-h-52 flex-col justify-between rounded-xl border
-             border-white/10 bg-ink-soft p-6"
-    >
+    <section data-card="focus" class="section-focus {CARD}">
       <div>
         <p class="meta">Focus</p>
         {#if loading}
-          <p class="mt-3 text-2xl font-semibold">…</p>
+          <p class={READING}>…</p>
         {:else if focusing}
-          <p class="mt-3 truncate text-2xl font-semibold">
+          <p class="{READING} truncate">
             {focusing.task ?? 'Focusing'}
           </p>
         {:else if focusTotals.count > 0}
-          <p class="mt-3 text-2xl font-semibold">
+          <p class={READING}>
             {focusTotals.count}
             {focusTotals.count === 1 ? 'pomodoro' : 'pomodoros'}
           </p>
@@ -340,10 +347,10 @@ import { elapsed } from '../lib/time/duration.js'
             {formatDuration(focusTotals.focus)} of focus today.
           </p>
         {:else}
-          <p class="mt-3 text-2xl font-semibold">Nothing yet</p>
+          <p class={READING}>Nothing yet</p>
         {/if}
       </div>
-      <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
+      <div class={PAIR}>
         <a href="/focus" use:link data-go="record" class={ACTION}>
           {focusing ? 'Back to it' : 'Start'}
         </a>
@@ -351,11 +358,7 @@ import { elapsed } from '../lib/time/duration.js'
       </div>
     </section>
 
-    <section
-      data-card="todos"
-      class="section-todo flex min-h-52 flex-col justify-between rounded-xl border
-             border-white/10 bg-ink-soft p-6"
-    >
+    <section data-card="todos" class="section-todo {CARD}">
       <div>
         <p class="meta">Todos</p>
         <!-- The count is over every list; Tasks opens on the ones the board
@@ -364,7 +367,7 @@ import { elapsed } from '../lib/time/duration.js'
              said beside it. "4 overdue" over a board showing three of them,
              with nothing saying where the fourth was, is the reading this
              removes. -->
-        <p class="mt-3 text-2xl font-semibold" data-todo-reading>
+        <p class={READING} data-todo-reading>
           {#if loading}
             …
           {:else if todoCount.n === 0}
@@ -384,7 +387,7 @@ import { elapsed } from '../lib/time/duration.js'
            for. The attribute keeps the name the other three use, so the
            six-link test became an eight-link one rather than eight and a
            special case. -->
-      <div class="mt-4 grid grid-cols-2 items-stretch gap-2">
+      <div class={PAIR}>
         <a href="/todos" use:link data-go="record" class={ACTION}>Tasks</a>
         <a href="/todos/calendar" use:link data-go="patterns" class={ACTION}>Calendar</a>
       </div>
@@ -396,8 +399,8 @@ import { elapsed } from '../lib/time/duration.js'
        it is answered — there is deliberately no tick here, which would be a
        second place to answer and could not offer a three-way choice anyway. -->
   {#if !loading && habits.length > 0}
-    <section class="mt-10" data-habits>
-      <p class="meta mb-3">Habits</p>
+    <section class="mt-6" data-habits>
+      <p class="meta mb-2">Habits</p>
       <!-- The same grid as the cards above, so a habit lines up under a section
            rather than sitting in a row of its own width. Literally the same
            string: the cards gained a fourth column for the todo card, and a
@@ -412,8 +415,8 @@ import { elapsed } from '../lib/time/duration.js'
             use:link
             data-habit={habit.key}
             data-run={run}
-            class="flex flex-col gap-1.5 rounded-xl border border-white/10 bg-ink-soft
-                   p-6 transition hover:border-white/30 hover:bg-dusk/10"
+            class="flex flex-col gap-1 rounded-xl border border-white/10 bg-ink-soft
+                   px-4 py-3 transition hover:border-white/30 hover:bg-dusk/10"
           >
             <span class="flex items-center gap-2">
               {#if habit.icon}
@@ -421,24 +424,27 @@ import { elapsed } from '../lib/time/duration.js'
               {/if}
               <span class="truncate font-semibold">{habit.label}</span>
             </span>
-            <span class="meta flex items-baseline gap-3 normal-case">
+            <!-- The run and the best share one line, each kept whole, so a
+                 narrow cell moves the best under the run rather than splitting
+                 either. -->
+            <span class="meta flex flex-wrap items-baseline gap-x-3 normal-case">
               {#if run > 0}
-                <span data-streak={run}>🔥 {runLabel(habit, run)}</span>
+                <span class="whitespace-nowrap" data-streak={run}>🔥 {runLabel(habit, run)}</span>
               {:else}
                 <!-- Not hidden at zero: this is a list somebody opened on
                      purpose, so a habit with no run owes them where it stands
                      rather than vanishing. -->
-                <span data-streak={run}>
+                <span class="whitespace-nowrap" data-streak={run}>
                   🔥 {standing} of {habit.target}
                   {habit.period === 'day' ? 'today' : `this ${habit.period}`}
                 </span>
               {/if}
+              {#if best > 0}
+                <span class="whitespace-nowrap text-haze" data-best={best}>
+                  ⚡ best {runLabel(habit, best)}
+                </span>
+              {/if}
             </span>
-            {#if best > 0}
-              <span class="meta normal-case text-haze" data-best={best}>
-                ⚡ best {runLabel(habit, best)}
-              </span>
-            {/if}
           </a>
         {/each}
       </div>

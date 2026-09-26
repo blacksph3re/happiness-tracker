@@ -386,3 +386,43 @@ test('the todo card label breaks as a phrase, never inside itself', async ({ pag
     expect(lines, `the label split across lines at ${width}px`).toBe(1)
   }
 })
+
+test('on a phone every card can be acted on without scrolling', async ({ page, account }) => {
+  // The chooser is for choosing. Each card used to be 208px whatever it held —
+  // a fixed minimum with the reading pinned to the top and the actions to the
+  // bottom — so on a phone the todo card's two buttons sat 230px below the
+  // first screen, under a void in each card above it. A running timer is in
+  // the fixture because it is the reading that grows a card.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, null)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await expect(page.locator('[data-card="time"]')).toContainText('The rewrite')
+
+  const actions = page.locator('[data-card] a[data-go]')
+  await expect(actions).toHaveCount(8)
+  const bottoms = await actions.evaluateAll((nodes) =>
+    nodes.map((node) => Math.round(node.getBoundingClientRect().bottom))
+  )
+  expect(Math.max(...bottoms), `action bottoms ${bottoms.join(', ')}`).toBeLessThanOrEqual(844)
+})
+
+test('a habit reads its run and its best on one line', async ({ page, account }) => {
+  // Two short meta readings stacked under a title gave every habit three lines
+  // and 118px of phone. Side by side they are one line; each stays whole, so a
+  // narrow cell moves the best under the run rather than splitting either.
+  const questions = realQuestions(await catalogueOf(account.api))
+  await seedAnswers(account.api, questions, runUpTo(4, TODAY))
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+
+  const habit = page.locator('[data-habit="tracking"]')
+  await expect(habit.locator('[data-streak]')).toHaveText('🔥 4 days')
+  await expect(habit.locator('[data-best]')).toHaveText('⚡ best 4 days')
+  const tops = await habit.evaluate((node) =>
+    ['[data-streak]', '[data-best]'].map((s) =>
+      Math.round(node.querySelector(s).getBoundingClientRect().top)
+    )
+  )
+  expect(new Set(tops).size, `tops ${tops.join(', ')}`).toBe(1)
+})

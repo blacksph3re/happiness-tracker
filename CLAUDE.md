@@ -137,6 +137,15 @@ Two, both standing, both cheaper to honour from the first commit:
   out of a loader. `x = await ensureX()` into local state cannot see a later
   update, which is the whole point — `await ensureX()` to start the load, and
   `$derived($xStore)` to read it.
+
+  **A figure drawn beside a loading state is part of it.** Time Patterns had
+  its `loading` in the derived form and still headed the page *June 2026 · 0h
+  00m tracked* for as long as a window's summary was out, above a timeline
+  already drawing three hours: the heading summed rows that had not arrived.
+  `figure` is empty while `loading`, and *a window whose totals have not arrived
+  states no total* holds the summary to see it. It turned up in the trace of a
+  flaking scroll test. Pomodoro Stats and Focus print their totals with no
+  loading state at all and have not been measured the same way.
 - **Three zones, imports pointing inward** — see below. A feature that needs
   something from the other half means the thing belongs in the shared zone.
 
@@ -500,7 +509,7 @@ Every landing card carries a way in and a way to the patterns behind it, which
 makes the card itself a `<section>`: an anchor inside an anchor is not something
 HTML has an answer for, and the whole-card tap target went with it. The two
 actions are a `grid-cols-2` with `items-stretch`, because equal padding does not
-make equal buttons — "Check out" and "Patterns" are different lengths, and
+make equal buttons — "Check out" and "Record" are different lengths, and
 `self-start` left them different widths. `e2e/mobile.spec.js` measures width,
 height and top edge at phone width.
 
@@ -509,7 +518,16 @@ wrong, so `every landing card routes to its own half, both ways in` asserts all
 eight `href`s and counts them, because a missing card is a missing *pair*. A
 Patterns button pointing at the wrong half would look right. The todo card's
 second action is the **calendar**, there being no patterns page in that half,
-and it keeps the `data-go="patterns"` name rather than earning a special case.
+and the time card's is its **record**, because that is where people go next far
+more often than to its patterns. Both keep the `data-go="patterns"` name rather
+than earning a special case.
+
+**A card is as tall as what it says.** No minimum height and no
+`justify-between`: those held every card at 208px, with a void between the
+reading and the actions, and put the last card's actions below a phone's first
+screen. `mt-auto` on the pair still lines the actions up across a row. A habit's
+run and best share one line, each `whitespace-nowrap`, so a narrow cell wraps
+the best whole.
 
 Four cards want a four-column row at the widest — a fourth on a three-column
 grid leaves one alone on a line — and the container widened with them: four
@@ -2535,6 +2553,20 @@ the test name, and do not move on until you can make it fail on demand.
   quoted heredoc. And a refusal guard checks that each **original** anchor is
   present exactly once, never searches for a mutated form: `shadow-xl"` also
   ends two unrelated class strings in `App.svelte`, and refused a clean tree.
+- **A scroll assertion needs a page that can scroll, and "load" was two
+  requests in the wrong order.** *A tap holds a lane label open* scrolled 200px
+  and waited for the pinned label to go — two full runs in six it stayed,
+  passing alone every time. The trace said why: no scroll offset in the snapshot
+  taken after `scrollBy`, and a screencast frame of a page ending above the
+  fold. The Day window's lanes come from the sessions and its charts from the
+  summary, which had not landed; the page was one "Loading…" line shorter than
+  the window, `scrollBy` moved nothing, no scroll event fired, and the label
+  rightly stayed. Holding `GET /api/time/summary` failed it three runs in three.
+  It now waits for 200px of room and asserts `scrollY` moved. An earlier probe
+  had "ruled out" a short page by measuring runs where that read had already
+  arrived — which is the rule about ordering requests rather than adding load,
+  learned again. Where June's summary is already in, the Day paints from it at
+  once, so the fixed test's wait is satisfied both ways.
 - **One backend per worker.** `--workers=8` on a suite whose `global-setup.js`
   started seven sends the extra worker at a port with nothing on it, and every
   test there fails with `login as … failed`. That is the harness, not the app —
