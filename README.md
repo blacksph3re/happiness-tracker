@@ -87,7 +87,7 @@ uv sync                      # first time only
 uv run alembic upgrade head  # first time, and after pulling new migrations
 JWT_SECRET=dev-secret ADMIN_PASSWORD=dev-admin-password \
   TOTP_ENCRYPTION_KEY=$(uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())') \
-  DOCS_ENABLED=1 uv run fastapi dev
+  DOCS_ENABLED=1 uv run uvicorn main:app --reload
 ```
 
 `DOCS_ENABLED=1` puts the interactive API documentation back on http://localhost:8000/docs. It is off by default so that a deployment does not publish its API surface; development is the case it exists for.
@@ -200,7 +200,7 @@ because answers are per-user and that is what keeps tests from seeing each other
 Take the catalogue by name rather than "the first one" — the listing is alphabetical, and
 a test that creates a catalogue would otherwise change what later tests answer.
 
-Once `pnpm build` has run, `uv run fastapi dev` alone serves the built frontend on `:8000` too, which is the quickest way to check the single-process setup behaves the same as in Docker. Delete `backend/static` to go back to backend-only mode.
+Once `pnpm build` has run, `uv run uvicorn main:app --reload` alone serves the built frontend on `:8000` too, which is the quickest way to check the single-process setup behaves the same as in Docker. Delete `backend/static` to go back to backend-only mode.
 
 ## Migrations
 

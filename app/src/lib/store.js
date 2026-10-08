@@ -1187,6 +1187,28 @@ export async function saveEntry(entry) {
 }
 
 /**
+ * Stop a running session now.
+ *
+ * The session written again under its own identity with an end, which is all
+ * a stop is. One spelling of it, because two pages offer it: Track's card and
+ * the record's running row.
+ *
+ * @param {import('./generated/types.gen').TimeEntryOut & {client_id: string}} entry
+ *   The running session.
+ * @returns {Promise<string>} Its identity, as `saveEntry` returns it.
+ */
+export function stopEntry(entry) {
+  return saveEntry({
+    client_id: entry.client_id,
+    project_id: entry.project_id,
+    started_at: entry.started_at,
+    ended_at: nowUtc(),
+    utc_offset: entry.utc_offset,
+    note: entry.note ?? null,
+  })
+}
+
+/**
  * Record a run of sessions at once, for an import.
  *
  * Not a loop over `saveEntry`: each call of that reprojects every cached

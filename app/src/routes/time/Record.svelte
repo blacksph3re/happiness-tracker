@@ -22,6 +22,7 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
+  import IconStop from '../../lib/IconStop.svelte'
   import TimeField from '../../lib/time/TimeField.svelte'
   import { now } from '../../lib/time/tick.js'
   import {
@@ -33,6 +34,7 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
     projects as projectStore,
     replaceEntry,
     saveEntry,
+    stopEntry,
     tagRules,
     tags as tagStore,
     timeEntries,
@@ -940,6 +942,21 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
                                for one session counted under a second tag as
                                well. Offering to edit or delete "it" would be
                                offering what the row cannot honestly do. -->
+                          {#if workable && row.running && day === today()}
+                            <!-- On today's row only. A session running since
+                                 yesterday draws a row there too, and a stop
+                                 offered on it reads as "stop it on that day",
+                                 which is not what the press does. -->
+                            <button
+                              class="meta flex size-11 items-center justify-center rounded-md
+                                     border border-white/15 text-ember hover:border-white/40"
+                              aria-label="Stop {shown.name}"
+                              title="Stop {shown.name}"
+                              onclick={() => stopEntry(only)}
+                            >
+                              <IconStop />
+                            </button>
+                          {/if}
                           {#if workable}
                             <button
                               class="meta flex size-11 items-center justify-center rounded-md
@@ -1061,7 +1078,7 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
                               </span>
                             </div>
                           {:else}
-                            <p class="meta pb-2 normal-case">Still running — stop it on Track.</p>
+                            <p class="meta pb-2 normal-case">Still running.</p>
                           {/if}
                           <button
                             class="btn-filled"

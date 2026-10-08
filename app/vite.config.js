@@ -84,7 +84,7 @@ export default defineConfig({
   },
   server: {
     // During `pnpm dev` the Svelte dev server proxies API calls to the
-    // separately running `uv run fastapi dev` backend.
+    // separately running `uv run uvicorn main:app --reload` backend.
     proxy: {
       '/api': 'http://127.0.0.1:8000',
     },

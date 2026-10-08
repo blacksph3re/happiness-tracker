@@ -310,6 +310,70 @@ test('the add panel still stops at midnight, having one day for both ends', asyn
   await expect(to).toHaveValue('23:59')
 })
 
+test('a running session stops from its row on the record', async ({ page, account }) => {
+  // Stopping used to mean leaving for Track. The row is already the session,
+  // so it ends there, at now, exactly as Track's own stop would write it.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, null)
+
+  await page.goto('/time/record')
+  const row = page.locator(`[data-day="${TODAY}"] [data-live="yes"]`)
+  await expect(row).toHaveCount(1)
+  await row.getByRole('button', { name: 'Stop The rewrite' }).click()
+
+  await expect(page.locator('[data-live="yes"]')).toHaveCount(0)
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('3h 00m')
+  await expect(page.locator('[data-pending]')).toHaveAttribute('data-pending', '0')
+  const [entry] = await (await account.api.get('/api/time/entries')).json()
+  // Ended at now: the e2e clock is set to noon and keeps running, so the
+  // minute is the claim rather than the millisecond.
+  expect(entry.ended_at).toMatch(new RegExp(`^${TODAY}T12:00:`))
+})
+
+test('a session running since yesterday stops from today only', async ({ page, account }) => {
+  // Its row on yesterday is the same session, but a stop offered there reads
+  // as "stop it on that day", which is not what the press does.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${YESTERDAY}T22:00:00`, null)
+
+  await page.goto('/time/record')
+  const stop = page.getByRole('button', { name: 'Stop The rewrite' })
+  await expect(page.locator(`[data-day="${TODAY}"]`).getByRole('button', { name: 'Stop The rewrite' })).toHaveCount(1)
+  await expect(page.locator(`[data-day="${YESTERDAY}"] [data-live="yes"]`)).toHaveCount(1)
+  await expect(stop).toHaveCount(1)
+})
+
+test('a running row with its stop fits a 320px screen', async ({ page, account }) => {
+  // Three 44px controls, the duration and the name share one row now. A
+  // negative claim, so sampled and held to the worst value rather than polled.
+  const project = await makeProject(account, 'A project with a long enough name to crowd the row')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, null)
+  await page.setViewportSize({ width: 320, height: 700 })
+  await page.goto('/time/record')
+  await expect(page.getByRole('button', { name: /^Stop / })).toBeVisible()
+
+  let worst = 0
+  for (let i = 0; i < 10; i += 1) {
+    const over = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    )
+    worst = Math.max(worst, over)
+    await page.waitForTimeout(50)
+  }
+  expect(worst, 'the page scrolls sideways').toBe(0)
+  const stop = await page.getByRole('button', { name: /^Stop / }).boundingBox()
+  expect(stop.x + stop.width).toBeLessThanOrEqual(320)
+})
+
+test('a finished session offers no stop', async ({ page, account }) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T11:00:00`)
+
+  await page.goto('/time/record')
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('2h 00m')
+  await expect(page.getByRole('button', { name: /^Stop / })).toHaveCount(0)
+})
+
 test('the export downloads the three CSVs', async ({ page, account }) => {
   const project = await makeProject(account, 'The rewrite')
   await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)

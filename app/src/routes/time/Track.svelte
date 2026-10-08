@@ -19,6 +19,7 @@ import { elapsed } from '../../lib/time/duration.js'
     ensureTimeEntries,
     projects as projectStore,
     saveEntry,
+    stopEntry,
     timeEntries,
   } from '../../lib/store.js'
   import { link, query } from '../../lib/router.js'
@@ -160,14 +161,7 @@ import { elapsed } from '../../lib/time/duration.js'
     busy = [...busy, project.id]
     try {
       if (running) {
-        await saveEntry({
-          client_id: running.client_id,
-          project_id: project.id,
-          started_at: running.started_at,
-          ended_at: nowUtc(),
-          utc_offset: running.utc_offset,
-          note: running.note ?? null,
-        })
+        await stopEntry(running)
       } else {
         await saveEntry({
           project_id: project.id,
