@@ -4,3 +4,12 @@
 **/*.db
 backend/static
 .git
+# Development only: the suite, and scripts that generate fixtures or seed data.
+# A seed script in the image is one mistyped `docker exec` from writing fake
+# history into the real database. `clear_totp.py` stays - it is how a locked-out
+# admin is recovered in production.
+backend/tests
+backend/pytest.ini
+backend/scripts/seed_*.py
+backend/scripts/bump_version.py
+backend/scripts/dump_*.py
