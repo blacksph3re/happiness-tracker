@@ -1036,7 +1036,11 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
                                 bind:value={editing.startDay}
                                 class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
                               />
-                              <TimeField label="Started time" bind:value={editing.startClock} />
+                              <TimeField
+                                label="Started time"
+                                bind:value={editing.startClock}
+                                bind:day={editing.startDay}
+                              />
                             </span>
                           </div>
                           {#if !editing.running}
@@ -1049,7 +1053,11 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
                                   bind:value={editing.endDay}
                                   class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
                                 />
-                                <TimeField label="Ended time" bind:value={editing.endClock} />
+                                <TimeField
+                                  label="Ended time"
+                                  bind:value={editing.endClock}
+                                  bind:day={editing.endDay}
+                                />
                               </span>
                             </div>
                           {:else}

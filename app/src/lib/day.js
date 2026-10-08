@@ -17,6 +17,31 @@ export function shiftDay(key, delta) {
   return toKey(date)
 }
 
+/**
+ * Move a day and a wall-clock time together by some minutes.
+ *
+ * What a stepper beside a date field needs: rolling a time back from 00:00
+ * lands on 23:55 of the *day before*, rather than stopping at midnight or
+ * wrapping onto the same day. Wall-clock arithmetic on purpose — the fields
+ * hold a local day and a clock, and the offset is applied only when they are
+ * turned back into an instant.
+ *
+ * @param {string} day A `YYYY-MM-DD` key.
+ * @param {string} clock `HH:MM`; empty reads as midnight.
+ * @param {number} minutes How far to move, negative for earlier.
+ * @returns {{ day: string, clock: string }}
+ */
+export function rollClock(day, clock, minutes) {
+  const [hours, mins] = (clock || '00:00').split(':').map(Number)
+  const total = hours * 60 + mins + minutes
+  const days = Math.floor(total / (24 * 60))
+  const within = total - days * 24 * 60
+  return {
+    day: shiftDay(day, days),
+    clock: `${String(Math.floor(within / 60)).padStart(2, '0')}:${String(within % 60).padStart(2, '0')}`,
+  }
+}
+
 /** The browser's current local hour, sent alongside each answer. */
 export function localHour() {
   return new Date().getHours()

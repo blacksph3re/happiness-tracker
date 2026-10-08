@@ -7,12 +7,16 @@ import {
   makeProject,
   makeTag,
   realQuestions,
+  recentDays,
   recordSession,
   savesView,
   seedAnswers,
   test,
   TODAY,
 } from './fixtures.js'
+
+/** The day before `TODAY`, for sessions that cross a midnight. */
+const YESTERDAY = recentDays(2)[0]
 
 /** One project's check-in card on the track view. */
 function card(page, id) {
@@ -236,6 +240,74 @@ test('a time can be nudged without the picker', async ({ page, account }) => {
 
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('3h 15m')
+})
+
+test('nudging an end back past midnight moves it to the day before', async ({
+  page,
+  account,
+}) => {
+  // Deleting the second day of a two-day session leaves it ending at 00:00 on
+  // that day. Stepping back from there used to stop at 00:00, and typing 23:00
+  // kept the later day, so the session spanned a whole extra day.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${YESTERDAY}T22:00:00`, `${TODAY}T00:00:00`)
+
+  await page.goto('/time/record')
+  await page.locator(`[data-day="${YESTERDAY}"]`).getByRole('button', { name: 'Edit' }).click()
+  await expect(page.getByLabel('Ended day', { exact: true })).toHaveValue(TODAY)
+
+  await page.getByRole('button', { name: 'Ended time 5 minutes earlier' }).click()
+  await expect(page.getByLabel('Ended time', { exact: true })).toHaveValue('23:55')
+  await expect(page.getByLabel('Ended day', { exact: true })).toHaveValue(YESTERDAY)
+
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.locator(`[data-day-total="${YESTERDAY}"]`)).toHaveText('1h 55m')
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveCount(0)
+})
+
+test('rolling the hour with the keyboard carries the day with it', async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${YESTERDAY}T22:00:00`, `${TODAY}T00:00:00`)
+
+  await page.goto('/time/record')
+  await page.locator(`[data-day="${YESTERDAY}"]`).getByRole('button', { name: 'Edit' }).click()
+  const ended = page.getByLabel('Ended time', { exact: true })
+  // Focusing the field puts the caret in its first segment, the hour.
+  await ended.focus()
+  await page.keyboard.press('ArrowDown')
+  await expect(ended).toHaveValue('23:00')
+  await expect(page.getByLabel('Ended day', { exact: true })).toHaveValue(YESTERDAY)
+
+  // And back up again, which is the same roll the other way.
+  await page.keyboard.press('ArrowUp')
+  await expect(ended).toHaveValue('00:00')
+  await expect(page.getByLabel('Ended day', { exact: true })).toHaveValue(TODAY)
+})
+
+test('a typed time never moves the day', async ({ page, account }) => {
+  // Typing is a statement of a time, not a roll: "23:00" typed over "00:00"
+  // may well mean 23:00 on the same day, and the value alone cannot tell.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${YESTERDAY}T22:00:00`, `${TODAY}T00:00:00`)
+
+  await page.goto('/time/record')
+  await page.locator(`[data-day="${YESTERDAY}"]`).getByRole('button', { name: 'Edit' }).click()
+  await page.getByLabel('Ended time', { exact: true }).fill('23:00')
+  await expect(page.getByLabel('Ended day', { exact: true })).toHaveValue(TODAY)
+})
+
+test('the add panel still stops at midnight, having one day for both ends', async ({
+  page,
+}) => {
+  await page.goto('/time/record')
+  await page.getByRole('button', { name: 'Add a session' }).click()
+  const to = page.getByLabel('To', { exact: true })
+  await to.fill('23:55')
+  await page.getByRole('button', { name: 'To 5 minutes later' }).click()
+  await expect(to).toHaveValue('23:59')
 })
 
 test('the export downloads the three CSVs', async ({ page, account }) => {

@@ -343,6 +343,25 @@ test('editing a start time moves it without changing its length', async ({
   expect(row.elapsed_seconds).toBe(30 * 60)
 })
 
+test('stepping a start back past midnight moves it to the day before', async ({ page }) => {
+  // The same field as a session's, and the same rule: the date beside it
+  // follows a roll across midnight rather than the time wrapping on one day.
+  await page.goto('/focus')
+  await start(page, 'Late one')
+  await page.clock.fastForward('31:00')
+
+  await page.getByLabel('Edit pomodoro').click()
+  const day = page.getByLabel('Started day', { exact: true })
+  const before = await day.inputValue()
+  await page.getByLabel('Started time', { exact: true }).fill('00:02')
+  await page.getByRole('button', { name: 'Started time 5 minutes earlier' }).click()
+
+  await expect(page.getByLabel('Started time', { exact: true })).toHaveValue('23:57')
+  const [year, month, date] = before.split('-').map(Number)
+  const previous = new Date(Date.UTC(year, month - 1, date - 1)).toISOString().slice(0, 10)
+  await expect(day).toHaveValue(previous)
+})
+
 test('the timer says where its lengths are set', async ({ page }) => {
   await page.goto('/focus')
   const settings = page.getByRole('link', { name: /settings/ })

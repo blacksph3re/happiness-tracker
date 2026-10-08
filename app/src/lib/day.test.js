@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { dayLabel, streak } from './day.js'
+import { dayLabel, rollClock, streak } from './day.js'
 
 describe('streak', () => {
   it('counts consecutive days ending today', () => {
@@ -86,5 +86,28 @@ describe('dayLabel', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 5, 15, 12))
     expect(dayLabel('2026-06-15', { withYear: true })).toBe(expected('2026-06-15', true))
+  })
+})
+
+describe('rollClock', () => {
+  it('moves the time within a day and leaves the day alone', () => {
+    expect(rollClock('2026-01-02', '09:00', 5)).toEqual({ day: '2026-01-02', clock: '09:05' })
+    expect(rollClock('2026-01-02', '09:00', -60)).toEqual({ day: '2026-01-02', clock: '08:00' })
+  })
+
+  it('carries the day back when the time rolls back past midnight', () => {
+    // The reported case: a session left ending at 00:00 on the second, meant
+    // to end at 23:00 on the first.
+    expect(rollClock('2026-01-02', '00:00', -5)).toEqual({ day: '2026-01-01', clock: '23:55' })
+    expect(rollClock('2026-01-02', '00:00', -60)).toEqual({ day: '2026-01-01', clock: '23:00' })
+  })
+
+  it('carries the day forward when the time rolls on past midnight', () => {
+    expect(rollClock('2026-01-01', '23:55', 5)).toEqual({ day: '2026-01-02', clock: '00:00' })
+  })
+
+  it('carries across a month and a year', () => {
+    expect(rollClock('2026-01-01', '00:02', -5)).toEqual({ day: '2025-12-31', clock: '23:57' })
+    expect(rollClock('2028-02-28', '23:30', 60)).toEqual({ day: '2028-02-29', clock: '00:30' })
   })
 })

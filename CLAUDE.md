@@ -2084,6 +2084,16 @@ Three rules follow, and they are easy to get subtly wrong:
    it started. The two midnights are not the same instant, so splitting there
    would either invent an hour or lose one.
 
+**A time rolled past midnight carries its day; a typed time never does.**
+`TimeField` given a `day` steps 00:00 back to 23:55 of the day before, and does
+the same for an arrow key rolling the hour — one press moves at most an hour, so
+a jump over twelve is a wrap. Deleting the second day of a session leaves it
+ending at 00:00 on that day, and the old clamp at midnight left no way back to
+23:00 on the first but typing it, which kept the later day and added a whole
+one. A typed "23:00" over "00:00" may mean the same day and the value cannot
+say, so it is taken as written. The add panel passes no `day` — both its times
+share one date — and still stops at midnight.
+
 A fixed offset is not a timezone: a session spanning the change reads an hour out
 on the far side. Storing an IANA zone name instead would fix that, at the cost of
 resolving a zone on every read and of deciding what a session means when a zone's
