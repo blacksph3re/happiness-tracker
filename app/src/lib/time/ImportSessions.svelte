@@ -213,6 +213,10 @@
           ended_at: one.endedAt,
           utc_offset: one.offset,
           note: one.note,
+          // Every row, not only the ones that overlap: two rows of one file can
+          // reach the server in either order, and either must join the other.
+          // Without it an overlap is kept beside what is there and counted once.
+          merge: onOverlap === 'merge',
         }))
       )
       storing = false

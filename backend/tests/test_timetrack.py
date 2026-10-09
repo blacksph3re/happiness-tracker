@@ -110,6 +110,67 @@ def test_totals_merge_repeat_sessions_on_one_project():
     assert summarise(entries, at(10, 20)) == {date(2026, 6, 10): {1: 7 * HOUR}}
 
 
+def test_overlapping_sessions_on_one_project_count_their_shared_time_once():
+    entries = [
+        FakeEntry(at(10, 9), at(10, 12), project_id=1),
+        FakeEntry(at(10, 11), at(10, 14), project_id=1),
+    ]
+    assert summarise(entries, at(10, 20)) == {date(2026, 6, 10): {1: 5 * HOUR}}
+
+
+def test_a_session_inside_another_adds_nothing_to_the_project():
+    entries = [
+        FakeEntry(at(10, 9), at(10, 12), project_id=1),
+        FakeEntry(at(10, 10), at(10, 11), project_id=1),
+    ]
+    assert summarise(entries, at(10, 20)) == {date(2026, 6, 10): {1: 3 * HOUR}}
+
+
+def test_identical_sessions_count_once():
+    entries = [
+        FakeEntry(at(10, 9), at(10, 12), project_id=1),
+        FakeEntry(at(10, 9), at(10, 12), project_id=1),
+    ]
+    assert summarise(entries, at(10, 20)) == {date(2026, 6, 10): {1: 3 * HOUR}}
+
+
+def test_overlapping_sessions_on_different_projects_still_add():
+    entries = [
+        FakeEntry(at(10, 9), at(10, 12), project_id=1),
+        FakeEntry(at(10, 10), at(10, 11), project_id=2),
+    ]
+    assert summarise(entries, at(10, 20)) == {date(2026, 6, 10): {1: 3 * HOUR, 2: HOUR}}
+
+
+def test_a_finished_session_inside_a_running_one_adds_nothing():
+    entries = [
+        FakeEntry(at(10, 9), None, project_id=1),
+        FakeEntry(at(10, 10), at(10, 11), project_id=1),
+    ]
+    assert summarise(entries, at(10, 14)) == {date(2026, 6, 10): {1: 5 * HOUR}}
+
+
+def test_an_overlap_across_midnight_counts_once_on_each_day():
+    entries = [
+        FakeEntry(at(10, 22), at(11, 2), project_id=1),
+        FakeEntry(at(10, 23), at(11, 1), project_id=1),
+    ]
+    assert summarise(entries, at(11, 12)) == {
+        date(2026, 6, 10): {1: 2 * HOUR},
+        date(2026, 6, 11): {1: 2 * HOUR},
+    }
+
+
+def test_an_overlap_recorded_on_two_clocks_is_measured_in_real_time():
+    # The same real hour, one session told in UTC and one in UTC+2. The day
+    # reads both by its opener's clock, but what overlaps is the instants.
+    entries = [
+        FakeEntry(at(10, 9), at(10, 12), utc_offset=0, project_id=1),
+        FakeEntry(at(10, 10), at(10, 11), utc_offset=120, project_id=1),
+    ]
+    assert summarise(entries, at(10, 20)) == {date(2026, 6, 10): {1: 3 * HOUR}}
+
+
 def test_a_tag_totals_the_projects_it_covers():
     totals = {date(2026, 6, 10): {1: 8 * HOUR, 2: HOUR}}
     assert group_by_tag(totals, {1: [7], 2: [7]}) == {date(2026, 6, 10): {7: 9 * HOUR}}

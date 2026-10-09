@@ -18,7 +18,7 @@
     offsetLabel,
     utcOffset,
   } from '../../lib/clock.js'
-import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
+import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
@@ -238,7 +238,8 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
    * than the distance between them. A project worked 09:00–12:00 and
    * 13:00–15:00 reads "09:00 – 15:00 · 5h 00m", because the hour at lunch was
    * not worked. The two numbers disagreeing is the point of merging, so the
-   * view says so rather than leaving it to be discovered.
+   * view says so rather than leaving it to be discovered. Two sessions sharing
+   * minutes give their *covered* time, by the same rule as every total.
    *
    * By tag the rows come from `tagSummary` instead — see `tagRows`.
    */
@@ -268,11 +269,39 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
     return map
   })
 
+  /**
+   * Each day's total: a project's covered time, summed across projects.
+   *
+   * Overlapping sessions on one project are kept as two rows, each with its own
+   * length, and the minutes they share count once here — the rule `summarise`
+   * follows on both sides. Different projects running at once still add up. By
+   * tag the rows already come totalled from the summary.
+   */
   const dayTotals = $derived(
+    new Map(
+      [...byDay].map(([day, rows]) => {
+        if (by === 'tag') return [day, rows.reduce((sum, row) => sum + row.seconds, 0)]
+        const byProject = new Map()
+        for (const row of rows) byProject.set(row.group, [...(byProject.get(row.group) ?? []), ...row.spans])
+        return [day, [...byProject.values()].reduce((sum, spans) => sum + coveredSeconds(spans), 0)]
+      })
+    )
+  )
+
+  /**
+   * How much more a day's rows add up to than its total, when they do.
+   *
+   * Shown beside the total rather than hidden, because a list of rows that does
+   * not sum to the number above it is otherwise a puzzle: the house rule about
+   * labelling a number rather than quietly changing it.
+   */
+  const countedOnce = $derived(
     new Map(
       [...byDay].map(([day, rows]) => [
         day,
-        rows.reduce((sum, row) => sum + row.seconds, 0),
+        by === 'tag'
+          ? 0
+          : rows.reduce((sum, row) => sum + row.seconds, 0) - (dayTotals.get(day) ?? 0),
       ])
     )
   )
@@ -365,6 +394,9 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
       from: slice.from,
       to: slice.to,
       seconds: slice.seconds,
+      // Where this part of the session sits in real time, so a day total and a
+      // merged row can count minutes two sessions share once.
+      spans: [{ start: slice.start, seconds: slice.seconds }],
       entries: [slice.entry],
       crosses: slice.crosses,
       whole: slice.whole ?? false,
@@ -389,9 +421,11 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
       }
       found.from = Math.min(found.from, slice.from)
       found.to = Math.max(found.to, slice.to)
-      // Summed, not measured end to end: the gaps between sessions were not
-      // tracked, so counting them would invent time.
-      found.seconds += slice.seconds
+      // Covered time, not measured end to end: the gaps between sessions were
+      // not tracked, so counting them would invent time, and minutes two
+      // sessions share were tracked once.
+      found.spans.push({ start: slice.start, seconds: slice.seconds })
+      found.seconds = coveredSeconds(found.spans)
       found.entries.push(slice.entry)
       found.crosses = found.crosses || slice.crosses
       found.fromFocus = found.fromFocus && slice.entry.source === 'pomodoro'
@@ -837,8 +871,15 @@ import { dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
                       <span class="ml-2 text-ember">{dayClock(day)}</span>
                     {/if}
                   </p>
-                  <p class="numeral tabular-nums" data-day-total={day}>
-                    {formatDuration(dayTotals.get(day) ?? 0)}
+                  <p class="numeral tabular-nums">
+                    <span data-day-total={day}>{formatDuration(dayTotals.get(day) ?? 0)}</span>
+                    {#if (countedOnce.get(day) ?? 0) > 0}
+                      <span class="meta ml-1 normal-case text-haze"
+                        >· <span data-counted-once={day}
+                          >{formatDuration(countedOnce.get(day))} counted once</span
+                        ></span
+                      >
+                    {/if}
                   </p>
                 </div>
 

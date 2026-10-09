@@ -20,7 +20,10 @@
    *
    * A span is `{ key, from, to, colour, name, detail }`, where `from` and `to`
    * are seconds since local midnight and `detail` is the second line of the
-   * label. A lane is `{ key, label, colour, total, spans }`.
+   * label. `faded` draws a lighter span, for what is not the main thing (a
+   * break); `layered` draws it see-through as well, for spans sharing minutes
+   * with another in the lane, so the shared stretch reads darker where they
+   * stack. A lane is `{ key, label, colour, total, spans }`.
    */
 
   let {
@@ -93,7 +96,9 @@
         {/if}
         <span class="truncate text-sm font-medium">{lane.label}</span>
       </span>
-      <span class="meta numeral ml-4.5 block">{formatDuration(lane.total)}</span>
+      <span class="meta numeral ml-4.5 block" data-lane-total={lane.key}
+        >{formatDuration(lane.total)}</span
+      >
     </span>
 
     <div
@@ -122,12 +127,13 @@
           role="img"
           aria-label="{shown.name} · {shown.detail}"
           data-span={shown.key}
+          data-layered={shown.layered ? '' : undefined}
           class="absolute inset-y-1 rounded-sm {clipped ? 'rounded-r-none' : ''}"
           style:left="{position(shown.from)}%"
           style:width="{Math.max(0, position(drawnTo) - position(shown.from))}%"
           style:min-width="3px"
           style:background="var(--color-{shown.colour}, var(--color-dusk-lift))"
-          style:opacity={shown.faded ? 0.55 : 0.85}
+          style:opacity={shown.faded || shown.layered ? 0.55 : 0.85}
           onpointerdown={(event) => tip.follow(shown, event)}
           onpointerenter={(event) => tip.drift(shown, event)}
           onpointermove={(event) => tip.drift(shown, event)}

@@ -186,26 +186,112 @@ def test_deleting_something_already_gone_is_a_no_op(client, admin_headers):
     assert results[1]["outcome"] == "applied"
 
 
-def test_an_overlapping_session_is_merged_into_the_union(client, admin_headers):
+def test_an_overlapping_session_on_the_same_project_is_kept(client, admin_headers):
     project = make_project(client, admin_headers)
     # Recorded on the other device, 09:00 to 12:00.
     sync(client, admin_headers, [entry_intent(1, "one", project["id"], EARLIER)])
 
-    # This device recorded 11:00 to 16:00 on the same project while offline.
+    # This device recorded 11:00 to 16:00 on the same project.
     results = sync(
         client,
         admin_headers,
         [entry_intent(2, "two", project["id"], LATER, start_hour=11, end_hour=16)],
     )
 
+    # Kept as recorded: the overlap is counted once when totals are read, not
+    # folded away when the session is written.
+    assert results[2]["outcome"] == "applied"
+    spans = sorted(
+        (row["started_at"], row["ended_at"]) for row in sessions(client, admin_headers)
+    )
+    assert spans == [(at(10, 9), at(10, 12)), (at(10, 11), at(10, 16))]
+
+
+def test_an_overlap_sent_to_be_merged_is_merged_into_the_union(client, admin_headers):
+    # The import's "Merge into what is there": asked for, so done, by the same
+    # rule two running sessions are joined by.
+    project = make_project(client, admin_headers)
+    sync(client, admin_headers, [entry_intent(1, "one", project["id"], EARLIER)])
+    results = sync(
+        client,
+        admin_headers,
+        [
+            entry_intent(
+                2, "two", project["id"], LATER, start_hour=11, end_hour=16, merge=True
+            )
+        ],
+    )
+
     assert results[2]["outcome"] == "merged"
-    assert "merged into one" in results[2]["detail"]
-    # One session covering both, and no minute invented: they overlapped, so
-    # their union holds no untracked time.
+    remaining = sessions(client, admin_headers)
+    assert len(remaining) == 1
+    assert (remaining[0]["started_at"], remaining[0]["ended_at"]) == (
+        at(10, 9),
+        at(10, 16),
+    )
+
+
+def test_a_second_running_session_on_a_project_still_merges(client, admin_headers):
+    # One running session per project, which the database enforces: two
+    # devices checking in offline are joined into one, as before.
+    project = make_project(client, admin_headers)
+    sync(
+        client,
+        admin_headers,
+        [entry_intent(1, "one", project["id"], EARLIER, ended_at=None)],
+    )
+    results = sync(
+        client,
+        admin_headers,
+        [entry_intent(2, "two", project["id"], LATER, start_hour=11, ended_at=None)],
+    )
+
+    assert results[2]["outcome"] == "merged"
     remaining = sessions(client, admin_headers)
     assert len(remaining) == 1
     assert remaining[0]["started_at"] == at(10, 9)
-    assert remaining[0]["ended_at"] == at(10, 16)
+    assert remaining[0]["ended_at"] is None
+
+
+def test_a_finished_session_inside_a_running_one_is_kept(client, admin_headers):
+    project = make_project(client, admin_headers)
+    sync(
+        client,
+        admin_headers,
+        [entry_intent(1, "running", project["id"], EARLIER, ended_at=None)],
+    )
+    results = sync(
+        client,
+        admin_headers,
+        [entry_intent(2, "inside", project["id"], LATER, start_hour=10, end_hour=11)],
+    )
+
+    assert results[2]["outcome"] == "applied"
+    rows = {row["client_id"]: row for row in sessions(client, admin_headers)}
+    assert rows["running"]["ended_at"] is None
+    assert (rows["inside"]["started_at"], rows["inside"]["ended_at"]) == (
+        at(10, 10),
+        at(10, 11),
+    )
+
+
+def test_a_running_session_over_finished_ones_is_kept_beside_them(
+    client, admin_headers
+):
+    project = make_project(client, admin_headers)
+    sync(
+        client,
+        admin_headers,
+        [entry_intent(1, "done", project["id"], EARLIER, start_hour=10, end_hour=11)],
+    )
+    results = sync(
+        client,
+        admin_headers,
+        [entry_intent(2, "running", project["id"], LATER, ended_at=None)],
+    )
+
+    assert results[2]["outcome"] == "applied"
+    assert len(sessions(client, admin_headers)) == 2
 
 
 def test_a_session_for_a_missing_project_is_a_conflict(client, admin_headers):

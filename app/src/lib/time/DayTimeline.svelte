@@ -2,7 +2,7 @@
   import { swipe } from '../swipe.js'
   import { dayLabel, shiftDay, today } from '../day.js'
   import { clockOfSeconds, formatDuration } from '../clock.js'
-  import { dayOffsets, slices } from './duration.js'
+  import { coveredSeconds, dayOffsets, slices } from './duration.js'
   import { now } from './tick.js'
   import { resource } from '../resource.svelte.js'
   import Swimlanes from '../Swimlanes.svelte'
@@ -80,6 +80,8 @@
           from: slice.from,
           to: slice.to,
           seconds: slice.seconds,
+          start: slice.start,
+          project: project.id,
           colour: project.colour,
           name: project.name,
           detail: `${clock} · ${formatDuration(slice.seconds)}`,
@@ -96,12 +98,33 @@
             colour: projects.get(key)?.colour ?? 'haze',
           }
 
-    const lanes = [...byGroup.entries()].map(([key, spans]) => ({
-      key,
-      ...describe(key),
-      spans: spans.toSorted((a, b) => a.from - b.from),
-      total: spans.reduce((sum, span) => sum + span.seconds, 0),
-    }))
+    const lanes = [...byGroup.entries()].map(([key, spans]) => {
+      // A project's covered time, summed across projects: two sessions of one
+      // project sharing minutes count them once, two projects running at once
+      // still add up. The same rule as every other total.
+      const byProject = new Map()
+      for (const span of spans) byProject.set(span.project, [...(byProject.get(span.project) ?? []), span])
+      const total = [...byProject.values()].reduce((sum, list) => sum + coveredSeconds(list), 0)
+      // See-through where a project's own spans overlap, so the shared stretch
+      // reads darker. Only the same project's: in a day lane, two projects at
+      // once is the ordinary picture of parallel timers, not an overlap.
+      const layered = spans.map((span) => ({
+        ...span,
+        layered: spans.some(
+          (other) =>
+            other !== span &&
+            other.project === span.project &&
+            other.start < span.start + span.seconds * 1000 &&
+            span.start < other.start + other.seconds * 1000
+        ),
+      }))
+      return {
+        key,
+        ...describe(key),
+        spans: layered.toSorted((a, b) => a.from - b.from),
+        total,
+      }
+    })
     // Days read in calendar order; groups read in the order the day happened.
     return byDay
       ? lanes.toSorted((a, b) => String(a.key).localeCompare(String(b.key)))

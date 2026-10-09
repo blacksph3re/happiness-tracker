@@ -1173,6 +1173,15 @@ class SyncEntryPayload(BaseModel):
     note: str | None = Field(default=None, max_length=500)
     """Optional free text about the session."""
 
+    merge: bool = False
+    """Join this session with any on its project that it overlaps.
+
+    An instruction, never stored. Overlapping sessions are otherwise kept as
+    recorded and their shared minutes counted once when totals are read; the
+    import's *Merge into what is there* asks for the union instead. Leaving it
+    out is the ordinary write, which is what an older client sends.
+    """
+
 
 class SyncRequest(BaseModel):
     """A device's queue, oldest first."""

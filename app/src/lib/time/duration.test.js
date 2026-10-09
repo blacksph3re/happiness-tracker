@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import { formatDuration } from '../clock.js'
-import { slices, withoutDay } from './duration.js'
+import { coveredSeconds, slices, withoutDay } from './duration.js'
 
 /**
  * A first case for the runner itself, on the one derivation already shared
@@ -147,5 +147,34 @@ describe('withoutDay', () => {
     expect(withoutDay(night, '2026-06-20', Date.now())).toEqual([
       { started_at: '2026-06-10T22:00:00', ended_at: '2026-06-11T02:00:00' },
     ])
+  })
+})
+
+describe('coveredSeconds', () => {
+  const at = (hour) => Date.UTC(2026, 5, 10, hour)
+  const span = (from, to) => ({ start: at(from), seconds: (to - from) * 3600 })
+
+  test('covers nothing with no spans', () => {
+    expect(coveredSeconds([])).toBe(0)
+  })
+
+  test('adds spans that only touch or do not meet, exactly as a sum would', () => {
+    expect(coveredSeconds([span(9, 10), span(10, 11), span(13, 14)])).toBe(3 * 3600)
+  })
+
+  test('counts a span inside another once', () => {
+    expect(coveredSeconds([span(9, 12), span(10, 11)])).toBe(3 * 3600)
+  })
+
+  test('counts identical spans once', () => {
+    expect(coveredSeconds([span(9, 12), span(9, 12)])).toBe(3 * 3600)
+  })
+
+  test('does not depend on the order it is given', () => {
+    expect(coveredSeconds([span(11, 14), span(15, 16), span(9, 12)])).toBe(6 * 3600)
+  })
+
+  test('joins a chain of overlaps into one reach', () => {
+    expect(coveredSeconds([span(9, 10.5), span(10, 11.5), span(11, 12)])).toBe(3 * 3600)
   })
 })

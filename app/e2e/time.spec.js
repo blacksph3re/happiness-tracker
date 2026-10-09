@@ -374,6 +374,128 @@ test('a finished session offers no stop', async ({ page, account }) => {
   await expect(page.getByRole('button', { name: /^Stop / })).toHaveCount(0)
 })
 
+test('a session added inside another keeps both rows and counts the shared hour once', async ({
+  page,
+  account,
+}) => {
+  // 09:00–12:00 in the browser's own clock (Berlin, +2 in June), so the panel
+  // and the seeded session agree on what 10:00 means.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T07:00:00`, `${TODAY}T10:00:00`, 120)
+
+  await page.goto('/time/record')
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('3h 00m')
+  await page.getByRole('button', { name: 'Add a session' }).click()
+  await page.getByLabel('From', { exact: true }).fill('10:00')
+  await page.getByLabel('To', { exact: true }).fill('11:00')
+  await page.getByRole('button', { name: 'Add session' }).click()
+
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  const check = async () => {
+    await expect(day.locator('[data-row]')).toHaveCount(2)
+    await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('3h 00m')
+    await expect(page.locator(`[data-counted-once="${TODAY}"]`)).toHaveText('1h 00m counted once')
+  }
+  await check()
+  await expect(page.locator('[data-pending]')).toHaveAttribute('data-pending', '0')
+  const stored = await (await account.api.get('/api/time/entries')).json()
+  expect(stored).toHaveLength(2)
+
+  await page.reload()
+  await check()
+})
+
+test('a session added while one runs on that project is kept beside it', async ({
+  page,
+  account,
+}) => {
+  // Running since 08:00 Berlin; the clock reads 14:00, so six hours so far.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T06:00:00`, null, 120)
+
+  await page.goto('/time/record')
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('6h 00m')
+  await page.getByRole('button', { name: 'Add a session' }).click()
+  await page.getByLabel('From', { exact: true }).fill('10:00')
+  await page.getByLabel('To', { exact: true }).fill('11:00')
+  await page.getByRole('button', { name: 'Add session' }).click()
+
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  await expect(day.locator('[data-row]')).toHaveCount(2)
+  await expect(day.locator('[data-live="yes"]')).toHaveCount(1)
+  // The hour was already being counted, so it adds nothing — and says so.
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('6h 00m')
+  await expect(page.locator(`[data-counted-once="${TODAY}"]`)).toHaveText('1h 00m counted once')
+  await expect(page.locator('[data-pending]')).toHaveAttribute('data-pending', '0')
+  expect(await (await account.api.get('/api/time/entries')).json()).toHaveLength(2)
+})
+
+test("a project's day, its merged row and the week all give covered time", async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  await recordSession(account, project.id, `${TODAY}T11:00:00`, `${TODAY}T14:00:00`)
+
+  await page.goto('/time/record')
+  await expect(page.locator(`[data-day="${TODAY}"] [data-row]`)).toHaveCount(2)
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('5h 00m')
+  await expect(page.locator('[data-week-total]').first()).toHaveText('5h 00m')
+
+  await page.getByRole('button', { name: 'Merge sessions' }).click()
+  const row = page.locator(`[data-day="${TODAY}"] [data-row]`)
+  await expect(row).toHaveCount(1)
+  await expect(row).toContainText('5h 00m')
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('5h 00m')
+})
+
+test("the timeline totals a project's covered time and layers the overlap", async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  await recordSession(account, project.id, `${TODAY}T11:00:00`, `${TODAY}T14:00:00`)
+  await recordSession(account, project.id, `${TODAY}T15:00:00`, `${TODAY}T16:00:00`)
+
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'Day', exact: true }).click()
+  await expect(page.locator(`[data-lane-total="${project.id}"]`)).toHaveText('6h 00m')
+  // The two that share an hour are drawn see-through, so the hour reads darker;
+  // the one apart is drawn as every span always was.
+  const spans = page.locator(`[data-lane="${project.id}"] [data-span]`)
+  await expect(spans).toHaveCount(3)
+  await expect(page.locator(`[data-lane="${project.id}"] [data-span][data-layered]`)).toHaveCount(2)
+})
+
+test('an overlapping session added offline shows at once and survives the sync', async ({
+  page,
+  account,
+  context,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T07:00:00`, `${TODAY}T10:00:00`, 120)
+
+  await page.goto('/time/record')
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('3h 00m')
+  await context.setOffline(true)
+  await page.getByRole('button', { name: 'Add a session' }).click()
+  await page.getByLabel('From', { exact: true }).fill('11:00')
+  await page.getByLabel('To', { exact: true }).fill('13:00')
+  await page.getByRole('button', { name: 'Add session' }).click()
+
+  await expect(page.locator(`[data-day="${TODAY}"] [data-row]`)).toHaveCount(2)
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('4h 00m')
+
+  await context.setOffline(false)
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await expect(page.locator('[data-pending]')).toHaveAttribute('data-pending', '0')
+  expect(await (await account.api.get('/api/time/entries')).json()).toHaveLength(2)
+  await expect(page.locator(`[data-day="${TODAY}"] [data-row]`)).toHaveCount(2)
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('4h 00m')
+})
+
 test('the export downloads the three CSVs', async ({ page, account }) => {
   const project = await makeProject(account, 'The rewrite')
   await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
@@ -1035,7 +1157,7 @@ test('merging collapses a project to one row a day', async ({ page, account }) =
   await expect(day.getByRole('button', { name: 'Edit' })).toHaveCount(3)
 })
 
-test('stretching a session over another merges them and says so', async ({
+test('stretching a session over another keeps both and counts the overlap once', async ({
   page,
   account,
 }) => {
@@ -1052,16 +1174,60 @@ test('stretching a session over another merges them and says so', async ({
   await page.getByLabel('Started time', { exact: true }).fill('10:00')
   await page.getByRole('button', { name: 'Save' }).click()
 
-  // No prompt: the same rule applies whether or not there was a connection at
-  // the time, so the two are merged into the union they describe — 09:00 to
-  // 16:00 — rather than asked about at a moment the app may not be able to ask.
+  // Both kept as recorded; the hour they share is counted once — 09:00 to
+  // 16:00 is seven hours, not eight — and the day says so rather than leaving
+  // two rows that do not add up to the number above them.
   await expect(page.locator('[data-sync]')).toHaveAttribute('data-sync', 'synced')
-  await expect(day.locator('[data-row]')).toHaveCount(1)
+  await expect(day.locator('[data-row]')).toHaveCount(2)
   await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('7h 00m')
+  await expect(page.locator(`[data-counted-once="${TODAY}"]`)).toHaveText('1h 00m counted once')
+  expect(await (await account.api.get('/api/time/entries')).json()).toHaveLength(2)
 
-  // Told, not silent. The decision is in the panel, with the span it swallowed.
+  // Nothing was decided on the device's behalf, so the panel has nothing to say.
+  await page.locator('[data-sync]').click()
+  await expect(page.locator('[data-sync-notices]')).toHaveCount(0)
+})
+
+test('a merge the import asked for is shown merged once the server says so', async ({
+  page,
+  account,
+}) => {
+  // The one ordinary write that still merges, so the one that still produces a
+  // notice: and a notice re-reads the sessions, which must not lay this
+  // device's own copy of the imported row back over the server's union. No
+  // change digest, so nothing but that re-read can put the screen right.
+  await page.route('**/api/changes', (route) => route.abort())
+  const project = await makeProject(account, 'The rewrite')
+  // 09:00–11:00 Berlin, and a file row 10:00–13:00 that overlaps it.
+  await recordSession(account, project.id, `${TODAY}T07:00:00`, `${TODAY}T09:00:00`, 120)
+
+  await page.goto('/time/projects')
+  await page.click(`[data-import-open="${project.id}"]`)
+  await page.locator('[data-import-file]').setInputFiles({
+    name: 'sessions.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(`Start,End\n${TODAY} 10:00,${TODAY} 13:00\n`, 'utf8'),
+  })
+  await page.click('[data-import-next]')
+  await page.click('[data-import-next]')
+  await expect(page.locator('[data-count="overlaps"]')).toContainText('1')
+  await page.click('[data-overlap="merge"]')
+  await page.click('[data-import-write]')
+  await expect(page.locator('[data-import-done]')).toContainText('merged')
+  await expect(page.locator('[data-pending]')).toHaveAttribute('data-pending', '0')
+
   await page.locator('[data-sync]').click()
   await expect(page.locator('[data-sync-notices]')).toContainText('merged into one')
+  await page.keyboard.press('Escape')
+
+  // Inside the app, never a reload: a reload reads everything fresh from the
+  // server and would hide exactly the store defect this test is here for.
+  await page.getByRole('link', { name: 'Record', exact: true }).first().click()
+  await expect(page).toHaveURL(/\/time\/record$/)
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  await expect(day.locator('[data-row]')).toHaveCount(1)
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('4h 00m')
+  await expect(page.locator(`[data-counted-once="${TODAY}"]`)).toHaveCount(0)
 })
 
 test('a session over midnight is shown on both days', async ({ page, account }) => {
@@ -1153,6 +1319,31 @@ test('deleting the middle day of a session splits it in two', async ({ page, acc
   await storedSpans(page, account, [
     ['2026-06-13T22:00:00', '2026-06-14T00:00:00'],
     ['2026-06-15T00:00:00', '2026-06-15T02:00:00'],
+  ])
+})
+
+test('deleting the middle day of a running session leaves a finished head and a running tail', async ({
+  page,
+  account,
+}) => {
+  // The case `replaceEntry`'s order is still load-bearing for. Sent tail first,
+  // the new running tail meets the original while that is still running — two
+  // running sessions on one project, which the server joins into their union —
+  // and the deleted day comes back.
+  const project = await makeProject(account, 'Night shift')
+  await recordSession(account, project.id, '2026-06-13T22:00:00', null)
+
+  await page.goto('/time/record')
+  await page
+    .locator('[data-day="2026-06-14"]')
+    .getByRole('button', { name: /^Delete/ })
+    .click()
+  await page.locator('[data-day="2026-06-14"] [data-delete-confirm]').click()
+
+  await expect(page.locator('[data-day="2026-06-14"]')).toHaveCount(0)
+  await storedSpans(page, account, [
+    ['2026-06-13T22:00:00', '2026-06-14T00:00:00'],
+    ['2026-06-15T00:00:00', null],
   ])
 })
 

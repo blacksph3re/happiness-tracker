@@ -1,9 +1,6 @@
-import csv
 import sqlite3
 from datetime import datetime
-from io import BytesIO
 from itertools import count
-from zipfile import ZipFile
 
 from tests.conftest import make_user
 
@@ -635,6 +632,42 @@ def test_the_rule_belongs_to_its_tag_alone(client, admin_headers):
     assert rows[("2026-06-10", reading["id"])]["reported"] == 2 * HOUR
 
 
+def test_the_summary_counts_a_projects_overlapping_time_once(client, admin_headers):
+    project = make_project(client, admin_headers)
+    record(client, admin_headers, project["id"], at(10, 9), at(10, 12))
+    record(client, admin_headers, project["id"], at(10, 11), at(10, 14))
+    record(client, admin_headers, project["id"], at(10, 10), at(10, 11))
+
+    assert totals(client, admin_headers)[("2026-06-10", project["id"])] == 5 * HOUR
+
+
+def test_a_band_deducts_from_covered_time_not_from_the_sum(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    project = make_project(client, admin_headers, "Backend", tag_ids=[tag["id"]])
+    assert (
+        set_bands(
+            client,
+            admin_headers,
+            tag["id"],
+            [
+                {"from_minutes": 0, "deduct_minutes": 30},
+                {"from_minutes": 300, "deduct_minutes": 45},
+            ],
+        ).status_code
+        == 200
+    )
+    # Four covered hours, recorded as five: the 45-minute band must not fire.
+    record(client, admin_headers, project["id"], at(10, 9), at(10, 13))
+    record(client, admin_headers, project["id"], at(10, 10), at(10, 11))
+
+    row = tag_rows(client, admin_headers)[("2026-06-10", tag["id"])]
+    assert (row["seconds"], row["deduction"], row["reported"]) == (
+        4 * HOUR,
+        1800,
+        4 * HOUR - 1800,
+    )
+
+
 def test_project_rows_carry_no_deduction(client, admin_headers):
     tag = make_tag(client, admin_headers, "Work")
     project = make_project(client, admin_headers, "Backend", tag_ids=[tag["id"]])
@@ -705,14 +738,3 @@ def test_the_tracked_range_reads_each_days_own_offset(client, admin_headers):
     assert client.get("/api/time/range", headers=admin_headers).json()["first"] == (
         "2026-06-11"
     )
-
-
-def exported(client, headers, name="sessions.csv", **params):
-    """Read one CSV out of the export bundle as a list of rows."""
-    response = client.get("/api/time/export.zip", headers=headers, params=params)
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "application/zip"
-    with ZipFile(BytesIO(response.content)) as bundle:
-        assert bundle.namelist() == ["sessions.csv", "by-project.csv", "by-tag.csv"]
-        text = bundle.read(name).decode("utf-8-sig")
-    return list(csv.reader(text.splitlines()))

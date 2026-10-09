@@ -164,9 +164,61 @@ def day_offsets(entries: list[Session]) -> dict[date, int]:
     return {day: entry.utc_offset for day, entry in opener.items()}
 
 
+def daily_spans(
+    entry: Session, as_of: datetime, offsets: dict[date, int] | None = None
+) -> list[tuple[date, datetime, int]]:
+    """Divide a session across its local days, keeping where each part starts.
+
+    The same division as `daily_slices`, which is built on this one, with each
+    part's start kept as a UTC instant. That is what `covered_seconds` needs to
+    tell two sessions overlapping in real time from two that merely share a
+    day: two sessions told by different clocks can read alike on the wall and
+    still be hours apart.
+
+    Parameters
+    ----------
+    entry : models.TimeEntry
+        The session.
+    as_of : datetime.datetime
+        Now, in UTC. Only consulted for a running session.
+    offsets : dict, optional
+        ``{day: offset}`` as `day_offsets` returns. See `daily_slices`.
+
+    Returns
+    -------
+    list of (datetime.date, datetime.datetime, int)
+        One triple per local day the session covers, in order: the day, the
+        UTC instant its part starts, and the seconds falling in that day.
+    """
+    offsets = offsets or {}
+    home = starting_day(entry)
+    minutes = offsets.get(home, entry.utc_offset)
+    offset = timedelta(minutes=minutes)
+    cursor = entry.started_at + offset
+    finish = _ends_at(entry, as_of) + offset
+
+    spans: list[tuple[date, datetime, int]] = []
+    while cursor < finish:
+        day = cursor.date()
+        midnight = datetime.combine(day + timedelta(days=1), time.min)
+        boundary = min(finish, midnight)
+
+        # Spilling into a day that keeps a different clock: hand the rest back
+        # to the day that started it rather than divide at a midnight the two
+        # days disagree about.
+        spills_into = day + timedelta(days=1)
+        if boundary < finish and offsets.get(spills_into, minutes) != minutes:
+            spans.append((day, cursor - offset, int((finish - cursor).total_seconds())))
+            break
+
+        spans.append((day, cursor - offset, int((boundary - cursor).total_seconds())))
+        cursor = boundary
+    return spans
+
+
 def daily_slices(
     entry: Session, as_of: datetime, offsets: dict[date, int] | None = None
-):
+) -> list[tuple[date, int]]:
     """Divide a session across the local days it touches.
 
     A session from 22:00 to 02:00 yields two hours on each of two days. The
@@ -198,38 +250,47 @@ def daily_slices(
         One pair per local day the session covers, in order, with the seconds
         falling in that day. Empty when the session has no duration yet.
     """
-    offsets = offsets or {}
-    home = starting_day(entry)
-    minutes = offsets.get(home, entry.utc_offset)
-    offset = timedelta(minutes=minutes)
-    cursor = entry.started_at + offset
-    finish = _ends_at(entry, as_of) + offset
+    return [(day, seconds) for day, _, seconds in daily_spans(entry, as_of, offsets)]
 
-    slices: list[tuple[date, int]] = []
-    while cursor < finish:
-        day = cursor.date()
-        midnight = datetime.combine(day + timedelta(days=1), time.min)
-        boundary = min(finish, midnight)
 
-        # Spilling into a day that keeps a different clock: hand the rest back
-        # to the day that started it rather than divide at a midnight the two
-        # days disagree about.
-        spills_into = day + timedelta(days=1)
-        if boundary < finish and offsets.get(spills_into, minutes) != minutes:
-            slices.append((day, int((finish - cursor).total_seconds())))
-            break
+def covered_seconds(spans: list[tuple[datetime, int]]) -> int:
+    """Total the time a set of spans covers, counting shared seconds once.
 
-        slices.append((day, int((boundary - cursor).total_seconds())))
-        cursor = boundary
-    return slices
+    Overlapping sessions on one project are kept as recorded, and this is
+    where their overlap stops being counted twice: the same arithmetic a merge
+    would do, done when a total is read rather than when a session is written.
+    Spans that only touch, or do not meet, add up exactly as before.
+
+    Parameters
+    ----------
+    spans : list of (datetime.datetime, int)
+        Each span's UTC start and its length in seconds, in any order.
+
+    Returns
+    -------
+    int
+        The seconds covered by at least one span.
+    """
+    total = 0
+    reach: datetime | None = None
+    for start, seconds in sorted(spans):
+        end = start + timedelta(seconds=seconds)
+        if reach is None or start >= reach:
+            total += seconds
+            reach = end
+        elif end > reach:
+            total += int((end - reach).total_seconds())
+            reach = end
+    return total
 
 
 def check_no_overlap(entry: Session, others: list[Session]) -> None:
     """Check that a session does not overlap another on the same project.
 
-    Two projects may run at once - that is the point of the tracker - but one
-    project running twice over the same minutes is a double count, not a fact:
-    the same hour would be reported twice under the same name.
+    Only the pomodoro transfer asks this now. Overlapping sessions are
+    otherwise kept, and `summarise` counts the minutes they share once; the
+    transfer refuses instead, because it is a deliberate press with somebody
+    watching and the refusal is what stops one day being copied twice.
 
     Parameters
     ----------
@@ -374,20 +435,24 @@ def summarise(entries: list[Session], as_of: datetime) -> dict[date, dict[int, i
     Returns
     -------
     dict
-        ``{day: {project_id: seconds}}``. Parallel sessions are simply added, so
-        a day's total across projects can exceed 24 hours - that is what a sum
-        over projects means, and nothing here pretends otherwise.
+        ``{day: {project_id: seconds}}``. Within a project, minutes covered by
+        more than one session count once: the sessions are kept as recorded and
+        the overlap is resolved here. Across projects sessions are simply added,
+        so a day's total can exceed 24 hours - that is what a sum over projects
+        means, and nothing here pretends otherwise.
     """
     offsets = day_offsets(entries)
-    totals: dict[date, dict[int, int]] = {}
+    parts: dict[date, dict[int, list[tuple[datetime, int]]]] = {}
     for entry in entries:
-        for day, seconds in daily_slices(entry, as_of, offsets):
+        for day, start, seconds in daily_spans(entry, as_of, offsets):
             if seconds:
-                by_project = totals.setdefault(day, {})
-                by_project[entry.project_id] = (
-                    by_project.get(entry.project_id, 0) + seconds
+                parts.setdefault(day, {}).setdefault(entry.project_id, []).append(
+                    (start, seconds)
                 )
-    return totals
+    return {
+        day: {project: covered_seconds(spans) for project, spans in by_project.items()}
+        for day, by_project in parts.items()
+    }
 
 
 def group_by_tag(

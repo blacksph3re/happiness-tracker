@@ -83,3 +83,13 @@ describe('the light palette only', () => {
     expect(worst('light')).toBeGreaterThan(worst('dark'))
   })
 })
+
+test("the light theme's address bar is painted the light ground", async () => {
+  // `index.html` sets the bar before the bundle loads, and so holds the one
+  // copy of the colour outside `app.css`. If they drift, a light device flashes
+  // the old ground in its bar on every launch until the switcher repaints it.
+  const { readFileSync } = await import('node:fs')
+  const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8')
+  const [, bar] = html.match(/setAttribute\('content', '(#[0-9a-f]{6})'\)/i) ?? []
+  expect(bar).toBe(tokens('light').ink)
+})

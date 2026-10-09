@@ -161,6 +161,61 @@ SESSION_CASES = [
         "a session across the midnight ending the leap day",
         [_entry(1, "2024-02-29T22:00:00", "2024-03-01T02:00:00")],
     ),
+    # Overlapping sessions on one project are kept as recorded, and the minutes
+    # they share count once. Both implementations have to agree on that, on
+    # the same day, across midnight, against a running session, and when the
+    # two were told by different clocks.
+    (
+        "two sessions on one project overlapping at the edge",
+        [
+            _entry(1, "2026-06-10T09:00:00", "2026-06-10T12:00:00"),
+            _entry(1, "2026-06-10T11:00:00", "2026-06-10T14:00:00"),
+        ],
+    ),
+    (
+        "a session inside another on the same project",
+        [
+            _entry(1, "2026-06-10T09:00:00", "2026-06-10T12:00:00"),
+            _entry(1, "2026-06-10T10:00:00", "2026-06-10T11:00:00"),
+        ],
+    ),
+    (
+        "the same session recorded twice",
+        [
+            _entry(1, "2026-06-10T09:00:00", "2026-06-10T12:00:00"),
+            _entry(1, "2026-06-10T09:00:00", "2026-06-10T12:00:00"),
+        ],
+    ),
+    (
+        "an overlap across midnight",
+        [
+            _entry(1, "2026-06-10T22:00:00", "2026-06-11T02:00:00"),
+            _entry(1, "2026-06-10T23:00:00", "2026-06-11T01:00:00"),
+        ],
+    ),
+    (
+        "a finished session inside a running one",
+        [
+            _entry(1, "2026-06-15T08:00:00", None),
+            _entry(1, "2026-06-15T09:00:00", "2026-06-15T10:00:00"),
+        ],
+    ),
+    (
+        "an overlap recorded on two clocks",
+        [
+            _entry(1, "2026-06-10T09:00:00", "2026-06-10T12:00:00"),
+            _entry(1, "2026-06-10T10:00:00", "2026-06-10T11:00:00", offset=120),
+        ],
+    ),
+    (
+        "three sessions chained by overlaps, and one apart",
+        [
+            _entry(1, "2026-06-10T09:00:00", "2026-06-10T10:30:00"),
+            _entry(1, "2026-06-10T10:00:00", "2026-06-10T11:30:00"),
+            _entry(1, "2026-06-10T11:00:00", "2026-06-10T12:00:00"),
+            _entry(1, "2026-06-10T15:00:00", "2026-06-10T16:00:00"),
+        ],
+    ),
     (
         "several short sessions on one project",
         [

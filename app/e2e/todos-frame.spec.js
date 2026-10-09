@@ -573,8 +573,33 @@ test.describe('a tick moves nothing', () => {
     })
   }
 
+  /**
+   * Wait until nothing moves across two animation frames.
+   *
+   * The baseline must be the page at rest. Under reduced motion `app.css`
+   * gives every element a 0.01ms transition, so a box read within a frame of a
+   * change is still where it was: the board's gap read 32px, Plain's stacked
+   * value, one frame after the test's own switch to Lists had made it 24 — and
+   * the next sample reported 4px of movement before anything was ticked.
+   *
+   * Waited for from the runner's side, never with `requestAnimationFrame`: the
+   * Plain test pauses the page's clock, which stops animation frames with it,
+   * and a wait on one then never returns. 50ms is three frames or more.
+   */
+  async function atRest(page) {
+    let last = JSON.stringify(await positions(page))
+    for (let tries = 0; tries < 20; tries += 1) {
+      await page.waitForTimeout(50)
+      const now = JSON.stringify(await positions(page))
+      if (now === last) return
+      last = now
+    }
+    throw new Error('the page never came to rest before the act')
+  }
+
   /** The worst movement of anything drawn before `act`, over frames either side of it. */
   async function worstMove(page, act) {
+    await atRest(page)
     const samples = []
     for (let at = 0; at < 4; at += 1) {
       samples.push(await positions(page))

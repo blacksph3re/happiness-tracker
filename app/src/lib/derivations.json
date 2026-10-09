@@ -2035,6 +2035,249 @@
       "as_of": "2026-06-15T12:00:00",
       "by_project": {
         "2026-06-10": {
+          "1": 18000
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 18000,
+          "20": 18000
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-10T12:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T09:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T14:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T11:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "two sessions on one project overlapping at the edge",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 10800
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 10800,
+          "20": 10800
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-10T12:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T09:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T11:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T10:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "a session inside another on the same project",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 10800
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 10800,
+          "20": 10800
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-10T12:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T09:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T12:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T09:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "the same session recorded twice",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 7200
+        },
+        "2026-06-11": {
+          "1": 7200
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 7200,
+          "20": 7200
+        },
+        "2026-06-11": {
+          "10": 7200,
+          "20": 7200
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-11T02:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T22:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-11T01:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T23:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "an overlap across midnight",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-15": {
+          "1": 14400
+        }
+      },
+      "by_tag": {
+        "2026-06-15": {
+          "10": 14400,
+          "20": 14400
+        }
+      },
+      "entries": [
+        {
+          "ended_at": null,
+          "project_id": 1,
+          "started_at": "2026-06-15T08:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-15T10:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-15T09:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "a finished session inside a running one",
+      "offsets": {
+        "2026-06-15": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 10800
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 10800,
+          "20": 10800
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-10T12:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T09:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T11:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T10:00:00",
+          "utc_offset": 120
+        }
+      ],
+      "name": "an overlap recorded on two clocks",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
+          "1": 14400
+        }
+      },
+      "by_tag": {
+        "2026-06-10": {
+          "10": 14400,
+          "20": 14400
+        }
+      },
+      "entries": [
+        {
+          "ended_at": "2026-06-10T10:30:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T09:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T11:30:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T10:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T12:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T11:00:00",
+          "utc_offset": 0
+        },
+        {
+          "ended_at": "2026-06-10T16:00:00",
+          "project_id": 1,
+          "started_at": "2026-06-10T15:00:00",
+          "utc_offset": 0
+        }
+      ],
+      "name": "three sessions chained by overlaps, and one apart",
+      "offsets": {
+        "2026-06-10": 0
+      }
+    },
+    {
+      "as_of": "2026-06-15T12:00:00",
+      "by_project": {
+        "2026-06-10": {
           "1": 2400
         }
       },

@@ -1217,7 +1217,10 @@ export function stopEntry(entry) {
  * it goes. One queue write and one cache update for the lot.
  *
  * @param {Array<object>} entries Sessions as `saveEntry` takes them, without a
- *   `client_id`: an import always writes new sessions, never corrections.
+ *   `client_id`: an import always writes new sessions, never corrections. Each
+ *   may carry `merge: true` — see `SyncEntryPayload.merge`. It rides along on
+ *   the device's copy harmlessly: every later write of a session names its
+ *   fields rather than spreading the stored row, so it is never sent again.
  * @returns {Promise<number>} How many are on the device. Short of what was asked
  *   for means the device refused the rest, and none of those are saved.
  */

@@ -73,8 +73,11 @@ export function dayOffsets(entries) {
  * @param {number} now Milliseconds since the epoch, for a running session.
  * @param {Record<string, number>} [offsets] As `dayOffsets` returns.
  * @returns {Array<{day: string, seconds: number, from: number, to: number,
- *   whole: boolean}>} One slice per day, `from` and `to` being seconds since
- *   that local midnight, `whole` when the session was kept undivided.
+ *   start: number, whole: boolean}>} One slice per day, `from` and `to` being
+ *   seconds since that local midnight, `start` the instant the slice begins in
+ *   milliseconds since the epoch — what `coveredSeconds` compares, since two
+ *   sessions told by different clocks can read alike and be hours apart — and
+ *   `whole` when the session was kept undivided.
  */
 export function slices(entry, now, offsets = {}) {
   const minutes = offsets[startingDay(entry)] ?? entry.utc_offset
@@ -101,12 +104,44 @@ export function slices(entry, now, offsets = {}) {
       seconds: Math.floor((stop - cursor) / 1000),
       from: Math.floor((cursor - startOfDay) / 1000),
       to: Math.floor((stop - startOfDay) / 1000),
+      start: cursor - offset,
       whole: spillsIntoAnotherClock,
     })
     if (spillsIntoAnotherClock) break
     cursor = boundary
   }
   return out
+}
+
+/**
+ * Total the time a set of spans covers, counting shared seconds once.
+ *
+ * Overlapping sessions on one project are kept as recorded, and this is where
+ * their overlap stops being counted twice — the arithmetic a merge would do,
+ * done when a total is read rather than when a session is written. The mirror of
+ * the server's `covered_seconds`, and the one spelling of "counted once" on the
+ * device: `summarise`, the record and the timeline all total a project through
+ * it. Spans that only touch, or do not meet, add up exactly as a sum would.
+ *
+ * @param {Array<{start: number, seconds: number}>} spans Each span's start in
+ *   milliseconds since the epoch and its length in seconds, in any order — the
+ *   slices `slices` returns qualify.
+ * @returns {number} The seconds covered by at least one span.
+ */
+export function coveredSeconds(spans) {
+  let total = 0
+  let reach = null
+  for (const { start, seconds } of spans.toSorted((a, b) => a.start - b.start)) {
+    const end = start + seconds * 1000
+    if (reach === null || start >= reach) {
+      total += seconds
+      reach = end
+    } else if (end > reach) {
+      total += Math.floor((end - reach) / 1000)
+      reach = end
+    }
+  }
+  return total
 }
 
 /**

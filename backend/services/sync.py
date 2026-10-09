@@ -41,7 +41,7 @@ from schemas import (
     SyncTodoPayload,
 )
 from services.pomodoro import PomodoroRuleError, check_pomodoro_shape
-from services.timetrack import TimeRuleError, check_entry_shape, check_no_overlap
+from services.timetrack import TimeRuleError, check_entry_shape
 from services.todos import (
     append_todo_rank,
     between,
@@ -256,13 +256,18 @@ def apply_entry(
 
     outcome = SyncOutcome.APPLIED
     detail = None
-    try:
-        check_no_overlap(entry, others)
-    except TimeRuleError:  # noqa: BLE001 - the overlap is the expected path here
-        # Their union, not a refusal: sessions that overlap have no gap between
-        # them, so joining them invents no minute that was not tracked. This is
-        # the same trade `merge_overlapping` already makes online.
-        swallowed = [other for other in others if _overlaps(entry, other)]
+    # Overlapping sessions are kept as recorded, and `summarise` counts the
+    # minutes they share once. Two exceptions join them into their union, which
+    # invents no minute that was not tracked: two *running* sessions on a
+    # project, which the database forbids, and a write that asks for it — the
+    # import's "Merge into what is there".
+    swallowed = [
+        other
+        for other in others
+        if _overlaps(entry, other)
+        and (payload.merge or (entry.ended_at is None and other.ended_at is None))
+    ]
+    if swallowed:
         outcome, detail = _merge_into(entry, swallowed, db)
 
     if stored is None:
