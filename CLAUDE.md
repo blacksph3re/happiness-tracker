@@ -1996,6 +1996,11 @@ Four more that came out of using the board rather than reading it:
   landing elsewhere, or a press outside the card, forgets it. This replaced
   awaiting the write in `keepFocus`, which the settle and the move to Done had
   no write for.
+- **A keyboard move is announced once it is stored**, never when it begins:
+  durable before visible covers what a reader hears, and a move the device
+  refuses to store says nothing. A test that compares two announcements of the
+  same sentence waits for the *change*, since waiting for the sentence is
+  satisfied by the first one.
 - **Keyboard moves are chained, not fired.** A move reads the column's order, and
   the order only changes once the write before it lands, so four presses with no
   pause read one order four times and moved the card one slot. Each move waits
@@ -2270,6 +2275,17 @@ just happened is a judgement, and the person who wrote it is the one who knows.
 **Images are tagged with the version, not the commit.** A deploy therefore starts
 by bumping, and `Settings → About` is where the running version is read back —
 beside the server's own, when a cached worker is a release behind.
+
+**Build with `--pull`.** The builder (`latest-dev`) and the runtime (`latest`)
+are separate tags that move independently, and the venv is only good under the
+interpreter that built it. 0.10.1 was first built with a freshly pulled 3.15
+builder over a cached 3.14 runtime and died at start with *No module named
+'uvicorn'*. The Dockerfile's final stage now imports the server's dependencies
+with the runtime's interpreter, so a mismatched pair fails the **build**. A
+`latest` that moves to a new Python is a runtime change worth the same rehearsal
+as a migration: the backend suite under that version, and both images answering
+identically against a copy of production. `beartype` 0.22 could not import on
+3.15 (`typing.no_type_check_decorator` is gone), which is why it is 0.23.
 
 ## Verifying a change
 
@@ -2690,7 +2706,13 @@ the test name, and do not move on until you can make it fail on demand.
   outbox before it reaches the store, which makes the card, the tick or the
   count the proof that there is a queue at all. Two todo tests passed against
   the defects they were written for until a UI assertion was put in front of the
-  badge — one of them by observing **no requests whatsoever**.
+  badge — one of them by observing **no requests whatsoever**. A third waited on
+  an *announcement*, which the keyboard made the moment a move began, and read
+  the server before the second of two moves was on the outbox — about one run in
+  twenty. **`holdOutbox` in `fixtures.js` makes that window deterministic**: it
+  keeps a write transaction open on the outbox store, so the app's next
+  `enqueue` waits behind it for as long as the test likes. Read the server while
+  it is held and the race fails every run.
 - **A count cannot see an edit.** The same helper polled until the server held
   one pomodoro with an id — which was already true before the edit under test,
   so tainting one was satisfied by the untainted row. A poll has to assert the

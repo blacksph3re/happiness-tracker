@@ -778,6 +778,10 @@
    * The focus is not handled here: a card that moves takes the focus with it
    * through `followFocus`, whatever moved it.
    *
+   * Announced once the write is stored, never when it begins: durable before
+   * visible is the store's rule, and a sentence a reader hears is visible. A
+   * move the device refuses to store throws here and says nothing.
+   *
    * @param {string} clientId
    * @param {number} dx
    * @param {number} dy
@@ -799,8 +803,8 @@
       if (to < 0 || to >= column.tasks.length) return
       const written = place(task, column, to)
       if (written) {
-        announce(`Moved within ${column.label}, position ${to + 1}`)
         await written
+        announce(`Moved within ${column.label}, position ${to + 1}`)
       }
       return
     }
@@ -810,8 +814,8 @@
     const to = Math.min(Math.max(spot, 0), target.tasks.length)
     const written = place(task, target, to)
     if (written) {
-      announce(`Moved to ${target.label}, position ${to + 1}`)
       await written
+      announce(`Moved to ${target.label}, position ${to + 1}`)
     }
   }
 

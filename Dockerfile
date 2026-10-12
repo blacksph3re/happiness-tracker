@@ -48,6 +48,14 @@ COPY --from=builder --chown=65532:65532 /data /data
 ENV PORT=8000 \
     DB_STORAGE=/data/database.db \
     PATH="/srv/.venv/bin:$PATH"
+
+# The venv was built by the `-dev` image's interpreter and is run by this one,
+# and the two `latest` tags move independently: 0.10.1 was first built with a
+# freshly pulled 3.15 builder over a cached 3.14 runtime, and the container died
+# at start with `No module named 'uvicorn'`. Importing the server's dependencies
+# here makes that a failed build rather than a failed deploy. Exec form, because
+# there is no shell. Build with `--pull` so both tags resolve at the same moment.
+RUN ["/srv/.venv/bin/python", "-c", "import uvicorn, fastapi, sqlalchemy, alembic"]
 VOLUME /data
 EXPOSE 8000
 

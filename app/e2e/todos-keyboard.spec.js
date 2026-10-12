@@ -1,6 +1,7 @@
 import {
   expect,
   groupBy,
+  holdOutbox,
   makeTodoList,
   makeTodos,
   openTasks,
@@ -223,9 +224,50 @@ test('the live region says something new for the same move twice', async ({
   ])
   await taskCard(page, 'second').focus()
   await page.keyboard.press('ArrowDown')
+  // Waited for as a change, never as a sentence: the sentence is the first
+  // move's too, so waiting for it is satisfied before the second is announced
+  // — which it is only once its write is stored. If the padding goes, the two
+  // strings are equal and this never sees a change.
+  await expect
+    .poll(() => region.textContent(), { message: 'the same move twice read identically' })
+    .not.toBe(said)
   await expect(region).toHaveText('Moved within Today, position 2')
+})
 
-  expect(await region.textContent(), 'the same move twice read identically').not.toBe(said)
+test('a keyboard move is announced only once it is stored', async ({ page, account }) => {
+  // The live region said "Moved" the moment a move began, before its write was
+  // on the outbox. Durable before visible is the store's rule, and a sentence a
+  // reader hears is visible: a move the device then refused to store was
+  // announced all the same.
+  await makeTodos(account, [
+    { title: 'waiting', rank: 'b', planned_on: TOMORROW },
+    { title: 'target', rank: 'b', planned_on: '2026-06-20' },
+  ])
+  await openTasks(page, account, 'date')
+  await taskCard(page, 'target').focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect(page.locator('[data-count="tomorrow"]')).toHaveText('2')
+  await expect(page.locator('[data-moved]')).toHaveText('Moved to Tomorrow, position 1')
+
+  const release = await holdOutbox(page)
+  await page.keyboard.press('ArrowDown')
+  // A negative claim, so sampled for a while rather than polled once.
+  const heard = []
+  for (let at = 0; at < 8; at += 1) {
+    heard.push(await page.locator('[data-moved]').textContent())
+    await page.waitForTimeout(50)
+  }
+  expect(
+    heard.filter((said) => said.includes('Moved within')),
+    'announced before the move was stored'
+  ).toEqual([])
+
+  await release()
+  await expect(page.locator('[data-moved]')).toHaveText('Moved within Tomorrow, position 2')
+  await expect(page.locator('[data-column="tomorrow"] article [data-title]')).toHaveText([
+    'waiting',
+    'target',
+  ])
 })
 
 test('a card keeps the focus across a move, so a second arrow also moves it', async ({
@@ -264,6 +306,15 @@ test('a card keeps the focus across a move, so a second arrow also moves it', as
   // And along, with no Tab in between: the second press is the whole point.
   await page.keyboard.press('ArrowDown')
   await expect(page.locator('[data-moved]')).toHaveText('Moved within Tomorrow, position 2')
+  // The card's place on screen, and not the outbox, says the second move was
+  // made: the move reaches the outbox before it reaches the store, so an empty
+  // outbox read before this can be one the move has not joined yet — which is
+  // how this read the server before the second write and failed about once in
+  // twenty.
+  await expect(page.locator('[data-column="tomorrow"] article [data-title]')).toHaveText([
+    'waiting',
+    'target',
+  ])
   await expect.poll(focused, { timeout: 5_000 }).toBe(held)
 
   await outboxEmpty(page)

@@ -671,6 +671,40 @@ export async function outboxEmpty(page) {
 }
 
 /**
+ * Hold the outbox, so the app's next write waits until it is let go.
+ *
+ * IndexedDB runs write transactions on one store one at a time, so a
+ * transaction kept open here — by chaining a request onto every one that
+ * finishes — makes the app's `enqueue` wait behind it. It turns "the window
+ * between a gesture and its write landing on the outbox", which is usually a
+ * few milliseconds, into one a test can hold open for as long as it likes.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @returns {Promise<() => Promise<void>>} Lets the outbox go.
+ */
+export async function holdOutbox(page) {
+  await page.evaluate(
+    () =>
+      new Promise((held, failed) => {
+        const opening = indexedDB.open('daily-tracker')
+        opening.onerror = () => failed(opening.error)
+        opening.onsuccess = () => {
+          const store = opening.result.transaction('outbox', 'readwrite').objectStore('outbox')
+          window.__outboxHeld = true
+          const spin = () => {
+            if (window.__outboxHeld) store.count().onsuccess = spin
+          }
+          store.count().onsuccess = () => {
+            held()
+            spin()
+          }
+        }
+      })
+  )
+  return () => page.evaluate(() => (window.__outboxHeld = false))
+}
+
+/**
  * The card drawing a task, by its title.
  *
  * @param {import('@playwright/test').Page} page
