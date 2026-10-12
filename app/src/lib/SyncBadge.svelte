@@ -1,7 +1,7 @@
 <script>
   import { clearTokens } from './api.js'
   import { purgePush } from './push.js'
-  import { revalidate } from './revalidate.js'
+  import { refresh } from './revalidate.js'
   import { mayNavigate, navigate } from './router.js'
   import {
     conflicts,
@@ -126,10 +126,11 @@
     open = !open
     if (!open) return
     flush()
-    // Pressing the cloud is the closest thing this app has to a refresh button,
-    // and it should mean it: `force` skips the ten-second floor the background
-    // checks keep, because a person who just tapped it is not a timer.
-    revalidate({ force: true })
+    // Pressing the cloud is this app's refresh button, and it means it: every
+    // collection this tab has read is read again, whatever the change digest
+    // thinks moved, and past the ten-second floor the background checks keep —
+    // a person who just tapped it is not a timer.
+    refresh()
   }}
 >
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">

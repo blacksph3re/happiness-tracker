@@ -133,6 +133,22 @@ Two, both standing, both cheaper to honour from the first commit:
   that moves a **count**, such as adding a row, rather than a second edit to the
   same one.
 
+  **The digest compares the server with itself, never with the screen**, so
+  two things it cannot fix are fixed elsewhere. A re-read that *fails* after a
+  check saw something move is remembered: `applyChanges` reports which re-reads
+  did not land, told by the count beside each `fetched` mark not moving (the old
+  mark still stands, so `has` would call it read), and the digest keeps the old
+  fingerprint for those, so the next check asks again. It used to adopt the new
+  one first, and the page then stayed stale through every check and every press
+  of the cloud until a reload. And **the cloud is a refresh**: `refresh()`
+  re-reads every collection this tab has read, whatever the digest thinks, and
+  asks whether the server is back first when the app believes it is offline —
+  because a page whose first read answered from just before a change, or a change
+  in the same second as the last, looks current to the digest for good. What the
+  tab never read is left to the page that wants it, as a reload leaves it.
+  Preferences are not fingerprinted and not refreshed: they decide a view when a
+  page opens, not while it is open.
+
   A component must therefore **read its data from the store**, not snapshot it
   out of a loader. `x = await ensureX()` into local state cannot see a later
   update, which is the whole point — `await ensureX()` to start the load, and

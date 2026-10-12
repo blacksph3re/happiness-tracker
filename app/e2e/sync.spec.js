@@ -251,6 +251,168 @@ test('pressing the cloud asks the server what moved', async ({ page }) => {
   await expect.poll(() => asked).toBeGreaterThan(0)
 })
 
+/** The rows the record draws for today. */
+function todaysRows(page) {
+  return page.locator(`[data-day="${TODAY}"] [data-row]`)
+}
+
+/** Whether a request is the session list, and not the range or the summary beside it. */
+function isSessionRead(request) {
+  return new URL(request.url()).pathname === '/api/time/entries' && request.method() === 'GET'
+}
+
+test('pressing the cloud re-reads what the page shows, even when the digest saw nothing move', async ({
+  page,
+  account,
+}) => {
+  // The digest compares the server with itself, never with the screen: its
+  // baseline is whatever the server held at the first check, so a page whose
+  // first read answered from *before* a change is stale while every later check
+  // agrees nothing moved. Background checks cannot see that. A press on the
+  // cloud is somebody saying the screen is wrong, and it re-reads as a reload
+  // would.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T07:00:00`, `${TODAY}T08:00:00`)
+  const before = await (await account.api.get('/api/time/entries')).text()
+  // The other device, before this page has read anything.
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T10:00:00`)
+
+  let stale = true
+  await page.route('**/api/time/entries**', (route) => {
+    if (!stale || !isSessionRead(route.request())) return route.continue()
+    stale = false
+    return route.fulfill({ status: 200, contentType: 'application/json', body: before })
+  })
+  const baseline = page.waitForResponse((response) => response.url().includes('/api/changes'))
+  await page.goto('/time/record')
+  await expect(todaysRows(page)).toHaveCount(1)
+  await baseline
+
+  // A background check past the floor: it asks, and agrees with the server.
+  await page.clock.fastForward(PAST_THE_FLOOR)
+  const checked = page.waitForResponse((response) => response.url().includes('/api/changes'))
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await checked
+  await page.waitForTimeout(300)
+  await expect(todaysRows(page)).toHaveCount(1)
+
+  await page.locator('[data-sync] button').click()
+  await expect(todaysRows(page)).toHaveCount(2)
+})
+
+test('a re-read that failed is asked for again by the next check', async ({ page, account }) => {
+  // The digest used to adopt the server's answer before re-reading what had
+  // moved. A re-read that then failed left the page stale and the digest
+  // agreeing with the server, so no later check — and no press on the cloud —
+  // ever asked again. Only a reload fixed it.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T07:00:00`, `${TODAY}T08:00:00`)
+  const baseline = page.waitForResponse((response) => response.url().includes('/api/changes'))
+  await page.goto('/time/record')
+  await expect(todaysRows(page)).toHaveCount(1)
+  await baseline
+
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T10:00:00`)
+  let failing = true
+  let failed = 0
+  await page.route('**/api/time/entries**', (route) => {
+    if (!failing || !isSessionRead(route.request())) return route.continue()
+    failed += 1
+    return route.abort()
+  })
+  await page.clock.fastForward(PAST_THE_FLOOR)
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect.poll(() => failed).toBeGreaterThan(0)
+  await expect(todaysRows(page)).toHaveCount(1)
+
+  // The connection is back, and nobody touches the cloud: the next background
+  // check has to find the moved collection still unread.
+  failing = false
+  await page.clock.fastForward(PAST_THE_FLOOR)
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('online'))
+    window.dispatchEvent(new Event('focus'))
+  })
+  await expect(todaysRows(page)).toHaveCount(2)
+})
+
+test('a re-read that landed is not asked for again', async ({ page, account }) => {
+  // The other half of remembering a failure: telling one apart from a success.
+  // Mistaken for a failure, every re-read would be repeated by every later check
+  // — a request on each focus, for ever, for nothing anybody changed.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T07:00:00`, `${TODAY}T08:00:00`)
+  const baseline = page.waitForResponse((response) => response.url().includes('/api/changes'))
+  await page.goto('/time/record')
+  await expect(todaysRows(page)).toHaveCount(1)
+  await baseline
+
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T10:00:00`)
+  await page.clock.fastForward(PAST_THE_FLOOR)
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect(todaysRows(page)).toHaveCount(2)
+
+  let reads = 0
+  page.on('request', (request) => {
+    if (isSessionRead(request)) reads += 1
+  })
+  await page.clock.fastForward(PAST_THE_FLOOR)
+  const checked = page.waitForResponse((response) => response.url().includes('/api/changes'))
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await checked
+  await page.waitForTimeout(500)
+  expect(reads).toBe(0)
+})
+
+test('pressing the cloud after a failed read reaches the server and reads again', async ({
+  page,
+  account,
+}) => {
+  // A read that never arrived tells the app it is offline, and a refresh asked
+  // for then has nobody to ask. The press is the reason to look, so it asks
+  // whether the server is back rather than waiting thirty seconds for the timer.
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T07:00:00`, `${TODAY}T08:00:00`)
+  const baseline = page.waitForResponse((response) => response.url().includes('/api/changes'))
+  await page.goto('/time/record')
+  await expect(todaysRows(page)).toHaveCount(1)
+  await baseline
+
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T10:00:00`)
+  // Both reads a moved session list sets off, or the one that answers says the
+  // server is reachable and the app never thinks otherwise.
+  let failing = true
+  await page.route('**/api/time/**', (route) => {
+    const path = new URL(route.request().url()).pathname
+    const read = path === '/api/time/entries' || path === '/api/time/range'
+    return failing && read ? route.abort() : route.continue()
+  })
+  await page.clock.fastForward(PAST_THE_FLOOR)
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect(page.locator('[data-sync]')).toHaveAttribute('data-sync', 'offline')
+  await expect(todaysRows(page)).toHaveCount(1)
+
+  failing = false
+  await page.locator('[data-sync] button').click()
+  await expect(todaysRows(page)).toHaveCount(2)
+})
+
+test('pressing the cloud re-reads only what this tab has read', async ({ page }) => {
+  // A reload of the record reads sessions, not tasks or answers, and neither
+  // does the cloud: a refresh of collections nobody is looking at is a cost on
+  // exactly the connection that made somebody press it.
+  await page.goto('/time/record')
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  await page.waitForTimeout(600)
+
+  const asked = []
+  page.on('request', (request) => asked.push(new URL(request.url()).pathname))
+  await page.locator('[data-sync] button').click()
+  await expect.poll(() => asked.filter((path) => path === '/api/time/entries').length).toBeGreaterThan(0)
+  await page.waitForTimeout(500)
+  expect(asked.filter((path) => path === '/api/todos' || path === '/api/answers')).toEqual([])
+})
+
 test('the track view paints from the store while its loads are still in the air', async ({
   page,
   account,

@@ -354,13 +354,87 @@ const PERSISTED = {
 }
 
 /**
- * Which values have been read from the server this session.
+ * Which values have been read from the server this session, and how often.
  *
  * A snapshot restored from disk is shown immediately and then replaced: it is
  * what the app *had*, not what the app knows. Without this the first `ensure`
  * after a reload would answer from a week-old copy and never ask again.
+ *
+ * A Set, so every `fetched.has` and `fetched.add` reads as it always did. The
+ * count beside each mark is what tells a forced re-read that landed from one
+ * that failed: a failure leaves the earlier mark standing, so `has` alone
+ * cannot see it — see `applyChanges`.
  */
-const fetched = new Set()
+class ReadMarks extends Set {
+  /** Confirmed reads per mark, counted. */
+  reads = new Map()
+
+  add(key) {
+    this.reads.set(key, (this.reads.get(key) ?? 0) + 1)
+    return super.add(key)
+  }
+}
+const fetched = new ReadMarks()
+
+/**
+ * The `fetched` marks each collection the change digest names stands behind.
+ *
+ * What lets a refresh ask "has this tab read it?" and a re-read answer "did it
+ * land?" in the digest's own vocabulary. Steps arrive inside their tasks, and a
+ * session's tracked days with the sessions. A name the server reports and this
+ * map does not know stands behind nothing, so it is neither held nor failed.
+ */
+const DIGEST_MARKS = {
+  answers: ['answers'],
+  time_entries: ['time', 'tracked-range'],
+  pomodoros: ['pomodoros'],
+  todos: ['todos'],
+  todo_steps: ['todos'],
+  todo_lists: ['todo-lists'],
+  projects: ['projects'],
+  tags: ['tags'],
+  rules: ['rules'],
+  catalogues: ['catalogues'],
+  me: ['me'],
+}
+
+/**
+ * The marks a re-read of one digest collection renews, as `applyChanges` does it.
+ *
+ * Two depend on what is held: the landing page reads one catalogue's questions
+ * without ever reading the list of catalogues, and the archive is re-read with
+ * the tasks only where this device has looked at it.
+ *
+ * @param {string} name A collection, as the digest names it.
+ * @returns {Array<string>} The `fetched` keys behind it.
+ */
+function marksOf(name) {
+  if (name === 'catalogues') {
+    return [
+      'catalogues',
+      ...Object.keys(get(catalogueDetails)).map((id) => `catalogue:${id}`),
+    ]
+  }
+  if ((name === 'todos' || name === 'todo_steps') && fetched.has('archive')) {
+    return ['todos', 'archive']
+  }
+  return DIGEST_MARKS[name] ?? []
+}
+
+/**
+ * The digest collections this tab has read, which is what a refresh re-reads.
+ *
+ * Read, not held: a snapshot restored from disk holds collections no page here
+ * has asked for, and the page that wants one reads it when it is opened — as
+ * after a reload.
+ *
+ * @returns {Array<string>} Collection names, as the digest reports them.
+ */
+export function heldCollections() {
+  return Object.keys(DIGEST_MARKS).filter((name) =>
+    marksOf(name).some((mark) => fetched.has(mark))
+  )
+}
 
 /**
  * The answers as the server last gave them, before the queue is laid over.
@@ -1380,12 +1454,23 @@ notices.subscribe((all) => {
  * laid back over whatever arrives, so a revalidation landing mid-flush cannot
  * erase writes that have not been sent.
  *
+ * Which re-reads did *not* land is the answer, because the digest has to know:
+ * it used to adopt the server's fingerprint before reading, so a re-read that
+ * failed left the page stale and the digest agreeing with the server, and no
+ * later check ever asked again. A failure is told by its mark's count not
+ * moving — the earlier mark is still standing, so `has` would call it read.
+ *
  * @param {Array<string>} moved Collection names, as the digest reports them.
- * @returns {Promise<void>} When every affected loader has settled.
+ * @returns {Promise<Array<string>>} The names whose re-read failed, once every
+ *   affected loader has settled.
  */
 export async function applyChanges(moved) {
   const changed = new Set(moved)
   const loads = []
+  const marks = new Map(moved.map((name) => [name, marksOf(name)]))
+  const readsBefore = new Map(
+    [...marks.values()].flat().map((mark) => [mark, fetched.reads.get(mark) ?? 0])
+  )
 
   if (changed.has('answers')) {
     // Marked stale rather than discarded, for the reason `rememberAnswer`
@@ -1448,6 +1533,9 @@ export async function applyChanges(moved) {
   if (changed.has('me')) loads.push(ensureMe({ force: true }))
 
   await Promise.all(loads)
+  return moved.filter((name) =>
+    marks.get(name).some((mark) => (fetched.reads.get(mark) ?? 0) === readsBefore.get(mark))
+  )
 }
 
 /** Drop every cached value, for a sign-out or a change that invalidates all of it. */

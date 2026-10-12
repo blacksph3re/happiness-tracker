@@ -3,8 +3,8 @@ import { get } from 'svelte/store'
 import { diffDigest } from './digest.js'
 import { getChanges } from './generated/sdk.gen'
 import { path } from './router.js'
-import { applyChanges } from './store.js'
-import { connection, whenReachable } from './sync.js'
+import { applyChanges, heldCollections } from './store.js'
+import { connection, probe, whenReachable } from './sync.js'
 
 /**
  * Learning what changed on the server, without reading any of it.
@@ -59,8 +59,41 @@ export function revalidate({ force = false } = {}) {
   // Nothing to ask, and asking would set the connection state from a request
   // that was never going to work. `probe()` owns finding out when it comes back.
   if (get(connection) !== 'online') return Promise.resolve([])
+  return run(false)
+}
 
-  checking = check().finally(() => {
+/**
+ * Re-read everything this tab has read, as a reload would.
+ *
+ * The cloud's press, and the one way past what the digest cannot see. It
+ * compares the server with itself, never with the screen: a page whose read
+ * answered from just *before* a change, or a change landing in the same second
+ * as the one before it, looks current to every background check for good. A
+ * press is somebody saying the screen is wrong, so it reads again whatever the
+ * digest thinks. What this tab never read is left to the page that wants it, as
+ * a reload leaves it.
+ *
+ * It waits for a check already out rather than joining it — that one reads
+ * only what moved — and when the app believes it is offline it asks whether the
+ * server is back first, because the press is the reason to look.
+ *
+ * @returns {Promise<Array<string>>} What was re-read; empty when the server
+ *   could not be reached.
+ */
+export async function refresh() {
+  while (checking) await checking
+  if (get(connection) !== 'online') {
+    await probe()
+    if (get(connection) !== 'online') return []
+  }
+  // Reaching the server may have drained the queue, and a drain asks what moved.
+  while (checking) await checking
+  return run(true)
+}
+
+/** Start a check, holding the floor and the one-at-a-time rule for it. */
+function run(everything) {
+  checking = check(everything).finally(() => {
     // Stamped on completion, not on entry: a check that took twenty seconds has
     // to hold the floor for ten more *after* it lands, or a slow connection
     // spends its whole life re-asking.
@@ -70,17 +103,40 @@ export function revalidate({ force = false } = {}) {
   return checking
 }
 
-async function check() {
+/**
+ * Ask what changed and re-read it, or with `everything`, re-read all this tab holds.
+ *
+ * @param {boolean} everything Whether to re-read every collection this tab has
+ *   read, rather than only what the digest says moved.
+ * @returns {Promise<Array<string>>} The collections re-read.
+ */
+async function check(everything) {
   const { data } = await getChanges()
   // No answer: leave `lastSeen` alone. Overwriting it with nothing would make
   // the next successful check compare against a baseline that never existed and
   // re-read every collection at once.
   if (!data) return []
 
-  const moved = diffDigest(lastSeen, data)
+  const previous = lastSeen
+  const moved = diffDigest(previous, data)
   lastSeen = data
-  if (moved.length) await applyChanges(moved)
-  return moved
+  const reading = everything ? [...new Set([...heldCollections(), ...moved])] : moved
+  if (!reading.length) return []
+
+  const failed = await applyChanges(reading)
+  // A collection whose re-read did not land keeps the fingerprint from before
+  // it, so the next check finds it moved again rather than agreeing with a
+  // server this page never heard back from. Only while the baseline is still
+  // this one: a sign-out in between forgot it, and the previous account's
+  // fingerprints must not come back.
+  if (failed.length && lastSeen === data) {
+    lastSeen = { ...data }
+    for (const name of failed) {
+      if (previous?.[name]) lastSeen[name] = previous[name]
+      else delete lastSeen[name]
+    }
+  }
+  return reading
 }
 
 /**
