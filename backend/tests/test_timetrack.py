@@ -582,3 +582,26 @@ def test_every_band_switched_off_counts_what_was_tracked():
 
 def test_a_budget_with_no_contract_is_empty():
     assert budget_days(tracked={}, contracts=[], today=june(15)) == []
+
+
+def test_a_day_off_from_the_balance_costs_its_hours_and_is_still_a_day_off():
+    rows = budget(days_off={june(3): "balance"}, today=4)
+    assert (rows[3].kind, rows[3].name) == ("off", "balance")
+    assert rows[3].expected == 8 * HOUR
+    assert rows[3].balance == rows[2].balance - 8 * HOUR
+
+
+def test_time_tracked_on_a_day_off_from_the_balance_counts_against_its_hours():
+    rows = budget(tracked={3: 2}, days_off={june(3): "balance"}, today=4)
+    assert rows[3].balance - rows[2].balance == -6 * HOUR
+
+
+def test_a_day_off_from_the_balance_on_a_weekend_or_a_holiday_costs_nothing():
+    # Saturday the 6th; Corpus Christi, Thursday the 4th, in Bavaria.
+    rows = budget(
+        days_off={june(6): "balance", june(4): "balance"},
+        contracts=[contract(state="BY")],
+        today=8,
+    )
+    assert (rows[6].kind, rows[6].expected) == ("rest", 0)
+    assert (rows[4].kind, rows[4].expected) == ("holiday", 0)

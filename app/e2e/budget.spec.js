@@ -1,4 +1,12 @@
-import { expect, makeProject, makeTag, recordSession, test, TODAY } from './fixtures.js'
+import {
+  expect,
+  makeProject,
+  makeTag,
+  recordSession,
+  resolveColours,
+  test,
+  TODAY,
+} from './fixtures.js'
 
 /**
  * The hour budget: contracts on a tag, days off, resets, and the Record page's
@@ -43,6 +51,23 @@ async function dayOffElsewhere(account, tag, day, kind = 'vacation') {
           kind: 'dayoff.put',
           client_updated_at: '2026-06-15T10:00:00',
           payload: { tag_id: tag.id, day, kind },
+        },
+      ],
+    },
+  })
+  expect((await response.json()).results[0].outcome).toBe('applied')
+}
+
+/** Set a tag's hour budget on a day from another device, in minutes. */
+async function resetElsewhere(account, tag, day, minutes) {
+  const response = await account.api.post('/api/sync', {
+    data: {
+      intents: [
+        {
+          seq: 1,
+          kind: 'budget.put',
+          client_updated_at: '2026-06-15T10:00:00',
+          payload: { tag_id: tag.id, day, balance_minutes: minutes },
         },
       ],
     },
@@ -249,7 +274,7 @@ test('marking an untracked day off clears it and moves the balance by its hours'
   await aWeek(account, project)
   await openBudget(page)
 
-  await row(page, '2026-06-10').getByRole('button', { name: /^Mark .* off$/ }).click()
+  await row(page, '2026-06-10').getByRole('button', { name: /^Mark .* as vacation$/ }).click()
   await expect(row(page, '2026-06-10')).toHaveAttribute('data-state', 'off')
   await expect(row(page, '2026-06-10')).toContainText('Vacation')
   await expect(page.locator('[data-budget-balance]')).toHaveText('+1h 00m')
@@ -312,6 +337,95 @@ test('a Set hour budget record restarts the balance and survives a reload', asyn
   await expect(page.locator('[data-budget-reset="2026-06-11"]')).toBeVisible()
 })
 
+test('a week holding a reset counts from the reset, and the reset says what it replaced', async ({
+  page,
+  account,
+}) => {
+  const { tag, project } = await contracted(account)
+  await aWeek(account, project)
+  await resetElsewhere(account, tag, '2026-06-11', 0)
+  await openBudget(page)
+
+  // Monday to Wednesday came to −7h, which the reset on Thursday replaced; from
+  // Thursday on the week is even, so that is what the week says.
+  await expect(page.locator('[data-budget-reset="2026-06-11"]')).toContainText(
+    `Budget set to 0h 00m · was ${MINUS}7h 00m`
+  )
+  await expect(page.locator('[data-budget-week="2026-06-08"] [data-week-change]')).toHaveText(
+    '0h 00m'
+  )
+  await expect(page.locator('[data-budget-balance]')).toHaveText('0h 00m')
+})
+
+test("a reset on the budget's first day replaces nothing and says nothing about it", async ({
+  page,
+  account,
+}) => {
+  const { tag, project } = await contracted(account)
+  await aWeek(account, project)
+  await resetElsewhere(account, tag, '2026-06-08', 120)
+  await openBudget(page)
+
+  const reset = page.locator('[data-budget-reset="2026-06-08"]')
+  await expect(reset).toContainText('Budget set to +2h 00m')
+  expect(await reset.textContent()).not.toContain('was')
+  // The whole week counts, since the reset sits at its very start.
+  await expect(page.locator('[data-budget-week="2026-06-08"] [data-week-change]')).toHaveText(
+    `${MINUS}7h 00m`
+  )
+})
+
+test("a day off taken from the balance costs the day's hours without the warning", async ({
+  page,
+  account,
+}) => {
+  const { project } = await contracted(account)
+  await aWeek(account, project)
+  await openBudget(page)
+  await expect(row(page, '2026-06-10')).toHaveAttribute('data-state', 'untracked')
+
+  await row(page, '2026-06-10').getByRole('button', { name: /^Mark .* as a day off$/ }).click()
+
+  // A day off, not a gap — and still the eight hours it cost untracked.
+  await expect(row(page, '2026-06-10')).toHaveAttribute('data-state', 'off')
+  await expect(row(page, '2026-06-10')).toContainText('Day off')
+  await expect(row(page, '2026-06-10').locator('[data-budget-change]')).toHaveText(
+    `${MINUS}8h 00m`
+  )
+  // Nothing tracked, so no total beside it: the change says what it cost.
+  expect(await row(page, '2026-06-10').locator('[data-budget-total]').count()).toBe(0)
+  await expect(page.locator('[data-budget-balance]')).toHaveText(`${MINUS}7h 00m`)
+  await expect(page.locator('[data-pending]')).toHaveAttribute('data-pending', '0')
+  const records = await (await account.api.get('/api/time/budget-records')).json()
+  expect(records.days_off.map(({ day, kind }) => [day, kind])).toEqual([['2026-06-10', 'balance']])
+
+  // Taken back, it is a gap again.
+  await page.getByLabel('Clear the day off on Wed, Jun 10', { exact: true }).click()
+  await expect(row(page, '2026-06-10')).toHaveAttribute('data-state', 'untracked')
+  await expect(page.locator('[data-budget-balance]')).toHaveText(`${MINUS}7h 00m`)
+})
+
+test('the add panel marks a range as days off taken from the balance', async ({
+  page,
+  account,
+}) => {
+  await contracted(account)
+  await openBudget(page)
+  await expect(page.locator('[data-budget-balance]')).toHaveText(`${MINUS}40h 00m`)
+
+  await page.locator('[data-add-session]').click()
+  await page.locator('[data-add-kind="dayoff"]').click()
+  await page.getByLabel('First day', { exact: true }).fill('2026-06-11')
+  await page.getByLabel('Last day', { exact: true }).fill('2026-06-12')
+  await page.locator('[data-off-kind="balance"]').click()
+  await page.getByRole('button', { name: 'Mark days off' }).click()
+
+  await expect(row(page, '2026-06-11')).toContainText('Day off')
+  await expect(row(page, '2026-06-12')).toHaveAttribute('data-state', 'off')
+  // Nothing tracked all week: marked or not, the week still costs forty hours.
+  await expect(page.locator('[data-budget-balance]')).toHaveText(`${MINUS}40h 00m`)
+})
+
 test('a range of days off marks each workday in it', async ({ page, account }) => {
   const { tag } = await contracted(account)
   await openBudget(page)
@@ -350,7 +464,7 @@ test('a day off marked with no connection shows at once and reaches the server',
   await openBudget(page)
 
   await context.setOffline(true)
-  await row(page, '2026-06-10').getByRole('button', { name: /^Mark .* off$/ }).click()
+  await row(page, '2026-06-10').getByRole('button', { name: /^Mark .* as vacation$/ }).click()
   await expect(row(page, '2026-06-10')).toHaveAttribute('data-state', 'off')
   await expect(page.locator('[data-budget-balance]')).toHaveText('+1h 00m')
 
@@ -677,7 +791,7 @@ test('a day off still waiting to be sent survives a reload and the read after it
   await page.route('**/api/sync', (route) => (holding ? route.abort() : route.continue()))
   await openBudget(page)
 
-  await row(page, '2026-06-10').getByRole('button', { name: /^Mark .* off$/ }).click()
+  await row(page, '2026-06-10').getByRole('button', { name: /^Mark .* as vacation$/ }).click()
   await expect(row(page, '2026-06-10')).toHaveAttribute('data-state', 'off')
 
   const read = page.waitForResponse((response) => response.url().includes('/api/time/budget-records'))
@@ -694,4 +808,294 @@ test('a day off still waiting to be sent survives a reload and the read after it
   await expect(page.locator('[data-pending]')).toHaveAttribute('data-pending', '0')
   const records = await (await account.api.get('/api/time/budget-records')).json()
   expect(records.days_off.map((one) => one.day)).toEqual(['2026-06-10'])
+})
+
+// The hour budget on time Patterns. The suite's clock is Monday 15 June 2026, so
+// the month window is June, and today — open, not yet counted — is never drawn.
+
+/** Open time Patterns in Budget mode. */
+async function openPatternsBudget(page) {
+  await page.goto('/time/patterns')
+  await page.locator('[data-group-by="budget"]').click()
+  await expect(page.locator('[data-group-by="budget"]')).toHaveAttribute('aria-pressed', 'true')
+}
+
+/** What the balance line draws, in hours, or null before it has drawn. */
+async function budgetLine(page) {
+  return page.evaluate(() => {
+    const option = document.querySelector('[data-budget-line]')?.__chartForTests?.getOption()
+    if (!option) return null
+    const named = (name) => option.series.find((one) => one.name === name)?.data ?? null
+    return {
+      days: option.xAxis[0].data,
+      balance: named('Balance'),
+      untracked: named('Not tracked'),
+      resets: named('Budget set'),
+    }
+  })
+}
+
+/** A pie's slices as `{name: hours}`, or null before it has drawn. */
+async function pie(page, which) {
+  return page.evaluate((key) => {
+    const option = document
+      .querySelector(`[data-budget-pie="${key}"]`)
+      ?.__chartForTests?.getOption()
+    if (!option) return null
+    return Object.fromEntries(option.series[0].data.map((slice) => [slice.name, slice.value]))
+  }, which)
+}
+
+const WEEK_DAYS = [
+  '2026-06-08',
+  '2026-06-09',
+  '2026-06-10',
+  '2026-06-11',
+  '2026-06-12',
+  '2026-06-13',
+  '2026-06-14',
+]
+
+test('Budget on patterns appears only with a contract, is remembered, and falls back without one', async ({
+  page,
+  account,
+}) => {
+  const tag = await makeTag(account, 'Work')
+  const project = await makeProject(account, 'Backend', { tag_ids: [tag.id] })
+  await recordSession(account, project.id, '2026-06-09T07:00:00', '2026-06-09T09:00:00', 120)
+  const groupings = []
+  page.on('request', (request) => {
+    if (request.url().includes('/api/time/summary')) {
+      groupings.push(new URL(request.url()).searchParams.get('by'))
+    }
+  })
+  await page.goto('/time/patterns')
+  await expect(page.locator('[data-group-by="tag"]')).toBeVisible()
+  await expect(page.locator('[data-group-by="budget"]')).toHaveCount(0)
+
+  await contract(account, tag, [{ starts_on: '2026-06-08', daily_minutes: 480, workdays: 31 }])
+  await openPatternsBudget(page)
+  await expect
+    .poll(async () => (await (await account.api.get('/api/me/preferences')).json()).time?.by)
+    .toBe('budget')
+  await page.reload()
+  await expect(page.locator('[data-group-by="budget"]')).toHaveAttribute('aria-pressed', 'true')
+
+  // The contract goes, and a remembered Budget would point at nothing.
+  await contract(account, tag, [])
+  await page.reload()
+  await expect(page.locator('[data-group-by="project"]')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('[data-group-by="budget"]')).toHaveCount(0)
+  // And it really reads by project. The summary is never asked for "budget",
+  // which the server does not know — a refusal there would be covered up by the
+  // totals the device works out for itself, so the request is the claim.
+  await expect(page.locator('[data-group="Backend"]')).toBeVisible()
+  expect(groupings.length).toBeGreaterThan(0)
+  expect(groupings.filter((by) => by !== 'project' && by !== 'tag')).toEqual([])
+})
+
+test('with two contracted tags, the chips pick whose budget the patterns page draws', async ({
+  page,
+  account,
+}) => {
+  const { project } = await contracted(account)
+  await aWeek(account, project)
+  const side = await makeTag(account, 'Side')
+  await makeProject(account, 'Other', { tag_ids: [side.id] })
+  await contract(account, side, [{ starts_on: '2026-06-08', daily_minutes: 240, workdays: 31 }])
+  await openPatternsBudget(page)
+
+  await expect
+    .poll(async () => (await budgetLine(page))?.balance ?? null)
+    .toEqual([0, 1, -7, -7, -7, -7, -7])
+  await page.locator(`[data-budget-tag="${side.id}"]`).click()
+  // Four hours a weekday, none of them tracked.
+  await expect
+    .poll(async () => (await budgetLine(page))?.balance ?? null)
+    .toEqual([-4, -8, -12, -16, -20, -20, -20])
+})
+
+test('the patterns budget line follows the balance from what the window carried in', async ({
+  page,
+  account,
+}) => {
+  // From Monday the 1st, so the week of the 8th opens on five untracked days.
+  const { project } = await contracted(account, { period: { starts_on: '2026-06-01' } })
+  await aWeek(account, project)
+  await openPatternsBudget(page)
+  await page.getByRole('button', { name: 'Week', exact: true }).click()
+  await page.getByRole('button', { name: '← Previous' }).click()
+
+  await expect
+    .poll(() => budgetLine(page))
+    .toEqual({
+      days: WEEK_DAYS,
+      balance: [-40, -39, -47, -47, -47, -47, -47],
+      untracked: [null, null, -47, null, null, null, null],
+      resets: [null, null, null, null, null, null, null],
+    })
+  await expect(page.locator('[data-period]')).toContainText(
+    `· ${MINUS}7h 00m · balance ${MINUS}47h 00m`
+  )
+})
+
+test('a reset on the patterns line is a step, and the window counts from it', async ({
+  page,
+  account,
+}) => {
+  const { tag, project } = await contracted(account)
+  await aWeek(account, project)
+  // To +5h rather than to zero, so "since the reset" and "since the window
+  // began" are different numbers.
+  await resetElsewhere(account, tag, '2026-06-11', 300)
+  await openPatternsBudget(page)
+
+  // June, from the contract's first day; today is not drawn.
+  await expect
+    .poll(() => budgetLine(page))
+    .toEqual({
+      days: WEEK_DAYS,
+      balance: [0, 1, -7, 5, 5, 5, 5],
+      untracked: [null, null, -7, null, null, null, null],
+      resets: [null, null, null, 5, null, null, null],
+    })
+  await expect(page.locator('[data-period]')).toContainText('· 0h 00m · balance +5h 00m')
+  await expect(page.locator('[data-budget-today]')).toBeVisible()
+})
+
+test('the patterns budget pies split the time into counted and deducted, by band, and the expected hours', async ({
+  page,
+  account,
+}) => {
+  // Bavaria from the 1st, so the 4th is Corpus Christi; Wednesday the 10th off.
+  const { tag, project } = await contracted(account, {
+    period: { starts_on: '2026-06-01', state: 'BY' },
+    rule: { add_minutes: 60, bands: [LUNCH, { from_minutes: 600, deduct_minutes: 45 }] },
+  })
+  await aWeek(account, project)
+  await dayOffElsewhere(account, tag, '2026-06-10')
+  await openPatternsBudget(page)
+
+  // Nine hours with the addition reach the lunch band; Tuesday's ten, the long one.
+  await expect.poll(() => pie(page, 'deducted')).toEqual({ Counted: 34.75, Deducted: 2.25 })
+  await expect.poll(() => pie(page, 'bands')).toEqual({ 'From 3h 00m': 1.5, 'From 10h 00m': 0.75 })
+  await expect
+    .poll(() => pie(page, 'expected'))
+    .toEqual({ Met: 32, Short: 32, 'Days off': 8, 'Public holidays': 8 })
+
+  const sum = (name) => page.locator(`[data-budget-sums] [data-sum="${name}"]`)
+  await expect(sum('Tracked')).toHaveText('33h 00m')
+  await expect(sum('Added')).toHaveText('+4h 00m')
+  await expect(sum('Deducted')).toHaveText(`${MINUS}2h 15m`)
+  await expect(sum('Counted')).toHaveText('34h 45m')
+  await expect(sum('Expected')).toHaveText('64h 00m')
+})
+
+test("the expected-hours pie names a day off taken from the balance apart from a gap", async ({
+  page,
+  account,
+}) => {
+  const { tag, project } = await contracted(account)
+  await aWeek(account, project)
+  await dayOffElsewhere(account, tag, '2026-06-10', 'balance')
+  await openPatternsBudget(page)
+  await expect.poll(() => pie(page, 'expected')).toEqual({ Met: 32, 'Taken off': 8 })
+})
+
+test('the band pie is drawn only for a rule with two bands or more', async ({ page, account }) => {
+  const { project } = await contracted(account, { rule: { bands: [LUNCH] } })
+  await aWeek(account, project)
+  await openPatternsBudget(page)
+  await expect.poll(() => pie(page, 'deducted')).toEqual({ Counted: 31, Deducted: 2 })
+  expect(await page.locator('[data-budget-pie="bands"]').count()).toBe(0)
+})
+
+test('a stored day filter and smoothing span change nothing in budget mode', async ({
+  page,
+  account,
+}) => {
+  const { project } = await contracted(account)
+  await aWeek(account, project)
+  await account.api.put('/api/me/preferences', {
+    data: { time: { by: 'budget', unit: 'month', smoothing: 7, filters: { weekday: [6] } } },
+  })
+  await page.goto('/time/patterns')
+  await expect(page.locator('[data-group-by="budget"]')).toHaveAttribute('aria-pressed', 'true')
+
+  await expect
+    .poll(async () => (await budgetLine(page))?.balance ?? null)
+    .toEqual([0, 1, -7, -7, -7, -7, -7])
+  expect(await page.getByText('Only days where').count()).toBe(0)
+  expect(await page.getByLabel('Smoothing').count()).toBe(0)
+})
+
+test('Day in budget mode is that day explained', async ({ page, account }) => {
+  const { project } = await contracted(account, { rule: { add_minutes: 60, bands: [LUNCH] } })
+  await aWeek(account, project)
+  await openPatternsBudget(page)
+  await page.getByRole('button', { name: 'Day', exact: true }).click()
+  // Today first: it counts once it is over.
+  const card = page.locator('[data-budget-breakdown]')
+  await expect(card).toContainText('Today counts once it is over.')
+  for (let step = 0; step < 6; step += 1) {
+    await page.getByRole('button', { name: '← Previous' }).click()
+  }
+  await expect(card).toHaveAttribute('data-budget-breakdown', '2026-06-09')
+  const line = (name) => card.locator(`[data-breakdown-line="${name}"] [data-breakdown-value]`)
+  await expect(line('Tracked')).toHaveText('9h 00m')
+  await expect(line('Added')).toHaveText('+1h 00m')
+  await expect(line('Deducted')).toHaveText(`${MINUS}0h 30m`)
+  await expect(line('Counted')).toHaveText('9h 30m')
+  await expect(line('Expected')).toHaveText('8h 00m')
+  await expect(line('Change')).toHaveText('+1h 30m')
+  await expect(line('Balance')).toHaveText('+2h 00m')
+})
+
+test('the patterns budget line redraws in the light colours when the theme changes', async ({
+  page,
+  account,
+}) => {
+  const { project } = await contracted(account)
+  await aWeek(account, project)
+  await page.addInitScript(() => localStorage.setItem('ht.appearance', 'system'))
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await openPatternsBudget(page)
+
+  const chart = page.locator('[data-budget-line]')
+  async function drawn() {
+    const option = await chart.evaluate((node) => node.__chartForTests?.getOption() ?? null)
+    if (!option) return null
+    return resolveColours(page, { grid: option.yAxis[0].splitLine.lineStyle.color })
+  }
+  const tokens = () => resolveColours(page, { grid: '--color-chart-grid' })
+  const dark = await tokens()
+  await expect.poll(drawn).toEqual(dark)
+
+  await page.emulateMedia({ colorScheme: 'light' })
+  // The page applies the theme on its own media listener: read the tokens only
+  // once it has, or they are still the dark ones.
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  const light = await tokens()
+  expect(light.grid).not.toBe(dark.grid)
+  await expect.poll(drawn).toEqual(light)
+})
+
+test('the patterns budget fits a 320px screen', async ({ page, account }) => {
+  const { project } = await contracted(account, { rule: { add_minutes: 60, bands: [LUNCH] } })
+  await aWeek(account, project)
+  await page.setViewportSize({ width: 320, height: 700 })
+  await openPatternsBudget(page)
+  await expect.poll(() => pie(page, 'expected')).not.toBeNull()
+
+  let worst = 0
+  for (let at = 0; at < 8; at += 1) {
+    worst = Math.max(
+      worst,
+      await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+      )
+    )
+    await page.waitForTimeout(50)
+  }
+  expect(worst, 'the page scrolls sideways').toBe(0)
 })

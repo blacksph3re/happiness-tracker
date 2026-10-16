@@ -491,6 +491,9 @@ def group_by_tag(
     return grouped
 
 
+TAKEN_FROM_BALANCE = "balance"
+"""The day-off kind that costs its hours rather than excusing them."""
+
 MONDAY_TO_FRIDAY = 0b0011111
 """The default workdays of a contract, as a bitmask with Monday as bit 0."""
 
@@ -619,7 +622,9 @@ def budget_days(
     bands : list of Band, optional
         The tag's bands, each with ``in_budget``.
     days_off : dict, optional
-        ``{day: kind}`` of days off marked by hand.
+        ``{day: kind}`` of days off marked by hand. Every kind but
+        ``balance`` excuses the day; ``balance`` keeps its expected hours, so it
+        costs them as an untracked workday would.
     resets : dict, optional
         ``{day: seconds}`` of the balance fixed at the start of a day.
 
@@ -661,7 +666,10 @@ def budget_days(
             kind, name = "off", days_off[day]
         else:
             kind, name = "workday", None
-        expected = period.daily_minutes * 60 if kind == "workday" else 0
+        # A day off taken from the balance is still a day off, but it costs its
+        # hours: only the kinds that excuse a day take its expectation away.
+        costs = kind == "workday" or (kind == "off" and name == TAKEN_FROM_BALANCE)
+        expected = period.daily_minutes * 60 if costs else 0
         counted = _counted(tracked.get(day, 0), add_minutes, add_in_budget, bands)
 
         reset = resets.get(day)

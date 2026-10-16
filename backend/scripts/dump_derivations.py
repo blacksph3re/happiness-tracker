@@ -361,6 +361,26 @@ BUDGET_CASES = [
         },
     ),
     _budget_case(
+        "days off taken from the balance, one worked on and one on a weekend",
+        [
+            {
+                "starts_on": "2026-06-01",
+                "daily_minutes": 480,
+                "workdays": 31,
+                "state": "BY",
+            }
+        ],
+        {"2026-06-02": 2 * 3600, "2026-06-06": 3600},
+        "2026-06-09",
+        days_off={
+            "2026-06-01": "balance",
+            "2026-06-02": "balance",
+            "2026-06-04": "balance",
+            "2026-06-06": "balance",
+            "2026-06-08": "vacation",
+        },
+    ),
+    _budget_case(
         "a reset, and a later one",
         [{"starts_on": "2026-06-01", "daily_minutes": 480, "workdays": 31}],
         {"2026-06-03": 10 * 3600},

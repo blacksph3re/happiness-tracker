@@ -232,7 +232,7 @@ export type DayOffOut = {
     /**
      * Kind
      */
-    kind: 'vacation' | 'sick' | 'other';
+    kind: 'vacation' | 'sick' | 'other' | 'balance';
     /**
      * Note
      */

@@ -9,11 +9,13 @@
   import { ensureSummary, summaryRevision } from '../../lib/store.js'
   import { currentDay, dayLabel, shiftDay, SYSTEM_SPECS, today } from '../../lib/day.js'
   import { daysIn, period, stepPeriod } from '../../lib/period.js'
-  import { formatDuration, hours, nowUtc } from '../../lib/clock.js'
+  import { formatDuration, formatSigned, hours, nowUtc } from '../../lib/clock.js'
+  import { breakdownLines, budgetForTag, budgetWindow } from '../../lib/time/budget.js'
   import DayTimeline from '../../lib/time/DayTimeline.svelte'
   import { movingAverage } from '../../lib/series.js'
   import { weekdayAverages } from '../../lib/time/weekday.js'
   import {
+    balanceOptions,
     barOptions,
     lineOptions,
     shareOptions,
@@ -21,7 +23,9 @@
   } from '../../lib/time/time-charts.js'
   import {
     answers as answerStore,
+    budgetRecords,
     ensureAnswers,
+    ensureBudgetRecords,
     ensureTagRules,
     ensureProjects,
     ensureTags,
@@ -35,16 +39,21 @@
     ready as hydrated,
     projects as projectStore,
     tags as tagStore,
+    tagRules,
+    timeEntries,
     trackedDays,
     variables as variableStore,
   } from '../../lib/store.js'
 
   /**
-   * Where the hours went, by project or by tag.
+   * Where the hours went, by project or by tag — or, for a tag with a contract,
+   * how its hour budget moved.
    *
    * The totals come from the server, already split at midnight and already
    * grouped — the one place that arithmetic happens, so this page and the
-   * spreadsheet cannot disagree about a day.
+   * spreadsheet cannot disagree about a day. The budget is the exception, as it
+   * is on Record: it is walked on the device from the sessions, the rule and the
+   * days off (`budgetForTag`), so both pages draw one computation.
    */
 
   // Day is a window like the others, but the shortest one is the only one worth
@@ -69,6 +78,32 @@
   const MAX_PAD = Math.floor((MAX_SMOOTHING - 1) / 2)
 
   let by = $state('project')
+
+  /** The tags carrying a contract, in tag order: what Budget mode offers. */
+  const contracted = $derived(
+    ($tagStore ?? []).filter((tag) => ($tagRules ?? {})[tag.id]?.contracts?.length)
+  )
+
+  /**
+   * Whether Budget mode is in force. A remembered *Budget* with no contract
+   * left points at nothing, so the page reads by project until one exists —
+   * the stored choice is kept, not overwritten, in case the rules simply have
+   * not arrived yet.
+   */
+  const budgetMode = $derived(by === 'budget' && contracted.length > 0)
+
+  /** What the server's totals are grouped by: never `budget`, which it does not know. */
+  const grouping = $derived(by === 'tag' ? 'tag' : 'project')
+
+  /** The pill that reads as pressed. */
+  const active = $derived(budgetMode ? 'budget' : grouping)
+
+  /** The tag Budget mode shows; the first contracted one until one is picked. */
+  let budgetPick = $state(null)
+  const budgetTag = $derived(
+    contracted.some((tag) => tag.id === budgetPick) ? budgetPick : (contracted[0]?.id ?? null)
+  )
+
   let unit = $state('month')
   let anchor = $state(today())
   let customDays = $state(30)
@@ -113,7 +148,7 @@
 
   /** Name and colour for a summary key, whichever grouping is in force. */
   const describe = $derived.by(() => {
-    const source = by === 'tag' ? ($tagStore ?? []) : ($projectStore ?? [])
+    const source = grouping === 'tag' ? ($tagStore ?? []) : ($projectStore ?? [])
     const known = new Map(source.map((item) => [item.id, item]))
     return (key) => {
       if (key === null) return { name: 'Untagged', colour: 'haze' }
@@ -182,7 +217,7 @@
    * nothing in particular. It is still reported, under the total and outside it,
    * because time nobody has filed is worth knowing about.
    */
-  const untagged = $derived(by === 'tag' ? groups.find((one) => one.key === null) : null)
+  const untagged = $derived(grouping === 'tag' ? groups.find((one) => one.key === null) : null)
 
   /** The groups every chart, legend and table row is drawn from. */
   const filed = $derived(groups.filter((group) => group.key !== null))
@@ -204,7 +239,7 @@
     rows.some(
       (row) =>
         ((row.deduction ?? 0) > 0 || (row.added ?? 0) > 0) &&
-        (by !== 'tag' || row.key !== null)
+        (grouping !== 'tag' || row.key !== null)
     )
   )
 
@@ -244,7 +279,7 @@
    * which put a business trip on four days it did not happen on and left the
    * bars contradicting the donut and the total on the same screen.
    */
-  const span = $derived(asLine ? smoothing : 1)
+  const span = $derived(asLine && !budgetMode ? smoothing : 1)
 
   /** Half a smoothing window: how far past each edge an average has to reach. */
   const smoothingPad = $derived(span > 1 ? Math.floor((span - 1) / 2) : 0)
@@ -344,7 +379,7 @@
   let ready = $state(false)
 
   const UNITS = ['day', 'week', 'month', 'quarter', 'custom']
-  const GROUPINGS = ['project', 'tag']
+  const GROUPINGS = ['project', 'tag', 'budget']
 
   // Nothing reactive is read before the first await, so this effect has no
   // dependencies and runs once — which is what keeps a function that assigns
@@ -504,7 +539,7 @@
     // on nothing else, so clearing the cache underneath one is otherwise
     // invisible until the window happens to move.
     () => ({
-      by,
+      by: grouping,
       start: shiftDay(start, -MAX_PAD),
       end: shiftDay(end, MAX_PAD),
       dayView,
@@ -548,9 +583,140 @@
     loading
       ? ''
       : ` · ${formatDuration(tracked)}${adjusted ? ' reported' : ''}${
-          by === 'tag' ? ' across tags' : adjusted ? '' : ' tracked'
+          grouping === 'tag' ? ' across tags' : adjusted ? '' : ' tracked'
         }`
   )
+
+  // The budget's days off and resets: read when the mode is, from the store
+  // after that, like Record's budget mode.
+  const records = resource(
+    () => budgetMode,
+    (on) => (on ? ensureBudgetRecords() : null),
+    { name: 'budget records' }
+  )
+
+  const budgetRule = $derived(budgetTag === null ? null : (($tagRules ?? {})[budgetTag] ?? null))
+
+  /**
+   * Every budget day of the tag, from the contract's start to today.
+   *
+   * The whole history and not the window, since a window's line starts from the
+   * balance carried into it. `asOf` matters only to today's slice of a running
+   * session, and today is never drawn here, so reading the clock when the
+   * sessions or the day change is enough.
+   */
+  const budgetRows = $derived(
+    budgetMode
+      ? budgetForTag({
+          tagId: budgetTag,
+          rule: budgetRule,
+          entries: $timeEntries ?? [],
+          projects: $projectStore ?? [],
+          records: $budgetRecords,
+          today: $currentDay,
+          asOf: Date.now(),
+        })
+      : []
+  )
+
+  /** The window, as every budget figure on the page reads it. */
+  const budget = $derived(budgetWindow(budgetRows, start, end))
+
+  /** Nothing to draw yet: the sessions or the records are still being read. */
+  const budgetLoading = $derived(
+    budgetMode && (summary.loading || records.loading) && ($timeEntries ?? []).length === 0
+  )
+
+  const budgetFigure = $derived(
+    budgetLoading || dayView || budget.days.length === 0
+      ? ''
+      : ` · ${formatSigned(budget.change)} · balance ${formatSigned(budget.closing)}`
+  )
+
+  const balanceInput = $derived({
+    days: budget.days.map((row) => row.day),
+    balance: budget.days.map((row) => hours(row.balance)),
+    untracked: budget.days.map((row) => (row.untracked ? hours(row.balance) : null)),
+    resets: budget.days.map((row) => (row.reset !== null ? hours(row.balance) : null)),
+    lines: Object.fromEntries(budget.days.map((row) => [row.day, breakdownLines(row, budgetRule)])),
+    colour: swatch('dusk-lift'),
+    alarm: swatch('alarm'),
+  })
+
+  /** A pie's slices, without the empty ones a legend would only list. */
+  function slices(parts) {
+    return parts
+      .filter(([, seconds]) => seconds > 0)
+      .map(([name, seconds, colour]) => ({ name, value: hours(seconds), colour: colour && swatch(colour) }))
+  }
+
+  const deductedPie = $derived({
+    slices: slices([
+      ['Counted', budget.sums.counted, 'dusk-lift'],
+      ['Deducted', budget.sums.deducted, 'ember'],
+    ]),
+  })
+
+  const bandsPie = $derived({
+    slices: slices(
+      (budgetRule?.bands ?? [])
+        .map((band, index) => [band, index])
+        .filter(([band]) => band.in_budget !== false)
+        .map(([band, index]) => [
+          `From ${formatDuration(band.from_minutes * 60)}`,
+          budget.bands[index] ?? 0,
+        ])
+    ),
+  })
+
+  /** The band pie only says something when there are two bands to split between. */
+  const bandPieShown = $derived(
+    (budgetRule?.bands ?? []).filter((band) => band.in_budget !== false).length > 1
+  )
+
+  const expectedPie = $derived({
+    slices: slices([
+      ['Met', budget.expectedSplit.met, 'sage'],
+      ['Short', budget.expectedSplit.short, 'alarm'],
+      ['Taken off', budget.expectedSplit.taken, 'ember'],
+      ['Days off', budget.expectedSplit.off, 'dusk-lift'],
+      ['Public holidays', budget.expectedSplit.holiday, 'haze'],
+    ]),
+  })
+
+  /** The window's sums, in the words the record's label uses. */
+  const budgetSums = $derived([
+    ['Tracked', formatDuration(budget.sums.tracked)],
+    ...(budgetRule?.add_minutes ? [['Added', formatSigned(budget.sums.added)]] : []),
+    ...(budgetRule?.bands?.length ? [['Deducted', formatSigned(-budget.sums.deducted)]] : []),
+    ['Counted', formatDuration(budget.sums.counted)],
+    ['Expected', formatDuration(budget.sums.expected)],
+  ])
+
+  const KIND_NAMES = { vacation: 'Vacation', sick: 'Sick', other: 'Other', balance: 'Day off' }
+
+  /** The Day window's row, if the contract covers that day and it has come. */
+  const budgetDay = $derived(budgetRows.find((row) => row.day === anchor) ?? null)
+
+  /** What the Day window says the day was, before its figures. */
+  function dayKind(row) {
+    if (row.kind === 'holiday') return row.name
+    if (row.kind === 'off') return KIND_NAMES[row.name] ?? 'Day off'
+    if (row.kind === 'rest') return 'Not a workday'
+    if (!row.open && row.counted === 0) return 'Not tracked'
+    return null
+  }
+
+  /** The Day window's lines: the record's breakdown, then what it did to the balance. */
+  function dayLines(row) {
+    const lines = breakdownLines(row, budgetRule)
+    if (row.open) return lines
+    return [
+      ...lines,
+      ['Change', formatSigned(row.counted - row.expected)],
+      ['Balance', formatSigned(row.balance)],
+    ]
+  }
 </script>
 
 <Frame column={COLUMN}>
@@ -559,14 +725,15 @@
   <h1 class="mt-1 mb-6 text-3xl font-bold tracking-tight">Patterns</h1>
 
   <div class="mb-6 flex flex-wrap items-center gap-2">
-    <div class="flex gap-1" role="group" aria-label="Group by">
-      {#each [['project', 'By project'], ['tag', 'By tag']] as [value, label] (value)}
+    <div class="flex flex-wrap gap-1" role="group" aria-label="Group by">
+      {#each [['project', 'By project'], ['tag', 'By tag'], ...(contracted.length ? [['budget', 'Budget']] : [])] as [value, label] (value)}
         <button
           class="meta rounded-md border px-4 py-2 transition
-                 {by === value
+                 {active === value
             ? 'border-ember bg-ember/10 text-paper'
             : 'border-white/15 hover:border-white/40'}"
-          aria-pressed={by === value}
+          aria-pressed={active === value}
+          data-group-by={value}
           onclick={() => {
             steered.add('by')
             by = value
@@ -632,7 +799,9 @@
   <!-- Which week, which month, which quarter — and a way to the one before.
        A window you cannot step through can only ever show the present. -->
   <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-    <p class="meta" data-period>{dayView ? dayLabel(anchor) : shown.label}{figure}</p>
+    <p class="meta" data-period>
+      {dayView ? dayLabel(anchor) : shown.label}{budgetMode ? budgetFigure : figure}
+    </p>
     <div class="flex gap-2">
       <!-- Custom is steered by its own sliders; a Previous that slid the window
            by its length would be a second way to say the same thing. -->
@@ -651,7 +820,7 @@
           Next →
         </button>
       {/if}
-      {#if dayView}
+      {#if dayView && !budgetMode}
         <button
           class="meta rounded-md border px-3 py-2 transition
                  {fullDay
@@ -669,7 +838,10 @@
     </div>
   </div>
 
-  {#if !dayView}
+  <!-- Not in budget mode: a balance over "only Saturdays" is not a balance, since
+       the contract expects every workday. Hidden rather than left on screen
+       doing nothing, and the stored filters stay for the other modes. -->
+  {#if !dayView && !budgetMode}
     <div class="mb-4 rounded-xl border border-white/10 bg-ink-soft">
       <!-- A whole row that answers a click has to answer a pointer too; the
            card treatment, since that is what this is the header of. -->
@@ -751,7 +923,7 @@
     </div>
   {/if}
 
-  {#if strip}
+  {#if strip && !budgetMode}
     <div class="mb-4">
       <!-- `plotted`, not `days`: the strip answers *when* rather than *how
            much*, but it answers it about the same days every number beside it
@@ -761,7 +933,105 @@
     </div>
   {/if}
 
-  {#if loading}
+  {#if budgetMode}
+    {#if contracted.length > 1}
+      <div class="mb-4 flex flex-wrap gap-1" role="group" aria-label="Budget of">
+        {#each contracted as tag (tag.id)}
+          <button
+            class="meta rounded-md border px-4 py-2 transition
+                   {tag.id === budgetTag
+              ? 'border-ember bg-ember/10 text-paper'
+              : 'border-white/15 hover:border-white/40'}"
+            aria-pressed={tag.id === budgetTag}
+            data-budget-tag={tag.id}
+            onclick={() => (budgetPick = tag.id)}
+          >
+            {tag.name}
+          </button>
+        {/each}
+      </div>
+    {/if}
+
+    {#if budgetLoading}
+      <p class="meta">Loading…</p>
+    {:else if dayView}
+      <!-- One day of a balance is a point, so Day explains the day instead: the
+           record's label, larger, and what the day did to the balance. -->
+      <div
+        class="rounded-xl border border-white/10 bg-ink-soft p-5"
+        data-budget-breakdown={anchor}
+      >
+        {#if !budgetDay}
+          <p class="text-haze">
+            {anchor > $currentDay ? 'This day has not happened yet.' : 'No contract on this day.'}
+          </p>
+        {:else}
+          {#if dayKind(budgetDay)}
+            <p class="meta mb-3">{dayKind(budgetDay)}</p>
+          {/if}
+          <dl class="grid max-w-sm grid-cols-[auto_auto] gap-x-8 gap-y-1.5">
+            {#each dayLines(budgetDay) as [label, value] (label)}
+              <div class="contents" data-breakdown-line={label}>
+                <dt class="text-haze">{label}</dt>
+                <dd class="numeral text-right tabular-nums" data-breakdown-value>{value}</dd>
+              </div>
+            {/each}
+          </dl>
+          {#if budgetDay.open}
+            <p class="meta mt-3 normal-case">Today counts once it is over.</p>
+          {/if}
+        {/if}
+      </div>
+    {:else if budget.days.length === 0}
+      <div class="rounded-xl border border-white/10 bg-ink-soft p-4" data-empty-window>
+        <div class="flex h-40 items-center justify-center text-haze">
+          No contract in this window.
+        </div>
+      </div>
+    {:else}
+      <div class="rounded-xl border border-white/10 bg-ink-soft p-4">
+        <p class="meta mb-2">Balance after each day</p>
+        <div use:chart={balanceOptions(balanceInput)} data-budget-line class="h-80 w-full"></div>
+        {#if atLatest}
+          <!-- A scope the line does not otherwise show: it stops at yesterday. -->
+          <p class="meta mt-2 normal-case" data-budget-today>Today counts once it is over.</p>
+        {/if}
+      </div>
+
+      <!-- `min-w-0` on every card, for the same reason as the charts below. One
+           row of three when the band pie is drawn, rather than a third card
+           alone under two. -->
+      <div class="mt-4 grid gap-4 {bandPieShown ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}">
+        {#if budgetRule?.bands?.length}
+          <div class="min-w-0 rounded-xl border border-white/10 bg-ink-soft p-4">
+            <p class="meta mb-2">What the deductions took</p>
+            <div use:chart={shareOptions(deductedPie)} data-budget-pie="deducted" class="h-72 w-full"></div>
+          </div>
+        {/if}
+        {#if bandPieShown}
+          <div class="min-w-0 rounded-xl border border-white/10 bg-ink-soft p-4">
+            <p class="meta mb-2">Deducted, by band</p>
+            <div use:chart={shareOptions(bandsPie)} data-budget-pie="bands" class="h-72 w-full"></div>
+          </div>
+        {/if}
+        <div class="min-w-0 rounded-xl border border-white/10 bg-ink-soft p-4">
+          <p class="meta mb-2">Expected hours</p>
+          <div use:chart={shareOptions(expectedPie)} data-budget-pie="expected" class="h-72 w-full"></div>
+        </div>
+      </div>
+
+      <table class="mt-6 w-full" data-budget-sums>
+        <tbody>
+          {#each budgetSums as [label, value] (label)}
+            <tr class="border-b border-white/5">
+              <td class="py-2">{label}</td>
+              <td class="numeral py-2 text-right tabular-nums" data-sum={label}>{value}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  {:else if loading}
     <p class="meta">Loading…</p>
   {:else if filed.length === 0}
     <!-- Said once, in one card. The share and weekday cards used to stand
@@ -777,7 +1047,7 @@
     <table class="mt-6 w-full">
       <thead>
         <tr class="border-b border-white/10 text-left">
-          <th class="meta py-2">{by === 'tag' ? 'Tag' : 'Project'}</th>
+          <th class="meta py-2">{grouping === 'tag' ? 'Tag' : 'Project'}</th>
           <th class="meta py-2 text-right">Tracked</th>
           <th class="meta py-2 text-right">Share</th>
         </tr>
@@ -838,7 +1108,7 @@
     </div>
     {/if}
 
-    {#if by === 'tag'}
+    {#if grouping === 'tag'}
       <p class="meta mt-4 normal-case">
         A project with several tags counts under each, so these totals overlap —
         they add to more than the hours actually tracked.
@@ -875,7 +1145,7 @@
     <table class="mt-6 w-full">
       <thead>
         <tr class="border-b border-white/10 text-left">
-          <th class="meta py-2">{by === 'tag' ? 'Tag' : 'Project'}</th>
+          <th class="meta py-2">{grouping === 'tag' ? 'Tag' : 'Project'}</th>
           <th class="meta py-2 text-right">Tracked</th>
           {#if adjusted}<th class="meta py-2 text-right">Reported</th>{/if}
           <th class="meta py-2 text-right">Share</th>
@@ -911,7 +1181,7 @@
       <tfoot>
         <tr class="border-t border-white/15" data-total>
           <td class="py-2 font-medium">
-            {by === 'tag' ? 'Total across tags' : 'Total'}
+            {grouping === 'tag' ? 'Total across tags' : 'Total'}
           </td>
           <td class="numeral py-2 text-right font-medium tabular-nums">
             {formatDuration(filed.reduce((sum, group) => sum + group.trackedTotal, 0))}

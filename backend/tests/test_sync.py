@@ -632,6 +632,21 @@ def test_a_day_off_is_marked_and_read_back(client, admin_headers):
     ]
 
 
+def test_a_day_off_taken_from_the_balance_is_marked_and_read_back(
+    client, admin_headers
+):
+    tag = make_tag(client, admin_headers)
+    results = sync(
+        client,
+        admin_headers,
+        [day_off_intent(1, tag["id"], "2026-06-10", kind="balance")],
+    )
+    assert results[1]["outcome"] == "applied"
+    assert budget_records(client, admin_headers)["days_off"] == [
+        {"tag_id": tag["id"], "day": "2026-06-10", "kind": "balance", "note": None}
+    ]
+
+
 def test_a_cleared_day_off_is_gone_and_a_stale_mark_does_not_bring_it_back(
     client, admin_headers
 ):

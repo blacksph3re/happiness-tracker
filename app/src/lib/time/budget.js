@@ -1,3 +1,4 @@
+import { formatDuration, formatSigned } from '../clock.js'
 import { publicHolidays } from './holidays.js'
 import { addedFor, deductionFor, groupByTag, summarise } from './summary.js'
 
@@ -12,6 +13,13 @@ import { addedFor, deductionFor, groupByTag, summarise } from './summary.js'
 
 /** Monday to Friday, as the bitmask a contract stores (Monday is bit 0). */
 export const MONDAY_TO_FRIDAY = 0b0011111
+
+/**
+ * The day-off kind that costs its hours rather than excusing them: a day off
+ * taken from the balance. It reads as a day off, not as a gap nobody explained,
+ * and does to the balance exactly what an untracked workday does.
+ */
+export const TAKEN_FROM_BALANCE = 'balance'
 
 const DAY_MS = 86_400_000
 
@@ -38,14 +46,24 @@ function weekdayBit(day) {
  * @param {number|null} addMinutes The tag's addition.
  * @param {boolean} addInBudget Whether the addition counts.
  * @param {Array<{from_minutes: number, deduct_minutes: number|null, in_budget?: boolean}>} bands
+ * `band` is the index in `bands` of the band that took the deduction, or null
+ * when none did — what the patterns page splits its deductions by.
+ *
  * @returns {{tracked: number, added: number, deducted: number, counted: number,
- *   addOff: boolean, bandOff: boolean}} Seconds, and the two switches' effect.
+ *   addOff: boolean, bandOff: boolean, band: number|null}} Seconds, the two
+ *   switches' effect, and the band that applied.
  */
 export function countedParts(tracked, addMinutes, addInBudget, bands) {
   const counting = bands.filter((band) => band.in_budget !== false)
   const added = addInBudget ? addedFor(tracked, addMinutes) : 0
   const base = tracked + added
   const deducted = deductionFor(base, counting)
+  // The highest band reached is the one `deductionFor` applied.
+  let band = null
+  for (const [index, one] of bands.entries()) {
+    if (one.in_budget === false || base <= 0 || one.from_minutes * 60 > base) continue
+    if (band === null || one.from_minutes > bands[band].from_minutes) band = index
+  }
   return {
     tracked,
     added,
@@ -53,6 +71,7 @@ export function countedParts(tracked, addMinutes, addInBudget, bands) {
     counted: base - deducted,
     addOff: !addInBudget && addedFor(tracked, addMinutes) > 0,
     bandOff: deductionFor(base, bands) !== deducted,
+    band: deducted > 0 ? band : null,
   }
 }
 
@@ -86,7 +105,8 @@ export function countedFor(tracked, addMinutes, addInBudget, bands) {
  * @param {number|null} [input.addMinutes]
  * @param {boolean} [input.addInBudget]
  * @param {Array<object>} [input.bands]
- * @param {Record<string, string>} [input.daysOff] `{day: kind}`.
+ * @param {Record<string, string>} [input.daysOff] `{day: kind}`. Every kind but
+ *   `balance` excuses the day; `balance` keeps its hours, and so costs them.
  * @param {Record<string, number>} [input.resets] `{day: seconds}`.
  * @returns {Array<{day: string, kind: 'workday'|'rest'|'holiday'|'off',
  *   name: string|null, expected: number, counted: number, reset: number|null,
@@ -129,7 +149,9 @@ export function budgetDays({
     else if (!works) kind = 'rest'
     else if (daysOff[day]) [kind, name] = ['off', daysOff[day]]
 
-    const expected = kind === 'workday' ? period.daily_minutes * 60 : 0
+    // Only the kinds that excuse a day take its expectation away.
+    const costs = kind === 'workday' || (kind === 'off' && name === TAKEN_FROM_BALANCE)
+    const expected = costs ? period.daily_minutes * 60 : 0
     const counted = countedFor(tracked[day] ?? 0, addMinutes, addInBudget, bands)
     const reset = resets[day] ?? null
     if (reset !== null) balance = reset
@@ -236,10 +258,133 @@ export function budgetForTag({ tagId, rule, entries, projects, records, today, a
         .map((row) => [row.day, row.balance_minutes * 60])
     ),
   })
+  const periods = rule.contracts.toSorted((one, two) => (one.starts_on < two.starts_on ? -1 : 1))
   return rows.map((row) => ({
     ...row,
     parts: countedParts(tracked[row.day] ?? 0, rule.add_minutes, addInBudget, bands),
+    nominal: nominalFor(periods, row.day),
   }))
+}
+
+/**
+ * What a contract would expect of a day were it an ordinary workday: its
+ * period's hours on one of its workdays, and nothing on any other day.
+ *
+ * What a holiday or a day off *covered*, which `budgetDays` cannot say, since
+ * it expects nothing of either. A holiday on a Sunday covers nothing.
+ *
+ * @param {Array<{starts_on: string, daily_minutes: number, workdays: number}>} periods
+ *   Oldest first.
+ * @param {string} day
+ * @returns {number} Seconds.
+ */
+function nominalFor(periods, day) {
+  const period = periods.findLast((one) => one.starts_on <= day)
+  if (!period || !(period.workdays & (1 << weekdayBit(day)))) return 0
+  return period.daily_minutes * 60
+}
+
+/**
+ * One window of a tag's budget, as the patterns page draws it.
+ *
+ * Every figure the page shows comes from here, so the heading, the line, the
+ * pies and the table cannot disagree. Over the days that are over: today
+ * counts once it is over, and a day before the contract is not a budget day.
+ *
+ * - `days`: the rows in the window, oldest first, `untracked` marking a workday
+ *   nothing was tracked on.
+ * - `opening`: the balance carried in from the day before the window — zero
+ *   when the window starts with the contract.
+ * - `closing`: the balance the window ends on.
+ * - `change`: what the window moved it by, counted from the latest reset in the
+ *   window, the rule a week on the record follows.
+ * - `sums`: tracked, added, deducted, counted and expected, over the window.
+ * - `bands`: what each band of the rule deducted, by its place in the rule.
+ * - `expectedSplit`: the hours the contract would have expected, as met, short,
+ *   taken off from the balance, covered by a day off, or covered by a public
+ *   holiday. A day off taken from the balance is expected like a workday, so
+ *   hours worked on one are met and the rest is taken off rather than short.
+ *
+ * @param {ReturnType<typeof budgetForTag>} rows The tag's rows, oldest first.
+ * @param {string} start `YYYY-MM-DD`, inclusive.
+ * @param {string} end `YYYY-MM-DD`, inclusive.
+ * @returns {{days: Array<object>, opening: number, closing: number, change: number,
+ *   sums: {tracked: number, added: number, deducted: number, counted: number,
+ *   expected: number}, bands: Array<number>, expectedSplit: {met: number,
+ *   short: number, taken: number, off: number, holiday: number}}}
+ */
+export function budgetWindow(rows, start, end) {
+  const closed = rows.filter((row) => !row.open)
+  const before = closed.filter((row) => row.day < start)
+  const days = closed
+    .filter((row) => row.day >= start && row.day <= end)
+    .map((row) => ({ ...row, untracked: row.kind === 'workday' && row.counted === 0 }))
+  const opening = before.at(-1)?.balance ?? 0
+  const cutoff = days.findLast((row) => row.reset !== null)?.day ?? start
+
+  const sums = { tracked: 0, added: 0, deducted: 0, counted: 0, expected: 0 }
+  const bands = []
+  const expectedSplit = { met: 0, short: 0, taken: 0, off: 0, holiday: 0 }
+  let change = 0
+  for (const row of days) {
+    const { parts } = row
+    sums.tracked += parts.tracked
+    sums.added += parts.added
+    sums.deducted += parts.deducted
+    sums.counted += row.counted
+    sums.expected += row.expected
+    if (parts.band !== null) bands[parts.band] = (bands[parts.band] ?? 0) + parts.deducted
+    if (row.expected > 0) {
+      // A workday, or a day off taken from the balance: both expect their hours.
+      const left = Math.max(0, row.expected - row.counted)
+      expectedSplit.met += Math.min(row.counted, row.expected)
+      if (row.kind === 'workday') expectedSplit.short += left
+      else expectedSplit.taken += left
+    } else if (row.kind === 'off') {
+      expectedSplit.off += row.nominal
+    } else if (row.kind === 'holiday') {
+      expectedSplit.holiday += row.nominal
+    }
+    if (row.day >= cutoff) change += row.counted - row.expected
+  }
+  return {
+    days,
+    opening,
+    closing: days.at(-1)?.balance ?? opening,
+    change,
+    sums,
+    bands: Array.from(bands, (seconds) => seconds ?? 0),
+    expectedSplit,
+  }
+}
+
+/**
+ * What a day's counted time is made of, as `[label, value]` lines.
+ *
+ * The label on a total on the record and the Day card on patterns, so the two
+ * explain a day in the same words. Added and Deducted appear only where the rule
+ * has them, Counted only where it changed something, so it never restates
+ * Tracked; a part switched out of the budget reads *not counted*.
+ *
+ * @param {object} row A row from `budgetForTag`.
+ * @param {object|null} rule The tag's rule.
+ * @returns {Array<[string, string]>}
+ */
+export function breakdownLines(row, rule) {
+  const { parts } = row
+  const lines = [['Tracked', formatDuration(parts.tracked)]]
+  if (rule?.add_minutes) {
+    lines.push(['Added', parts.addOff ? 'not counted' : formatSigned(parts.added)])
+  }
+  if (rule?.bands?.length) {
+    lines.push([
+      'Deducted',
+      parts.bandOff && parts.deducted === 0 ? 'not counted' : formatSigned(-parts.deducted),
+    ])
+  }
+  if (lines.length > 1) lines.push(['Counted', formatDuration(row.counted)])
+  lines.push(['Expected', row.expected ? formatDuration(row.expected) : 'nothing'])
+  return lines
 }
 
 /** Seconds as hours, to two decimals, for a CSV. */

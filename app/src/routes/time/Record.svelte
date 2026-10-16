@@ -905,7 +905,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
               />
             </label>
             <div class="flex flex-wrap gap-1" role="group" aria-label="Kind">
-              {#each [['vacation', 'Vacation'], ['sick', 'Sick'], ['other', 'Other']] as [value, label] (value)}
+              {#each [['vacation', 'Vacation'], ['sick', 'Sick'], ['other', 'Other'], ['balance', 'Day off']] as [value, label] (value)}
                 <button
                   class="meta min-h-11 rounded-md border px-4 transition
                          {adding.offKind === value

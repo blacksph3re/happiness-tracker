@@ -290,7 +290,11 @@ renders).
   periods, days off, resets.
   - A day is, tested in this order, a public holiday, a rest day, a day off or a
     workday, so a day off on a weekend changes nothing. Only a workday expects
-    hours; time on any day counts in full.
+    hours — and a day off of kind `balance` (*Day off*, beside *Vacation* on an
+    untracked row), which is taken from the balance: it costs its hours as an
+    untracked workday does, reads as a day off rather than a gap, and is
+    *Taken off* in Patterns' expected-hours pie. Time on any day counts in
+    full.
   - Counted is the tag's rule **restricted to the parts switched on**
     (`add_in_budget`, each band's `in_budget`; NULL is on). A band switched off
     is the rule without it, so a lower band can apply. All on is reported time;
@@ -301,6 +305,19 @@ renders).
   - Budget mode lists every day, unlike the record: there an empty workday
     carries a cost and an action (*Not tracked*, *Mark day off*). Days off after
     today wait in one collapsed line above today, which stays the top record.
+  - A row shows its counted total and its change; what the count is made of
+    and what the day expected is the total's pointer label, `breakdownLines`,
+    which Patterns' Day card reads too. A week holding a reset counts from the
+    reset, and the reset says the balance it replaced — nothing on the budget's
+    first day, which replaced none.
+  - **Patterns' Budget mode** draws from `budgetWindow`, the one computation
+    behind its heading, line, pies and table. The line starts from the balance
+    carried into the window. Day filters and smoothing do not apply (the panel
+    is hidden, `span` is tied to the slider being drawn), and `budget` never
+    reaches the server: the summary is asked for `grouping`, and a stored
+    *Budget* with no contract reads by project. The expected-hours pie counts a
+    holiday or day off at the hours the contract would have expected
+    (`nominalFor`), so a holiday on a Sunday covers nothing.
 - **Public holidays are described, not imported**: `services/holidays.py` and
   `lib/time/holidays.js` hold Easter offsets, fixed dates with their states and
   first year, and one-offs. The `holidays` package is dev-only — the reference
@@ -468,7 +485,10 @@ them; read the first failure in a worker, not the crop after it.
 - **Network**: `context.setOffline(false)` fires no `online` event — dispatch
   one. Hold `/api/sync` with a flagged route; `unroute` settles held routes.
   Never hold a `route.fetch()` response across a wait. Prove "does not wait on
-  the server" with the connection held open, not cut.
+  the server" with the connection held open, not cut. Before going offline, wait
+  for the reads the offline path needs (`waitForResponse` by path): a visible
+  page has not necessarily read anything, and under load the switch overtook a
+  tag rule's read.
 - **Fixtures**: seeds write what the app would; `makeTodos` names tasks with
   `crypto.randomUUID()`; `openTasks` stores the grouping before navigating; switch
   groupings by clicking pills on one page, and wait for the grouping pill, not
@@ -482,7 +502,8 @@ them; read the first failure in a worker, not the crop after it.
   `Running N tests`); `pkill -f "[p]attern"`; vitest pins `TZ` to
   `Europe/Berlin` like the browser.
 - **Probes**: refuse to run on an already-mutated file (use a marker the original
-  cannot contain); name files explicitly (zsh does not word-split); keep escaped
+  cannot contain); read vitest's verdict from its exit code (its output is
+  coloured, so a line never starts with `FAIL`); name files explicitly (zsh does not word-split); keep escaped
   literals in quoted heredocs; rebuild in a `finally`; break every path when a
   behaviour is enforced twice. A probe that hangs is a finding. A dead-code scan
   counts AST `Name` nodes in Load context and exempts decorated functions.
@@ -537,7 +558,7 @@ Do not reopen without being asked.
 | Scores | Over scaled questions only |
 | Projects, tags, catalogues | Per user. A new account gets its own catalogue from code templates (`templates.py`); deleting the last one is allowed |
 | Deduction rules | On a tag; a ruled tag shows reported time (Patterns keeps both). Each part carries an *in budget* switch that only the hour budget reads |
-| Hour budget | Per tag: contract periods of whole days, an average per workday, a German state for public holidays. Days off are per tag (two contracted tags mark a vacation twice), whole days, vacation, sick or other, with no allowance. Today counts once it is over |
+| Hour budget | Per tag: contract periods of whole days, an average per workday, a German state for public holidays. Days off are per tag (two contracted tags mark a vacation twice), whole days, vacation, sick or other — which excuse the day — or a day off taken from the balance, which costs it; no allowance. Today counts once it is over |
 | Parallel timers | Several projects at once, adding up. The same project over the same minutes is kept and counted once; two running sessions on one project are joined |
 | Long sessions | Never auto-closed, no warning |
 | Pomodoros | Complete at their planned end; `ended_at` only from an explicit stop |

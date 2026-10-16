@@ -567,6 +567,125 @@
         {
           "daily_minutes": 480,
           "starts_on": "2026-06-01",
+          "state": "BY",
+          "workdays": 31
+        }
+      ],
+      "days_off": {
+        "2026-06-01": "balance",
+        "2026-06-02": "balance",
+        "2026-06-04": "balance",
+        "2026-06-06": "balance",
+        "2026-06-08": "vacation"
+      },
+      "name": "days off taken from the balance, one worked on and one on a weekend",
+      "resets": {},
+      "rows": [
+        {
+          "balance": -28800,
+          "counted": 0,
+          "day": "2026-06-01",
+          "expected": 28800,
+          "kind": "off",
+          "name": "balance",
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": -50400,
+          "counted": 7200,
+          "day": "2026-06-02",
+          "expected": 28800,
+          "kind": "off",
+          "name": "balance",
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": -79200,
+          "counted": 0,
+          "day": "2026-06-03",
+          "expected": 28800,
+          "kind": "workday",
+          "name": null,
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": -79200,
+          "counted": 0,
+          "day": "2026-06-04",
+          "expected": 0,
+          "kind": "holiday",
+          "name": "Corpus Christi",
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": -108000,
+          "counted": 0,
+          "day": "2026-06-05",
+          "expected": 28800,
+          "kind": "workday",
+          "name": null,
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": -104400,
+          "counted": 3600,
+          "day": "2026-06-06",
+          "expected": 0,
+          "kind": "rest",
+          "name": null,
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": -104400,
+          "counted": 0,
+          "day": "2026-06-07",
+          "expected": 0,
+          "kind": "rest",
+          "name": null,
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": -104400,
+          "counted": 0,
+          "day": "2026-06-08",
+          "expected": 0,
+          "kind": "off",
+          "name": "vacation",
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": -104400,
+          "counted": 0,
+          "day": "2026-06-09",
+          "expected": 28800,
+          "kind": "workday",
+          "name": null,
+          "open": true,
+          "reset": null
+        }
+      ],
+      "today": "2026-06-09",
+      "tracked": {
+        "2026-06-02": 7200,
+        "2026-06-06": 3600
+      }
+    },
+    {
+      "add_in_budget": true,
+      "add_minutes": null,
+      "bands": [],
+      "contracts": [
+        {
+          "daily_minutes": 480,
+          "starts_on": "2026-06-01",
           "workdays": 31
         }
       ],

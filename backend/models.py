@@ -91,8 +91,14 @@ Public holidays are calculated from it (`services.holidays`), never stored.
 GERMAN_STATES: tuple[str, ...] = GermanState.__args__
 """The sixteen states, as data, for a check constraint and validation."""
 
-DayOffKind = Literal["vacation", "sick", "other"]
-"""What a day off marked by hand was. Public holidays are calculated, not marked."""
+DayOffKind = Literal["vacation", "sick", "other", "balance"]
+"""What a day off marked by hand was. Public holidays are calculated, not marked.
+
+``vacation``, ``sick`` and ``other`` excuse the day: the contract expects nothing
+of it. ``balance`` is a day off taken from the hour budget instead — it costs its
+hours exactly as an untracked workday does, and is marked only so that it reads
+as a day off rather than as a gap nobody explained.
+"""
 
 DAY_OFF_KINDS: tuple[str, ...] = DayOffKind.__args__
 """The kinds, as data."""
@@ -1007,7 +1013,7 @@ class TagDayOff(Base):
     """The local day."""
 
     kind: Mapped[DayOffKind | None] = mapped_column(String(8), nullable=True)
-    """``vacation``, ``sick`` or ``other``, or NULL once cleared."""
+    """``vacation``, ``sick``, ``other`` or ``balance``, or NULL once cleared."""
 
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)
     """Optional free text."""

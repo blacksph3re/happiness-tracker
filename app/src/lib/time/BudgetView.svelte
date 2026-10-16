@@ -14,7 +14,7 @@
     tagRules,
     timeEntries,
   } from '../store.js'
-  import { budgetForTag } from './budget.js'
+  import { breakdownLines, budgetForTag } from './budget.js'
   import { now } from './tick.js'
 
   /**
@@ -66,7 +66,13 @@
   )
   let showPlanned = $state(false)
 
-  /** The rows in weeks, newest first, each with its change and closing balance. */
+  /**
+   * The rows in weeks, newest first, each with its change.
+   *
+   * A week holding a reset counts only from the reset on: the days before it
+   * moved a balance the reset then replaced, and what that balance was is said
+   * on the reset's own row instead.
+   */
   const weeks = $derived.by(() => {
     const grouped = new Map()
     for (const row of rows.toReversed()) {
@@ -74,19 +80,36 @@
       if (!grouped.has(start)) grouped.set(start, [])
       grouped.get(start).push(row)
     }
-    return [...grouped].map(([start, days]) => ({
-      start,
-      label: period('week', start).label,
-      days,
-      change: days
-        .filter((day) => !day.open)
-        .reduce((sum, day) => sum + day.counted - day.expected, 0),
-    }))
+    return [...grouped].map(([start, days]) => {
+      const cutoff = days.find((day) => day.reset !== null)?.day ?? start
+      return {
+        start,
+        label: period('week', start).label,
+        days,
+        change: days
+          .filter((day) => !day.open && day.day >= cutoff)
+          .reduce((sum, day) => sum + day.counted - day.expected, 0),
+      }
+    })
   })
+
+  /**
+   * The balance each reset replaced: the one the day before it closed on.
+   *
+   * None for a reset on the budget's first day, which had no balance before it
+   * to replace — saying *was 0h 00m* there would be inventing one.
+   */
+  const replaced = $derived(
+    new Map(
+      rows.flatMap((row, index) =>
+        row.reset !== null && index > 0 ? [[row.day, rows[index - 1].balance]] : []
+      )
+    )
+  )
 
   const resetOn = $derived(new Map(mine.resets.map((row) => [row.day, row])))
 
-  const KIND_NAMES = { vacation: 'Vacation', sick: 'Sick', other: 'Other' }
+  const KIND_NAMES = { vacation: 'Vacation', sick: 'Sick', other: 'Other', balance: 'Day off' }
 
   /** What a row is, for its look and for `data-state`. */
   function stateOf(row) {
@@ -103,22 +126,7 @@
 
   /** The label for a day's total: its parts, and what the contract expected. */
   function explain(row) {
-    const { parts } = row
-    const lines = [['Tracked', formatDuration(parts.tracked)]]
-    if (rule?.add_minutes) {
-      lines.push(['Added', parts.addOff ? 'not counted' : formatSigned(parts.added)])
-    }
-    if (rule?.bands?.length) {
-      lines.push([
-        'Deducted',
-        parts.bandOff && parts.deducted === 0 ? 'not counted' : formatSigned(-parts.deducted),
-      ])
-    }
-    // The sum, where the rule changed something, so the label adds up to the
-    // figure it was opened from; with no rule it would only restate Tracked.
-    if (lines.length > 1) lines.push(['Counted', formatDuration(row.counted)])
-    lines.push(['Expected', row.expected ? formatDuration(row.expected) : 'nothing'])
-    return { name: row.open ? 'Today' : dayLabel(row.day), lines }
+    return { name: row.open ? 'Today' : dayLabel(row.day), lines: breakdownLines(row, rule) }
   }
 
   /** The same, as one sentence for a screen reader. */
@@ -213,7 +221,7 @@
     <div data-budget-week={week.start} class="rounded-xl border border-white/10 bg-ink-soft">
       <div class="flex items-baseline justify-between gap-3 px-5 py-3">
         <p class="meta">{week.label}</p>
-        <p class="numeral tabular-nums">{formatSigned(week.change)}</p>
+        <p class="numeral tabular-nums" data-week-change>{formatSigned(week.change)}</p>
       </div>
       <ul class="flex flex-col gap-px border-t border-white/10">
         {#each week.days as row (row.day)}
@@ -244,26 +252,41 @@
                 <span class="numeral text-sm text-alarm tabular-nums" data-budget-change>
                   {formatSigned(-row.expected)}
                 </span>
+                <!-- Two ways to account for the day: a vacation excuses its
+                     hours, a day off takes them from the balance — which is
+                     what the day already costs, minus the warning. -->
                 <button
                   class="btn-outline meta"
-                  aria-label="Mark {dayLabel(row.day)} off"
-                  onclick={() => markOff(row.day)}
+                  aria-label="Mark {dayLabel(row.day)} as vacation"
+                  onclick={() => markOff(row.day, 'vacation')}
                 >
-                  Mark day off
+                  Vacation
                 </button>
-              {:else if row.open || row.counted}
-                <span
-                  role="img"
-                  aria-label={spoken(row)}
-                  class="numeral cursor-help text-sm text-haze tabular-nums"
-                  data-budget-total
-                  onpointerdown={(event) => tip.follow(explain(row), event)}
-                  onpointerenter={(event) => tip.drift(explain(row), event)}
-                  onpointermove={(event) => tip.drift(explain(row), event)}
-                  onpointerleave={(event) => tip.release(event)}
+                <button
+                  class="btn-outline meta"
+                  aria-label="Mark {dayLabel(row.day)} as a day off"
+                  onclick={() => markOff(row.day, 'balance')}
                 >
-                  {formatDuration(row.counted)}
-                </span>
+                  Day off
+                </button>
+              {:else if row.open || row.counted || row.expected}
+                <!-- No total on a day off taken from the balance with nothing on
+                     it: nothing was tracked, and its change already says what it
+                     cost. -->
+                {#if row.open || row.counted}
+                  <span
+                    role="img"
+                    aria-label={spoken(row)}
+                    class="numeral cursor-help text-sm text-haze tabular-nums"
+                    data-budget-total
+                    onpointerdown={(event) => tip.follow(explain(row), event)}
+                    onpointerenter={(event) => tip.drift(explain(row), event)}
+                    onpointermove={(event) => tip.drift(explain(row), event)}
+                    onpointerleave={(event) => tip.release(event)}
+                  >
+                    {formatDuration(row.counted)}
+                  </span>
+                {/if}
                 <!-- Today has not changed the balance yet; its slot stays, so
                      the totals above and below it line up. -->
                 <span
@@ -297,7 +320,8 @@
               data-budget-reset={row.day}
             >
               <span class="text-sm">
-                Budget set to {formatSigned(resetOn.get(row.day).balance_minutes * 60)}
+                {`Budget set to ${formatSigned(resetOn.get(row.day).balance_minutes * 60)}` +
+                  (replaced.has(row.day) ? ` · was ${formatSigned(replaced.get(row.day))}` : '')}
               </span>
               <button
                 class="group -m-1.5 flex size-11 shrink-0 items-center justify-center"

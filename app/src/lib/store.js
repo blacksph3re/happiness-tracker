@@ -1235,7 +1235,7 @@ function rememberBudget(list, rows, clears) {
  * A range marked at once is one queue entry, so it lands or waits together.
  * Durable before visible, as every write is.
  *
- * @param {Array<{tag_id: number, day: string, kind: 'vacation'|'sick'|'other'|null,
+ * @param {Array<{tag_id: number, day: string, kind: 'vacation'|'sick'|'other'|'balance'|null,
  *   note?: string|null}>} days A null kind clears that day.
  * @returns {Promise<number>} How many the device stored.
  */

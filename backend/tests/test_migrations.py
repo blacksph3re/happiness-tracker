@@ -695,3 +695,84 @@ def test_a_contract_adds_its_columns_without_rebuilding(migrated):
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     command.downgrade(config, "-1")
     assert rootpages()["deduction_bands"] != after["deduction_bands"]
+
+
+BALANCE_DAYS_OFF = "5c1e9a7b3d24"
+
+DAY_OFF = "INSERT INTO tag_days_off (tag_id, day, kind) VALUES (1, ?, ?)"
+
+
+def _seed_a_tag(db, days_off_sql=""):
+    """Write one account with one tag, and any days off the SQL names."""
+    db.executescript(
+        """
+        INSERT INTO users (id, username, password_hash, is_admin)
+             VALUES (1, 'alice', 'h', 1);
+        INSERT INTO tags (id, user_id, name, colour, position)
+             VALUES (1, 1, 'Work', 'tide', 0);
+        """
+        + days_off_sql
+    )
+    db.commit()
+
+
+def test_a_day_off_from_the_balance_rebuilds_the_days_off_and_keeps_every_one(migrated):
+    """The kind's check constraint changes, which rebuilds the table.
+
+    Every day off survives the rebuild, and so do its unique key and its index.
+    """
+    chain = revisions()
+    upgrade(chain[chain.index(BALANCE_DAYS_OFF) - 1])
+
+    db = sqlite3.connect(migrated)
+    _seed_a_tag(
+        db,
+        """
+        INSERT INTO tag_days_off (tag_id, day, kind, note)
+             VALUES (1, '2026-06-10', 'vacation', 'Beach'),
+                    (1, '2026-06-11', NULL, NULL);
+        """,
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(DAY_OFF, ("2026-06-12", "balance"))
+    db.rollback()
+
+    upgrade(BALANCE_DAYS_OFF)
+    assert db.execute(
+        "SELECT tag_id, day, kind, note FROM tag_days_off ORDER BY day"
+    ).fetchall() == [
+        (1, "2026-06-10", "vacation", "Beach"),
+        (1, "2026-06-11", None, None),
+    ]
+    db.execute(DAY_OFF, ("2026-06-12", "balance"))
+    db.commit()
+    # Still one per tag and day, and still only the kinds there are.
+    for day, kind in (("2026-06-12", "sick"), ("2026-06-13", "holiday")):
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(DAY_OFF, (day, kind))
+        db.rollback()
+    assert db.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'index'"
+        " AND name = 'ix_tag_days_off_tag_id'"
+    ).fetchone() == (1,)
+
+
+def test_the_downgrade_refuses_while_a_day_off_is_taken_from_the_balance(migrated):
+    """The old constraint has no word for such a day.
+
+    Calling it anything else would change what it does to the balance.
+    """
+    from alembic.config import Config
+
+    from alembic import command
+
+    upgrade(BALANCE_DAYS_OFF)
+    db = sqlite3.connect(migrated)
+    _seed_a_tag(db)
+    db.execute(DAY_OFF, ("2026-06-12", "balance"))
+    db.commit()
+    config = Config()
+    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    with pytest.raises(RuntimeError, match="from the balance"):
+        command.downgrade(config, "-1")
+    assert db.execute("SELECT kind FROM tag_days_off").fetchall() == [("balance",)]

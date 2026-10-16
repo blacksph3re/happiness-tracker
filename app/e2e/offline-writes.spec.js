@@ -247,9 +247,21 @@ test('a window never fetched is still totalled with no connection', async ({
   })
   expect(rule.ok(), await rule.text()).toBeTruthy()
 
+  // What the device totals offline with: the sessions, the tags and this tag's
+  // rule. Each has to have landed before the connection goes, or there is
+  // nothing to total with — a page that is *visible* has not necessarily read
+  // anything yet, and under load the offline switch overtook the rule's read.
+  const landed = (part) =>
+    page.waitForResponse((response) => new URL(response.url()).pathname === part)
+  const reads = Promise.all([
+    landed('/api/time/entries'),
+    landed('/api/tags'),
+    landed(`/api/tags/${work.id}/rule`),
+  ])
   await page.goto('/time/patterns')
   await page.getByRole('button', { name: 'By tag' }).click()
   await expect(page.locator('[data-period]')).toBeVisible()
+  await reads
 
   await context.setOffline(true)
   await page.getByRole('button', { name: '← Previous' }).click()

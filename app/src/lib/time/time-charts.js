@@ -7,6 +7,7 @@
  */
 
 import { baseOptions, chrome } from '../chart-options.js'
+import { formatSigned } from '../clock.js'
 import { dayLabel } from '../day.js'
 
 /**
@@ -161,5 +162,83 @@ export function weekdayOptions({ labels, series }) {
       axisLine: { lineStyle: { color: chrome().axis } },
       axisLabel: { interval: 0 },
     },
+  }
+}
+
+/**
+ * A budget's balance at the end of each day, as a line.
+ *
+ * Untracked workdays and resets are series of their own, drawn as points over
+ * the line, so the drop a missed day makes and the step a reset makes are each
+ * named where they happen. Never smoothed: a balance is already a running sum,
+ * and averaging one draws balances nobody had.
+ *
+ * @param {{days: Array<string>, balance: Array<number>,
+ *   untracked: Array<number|null>, resets: Array<number|null>,
+ *   lines: Record<string, Array<[string, string]>>, colour: string,
+ *   alarm: string}} input Hours, aligned with `days`; `lines` is each day's
+ *   breakdown, for the tooltip.
+ */
+export function balanceOptions({ days, balance, untracked, resets, lines, colour, alarm }) {
+  return {
+    ...baseOptions(),
+    tooltip: {
+      trigger: 'axis',
+      formatter: (points) => {
+        const day = points[0]?.axisValue
+        const at = days.indexOf(day)
+        const said = [
+          `<b>${dayLabel(day)}</b>`,
+          `Balance ${formatSigned(Math.round(balance[at] * 3600))}`,
+          ...(resets[at] !== null ? [`Budget set to ${formatSigned(Math.round(resets[at] * 3600))}`] : []),
+          ...(lines[day] ?? []).map(([label, value]) => `${label} ${value}`),
+        ]
+        return said.join('<br>')
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: days,
+      axisLine: { lineStyle: { color: chrome().axis } },
+      axisLabel: { formatter: (day) => dayLabel(day) },
+    },
+    yAxis: {
+      type: 'value',
+      name: 'hours',
+      nameTextStyle: { color: chrome().muted },
+      splitLine: { lineStyle: { color: chrome().grid } },
+    },
+    series: [
+      {
+        name: 'Balance',
+        type: 'line',
+        data: balance,
+        showSymbol: days.length <= 31,
+        lineStyle: { width: 2, color: colour },
+        itemStyle: { color: colour },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          label: { show: false },
+          lineStyle: { color: chrome().axis, type: 'solid', width: 1 },
+          data: [{ yAxis: 0 }],
+        },
+      },
+      {
+        name: 'Not tracked',
+        type: 'scatter',
+        data: untracked,
+        symbolSize: 9,
+        itemStyle: { color: alarm },
+      },
+      {
+        name: 'Budget set',
+        type: 'scatter',
+        data: resets,
+        symbol: 'diamond',
+        symbolSize: 13,
+        itemStyle: { color: colour },
+      },
+    ],
   }
 }
