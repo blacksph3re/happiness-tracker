@@ -10,7 +10,7 @@
   import TaskMenu from '../../lib/todos/TaskMenu.svelte'
   import { taskMenu } from '../../lib/todos/task-menu.svelte.js'
   import TaskModal from '../../lib/todos/TaskModal.svelte'
-  import { today as todayKey } from '../../lib/day.js'
+  import { currentDay, today as todayKey } from '../../lib/day.js'
   import { DEFAULT_MINUTES, clockOfMinutes } from '../../lib/todos/calendar.js'
   import { wallClock } from '../../lib/todos/fields.js'
   import { resource } from '../../lib/resource.svelte.js'
@@ -46,10 +46,10 @@
    * is why the page passes the lists down rather than a chip row.
    */
 
-  const today = todayKey()
+  const today = $derived($currentDay)
 
   /** Which day the strip has selected. Not remembered: a calendar opens on today. */
-  let selected = $state(today)
+  let selected = $state(todayKey())
 
   /** @type {'day' | 'week'} */
   let mode = $state('week')

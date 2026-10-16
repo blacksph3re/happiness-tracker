@@ -32,7 +32,7 @@
     ready as hydrated,
     variables as variableStore,
   } from '../../lib/store.js'
-  import { dayLabel, today } from '../../lib/day.js'
+  import { currentDay, dayLabel } from '../../lib/day.js'
   import { query } from '../../lib/router.js'
   import { habitsIn } from '../../lib/habits.js'
   import StreakGrid from '../../lib/wellbeing/StreakGrid.svelte'
@@ -886,7 +886,7 @@
         expected={expectedPerDay}
         span={streakSpan}
         offset={streakBack * streakSpan}
-        from={today()}
+        from={$currentDay}
       />
     {:else if activeView === 'scatter'}
       {#if ranked.length === 0}

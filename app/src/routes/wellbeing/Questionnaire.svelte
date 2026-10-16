@@ -18,7 +18,7 @@
     saveAnswer,
   } from '../../lib/store.js'
   import { resource } from '../../lib/resource.svelte.js'
-  import { dayLabel, localHour, shiftDay, today } from '../../lib/day.js'
+  import { currentDay, dayLabel, localHour, shiftDay } from '../../lib/day.js'
   import { ANSWER_MIN_HEIGHT } from '../../lib/layout.js'
   import { answerRatio, tint } from '../../lib/wellbeing/scale.js'
   import { pushToast } from '../../lib/toasts.js'
@@ -40,7 +40,7 @@
   // The URL is the only record of which day is open. Holding it in state as
   // well meant two copies to keep in step, and the effect that reconciled them
   // could undo a change made anywhere that did not also update the URL.
-  const day = $derived($query.get('day') ?? today())
+  const day = $derived($query.get('day') ?? $currentDay)
 
   // Which day `index` was last placed for. Bookkeeping rather than a second
   // copy of the day: it says which day the cursor belongs to, not what is open.

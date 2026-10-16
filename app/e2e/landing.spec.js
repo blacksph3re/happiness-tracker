@@ -426,3 +426,12 @@ test('a habit reads its run and its best on one line', async ({ page, account })
   )
   expect(new Set(tops).size, `tops ${tops.join(', ')}`).toBe(1)
 })
+
+test('the landing page left open past midnight reads the new day', async ({ page, account }) => {
+  await makeTodo(account, { title: 'Feed the cat', planned_on: '2026-06-16' })
+  await page.goto('/')
+  await expect(page.locator('[data-todo-reading]')).toHaveText('Nothing planned')
+
+  await page.clock.fastForward('10:30:00')
+  await expect(page.locator('[data-todo-reading]')).toHaveText('1 planned today across your lists')
+})

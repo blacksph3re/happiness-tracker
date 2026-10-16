@@ -4,7 +4,7 @@
   import { save, toCsv, toZip } from '../../lib/download.js'
   import { tick } from 'svelte'
 
-  import { dayLabel, shiftDay, today } from '../../lib/day.js'
+  import { currentDay, dayLabel, shiftDay, today } from '../../lib/day.js'
   import { link } from '../../lib/router.js'
   import { period, weekHeading } from '../../lib/period.js'
   import { exportTables, summaryRows } from '../../lib/time/summary.js'
@@ -88,7 +88,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
   // Today until the tracked range loads, and again after a write clears it. The
   // safe answer while it is unknown, because it makes the list look finished:
   // nothing reaches further back on a guess.
-  const historyStart = $derived($trackedDays?.first ?? today())
+  const historyStart = $derived($trackedDays?.first ?? $currentDay)
 
   /**
    * How many weeks the list may hold at most.
@@ -117,7 +117,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
    */
   const weeks = $derived(
     Array.from({ length: Math.min(weeksBack, limit) }, (_, index) =>
-      period('week', shiftDay(today(), -7 * index))
+      period('week', shiftDay($currentDay, -7 * index))
     )
   )
 
@@ -127,7 +127,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
   const atStart = $derived(windowStart <= historyStart)
 
   const loaded = resource(
-    () => ({ start: windowStart, end: today() }),
+    () => ({ start: windowStart, end: $currentDay }),
     (range) =>
       Promise.all([
         ensureProjects(),
@@ -178,7 +178,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
           tagsOf,
           rulesOf: $tagRules ?? {},
           start: windowStart,
-          end: today(),
+          end: $currentDay,
         })
       : []
   )
@@ -208,7 +208,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
   const tagRows = $derived.by(() => {
     const map = new Map()
     for (const row of tagSummary) {
-      if (row.day < windowStart || row.day > today()) continue
+      if (row.day < windowStart || row.day > $currentDay) continue
       if (!map.has(row.day)) map.set(row.day, [])
       map.get(row.day).push({
         key: `${row.day}:${row.key}`,
@@ -248,7 +248,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
     const map = new Map()
     // One clock per day, taken from the session that opened it.
     const offsets = dayOffsets($timeEntries)
-    const last = today()
+    const last = $currentDay
     for (const entry of $timeEntries) {
       const parts = slices(entry, $now, offsets)
       const crosses = parts.length > 1 || parts.some((part) => part.whole)
@@ -450,7 +450,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
   /** How many weeks the list must hold for `day` to be on it. */
   function weeksTo(day) {
     const from = Date.parse(`${period('week', day).start}T00:00:00Z`)
-    const here = Date.parse(`${period('week', today()).start}T00:00:00Z`)
+    const here = Date.parse(`${period('week', $currentDay).start}T00:00:00Z`)
     return Math.round((here - from) / WEEK_MS) + 1
   }
 
@@ -477,7 +477,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
    */
   const years = $derived.by(() => {
     const first = Number(historyStart.slice(0, 4))
-    const last = Number(today().slice(0, 4))
+    const last = Number($currentDay.slice(0, 4))
     return Array.from({ length: last - first + 1 }, (_, index) => last - index)
   })
 
@@ -728,7 +728,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
           <input
             type="date"
             aria-label="Day"
-            max={today()}
+            max={$currentDay}
             bind:this={addDay}
             bind:value={adding.day}
             class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
@@ -758,7 +758,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
         <div class="flex gap-3">
           <button
             class="btn-filled flex items-center gap-2 disabled:opacity-30"
-            disabled={!adding.project_id || !adding.day || adding.day > today()}
+            disabled={!adding.project_id || !adding.day || adding.day > $currentDay}
             onclick={() => saveNew()}
           >
             <IconPlus class="size-4" />
@@ -772,7 +772,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
           </button>
         </div>
       </div>
-      {#if adding.day > today()}
+      {#if adding.day > $currentDay}
         <!-- The record is what was tracked. A day that has not happened cannot
              have been, and the row would be written where nothing reads it. -->
         <p class="meta mt-3 normal-case text-ember">
@@ -863,7 +863,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
               <div data-day={day} class="rounded-xl border border-white/10 bg-ink-soft">
                 <div class="flex items-center justify-between gap-3 px-5 py-3">
                   <p class="meta">
-                    {day === today() ? 'Today' : dayLabel(day)}
+                    {day === $currentDay ? 'Today' : dayLabel(day)}
                     <!-- Shown only when the day keeps a different clock from the
                          one you are in now: at home it would be noise, and after
                          a flight it is the difference between 09:00 and 09:00. -->
@@ -914,7 +914,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
                                  the day you were looking at is gone.
                                  A tag row has no such place to go either — a tag
                                  is not something you check into. -->
-                            {#if by === 'project' && day === today()}
+                            {#if by === 'project' && day === $currentDay}
                               <a
                                 href="/time?project={row.group}"
                                 use:link
@@ -983,7 +983,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
                                for one session counted under a second tag as
                                well. Offering to edit or delete "it" would be
                                offering what the row cannot honestly do. -->
-                          {#if workable && row.running && day === today()}
+                          {#if workable && row.running && day === $currentDay}
                             <!-- On today's row only. A session running since
                                  yesterday draws a row there too, and a stop
                                  offered on it reads as "stop it on that day",

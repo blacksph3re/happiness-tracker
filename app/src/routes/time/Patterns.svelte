@@ -7,7 +7,7 @@
   import { resolvedTheme } from '../../lib/theme.svelte.js'
   import { resource } from '../../lib/resource.svelte.js'
   import { ensureSummary, summaryRevision } from '../../lib/store.js'
-  import { SYSTEM_SPECS, dayLabel, shiftDay, today } from '../../lib/day.js'
+  import { currentDay, dayLabel, shiftDay, SYSTEM_SPECS, today } from '../../lib/day.js'
   import { daysIn, period, stepPeriod } from '../../lib/period.js'
   import { formatDuration, hours, nowUtc } from '../../lib/clock.js'
   import DayTimeline from '../../lib/time/DayTimeline.svelte'
@@ -79,17 +79,17 @@
   // The current period runs to today, not to its calendar end: half a month of
   // flat zeroes to the right is a chart of days that have not happened.
   const days = $derived(
-    daysIn(unit, anchor, customDays).filter((day) => day <= today())
+    daysIn(unit, anchor, customDays).filter((day) => day <= $currentDay)
   )
   const start = $derived(shown.start)
   const end = $derived(shown.end)
 
   /** Whether the period shown already contains today. */
-  const atLatest = $derived(today() >= start && today() <= end)
+  const atLatest = $derived($currentDay >= start && $currentDay <= end)
 
   /** How many days back the custom window ends, for the slider's position. */
   const endsOffset = $derived(
-    Math.round((Date.parse(anchor) - Date.parse(today())) / 86_400_000)
+    Math.round((Date.parse(anchor) - Date.parse($currentDay)) / 86_400_000)
   )
 
   /**
@@ -103,7 +103,7 @@
     Math.min(
       -1,
       $trackedDays?.first
-        ? Math.round((Date.parse($trackedDays.first) - Date.parse(today())) / 86_400_000)
+        ? Math.round((Date.parse($trackedDays.first) - Date.parse($currentDay)) / 86_400_000)
         : -MAX_CUSTOM_DAYS
     )
   )
@@ -274,7 +274,7 @@
     }
     for (let step = 1; step <= smoothingPad; step += 1) {
       const day = shiftDay(plotted.at(-1), step)
-      if (day <= today()) after.push(day)
+      if (day <= $currentDay) after.push(day)
     }
     const allowed = matchingDays([...before, ...after], facets, filters)
     const lead = before.filter((day) => allowed.has(day))

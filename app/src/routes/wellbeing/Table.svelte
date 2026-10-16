@@ -13,6 +13,7 @@
   } from '../../lib/store.js'
   import {
     SYSTEM_SPECS,
+    currentDay,
     dayLabel,
     shiftDay,
     systemValues,
@@ -149,8 +150,8 @@
   // The columns are a continuous stretch of calendar days, not only the days
   // that happen to hold answers, so any day can be opened and filled in.
   const days = $derived.by(() => {
-    const start = [shiftDay(today(), -past), answered[0]].filter(Boolean).sort()[0]
-    const end = [shiftDay(today(), future), answered.at(-1)].filter(Boolean).sort().at(-1)
+    const start = [shiftDay($currentDay, -past), answered[0]].filter(Boolean).sort()[0]
+    const end = [shiftDay($currentDay, future), answered.at(-1)].filter(Boolean).sort().at(-1)
     const all = []
     for (let cursor = start; cursor <= end; cursor = shiftDay(cursor, 1)) all.push(cursor)
     return all
@@ -300,7 +301,7 @@
     <div data-day-view use:swipe={{ onswipe: stepDay }}>
       <div class="mb-4 flex items-baseline justify-between">
         <p class="text-lg font-semibold">
-          {selectedDay === today() ? 'Today' : dayLabel(selectedDay)}
+          {selectedDay === $currentDay ? 'Today' : dayLabel(selectedDay)}
         </p>
         <p class="meta">swipe to change day</p>
       </div>
@@ -351,7 +352,7 @@
 
       <button
         class="btn-outline meta mt-4 w-full transition
-               {selectedDay === today() ? 'border-ember/60 text-paper hover:bg-ember/10' : ''}"
+               {selectedDay === $currentDay ? 'border-ember/60 text-paper hover:bg-ember/10' : ''}"
         onclick={() => navigate(`/answer?day=${selectedDay}`)}
       >
         Answer this day
@@ -388,12 +389,12 @@
             {#each days as day (day)}
               <th
                 class="meta truncate px-4 py-3 text-left
-                       {day === today() ? 'text-ember' : ''}"
+                       {day === $currentDay ? 'text-ember' : ''}"
                 scope="col"
                 data-column={day}
-                data-today={day === today() ? '' : undefined}
+                data-today={day === $currentDay ? '' : undefined}
               >
-                {day === today() ? 'Today' : dayLabel(day)}
+                {day === $currentDay ? 'Today' : dayLabel(day)}
               </th>
             {/each}
           </tr>
@@ -434,7 +435,7 @@
               <td class="px-2 py-3">
                 <button
                   class="btn-outline meta w-full transition
-                         {day === today() ? 'border-ember/60 text-paper hover:bg-ember/10' : ''}"
+                         {day === $currentDay ? 'border-ember/60 text-paper hover:bg-ember/10' : ''}"
                   onclick={() => navigate(`/answer?day=${day}`)}
                 >
                   Answer

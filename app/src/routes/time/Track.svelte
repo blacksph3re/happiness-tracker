@@ -10,7 +10,7 @@
   } from '../../lib/generated/sdk.gen'
   import { formatShort, localDay, nowUtc, utcOffset } from '../../lib/clock.js'
 import { elapsed } from '../../lib/time/duration.js'
-  import { today } from '../../lib/day.js'
+  import { currentDay } from '../../lib/day.js'
   import { nextColour } from '../../lib/palette.js'
   import { resource } from '../../lib/resource.svelte.js'
   import { now } from '../../lib/time/tick.js'
@@ -47,13 +47,13 @@ import { elapsed } from '../../lib/time/duration.js'
   const active = $derived(($projectStore ?? []).filter((project) => project.active))
 
   const loaded = resource(
-    () => today(),
-    () =>
+    () => $currentDay,
+    (day) =>
       Promise.all([
         ensureProjects(),
         // Only today matters here; an open session from further back still
         // arrives, because the range never drops one that is still running.
-        ensureTimeEntries({ start: today(), end: today() }),
+        ensureTimeEntries({ start: day, end: day }),
       ]),
     { name: 'time track' }
   )
@@ -120,7 +120,7 @@ import { elapsed } from '../../lib/time/duration.js'
 
   /** Whether a session finished on the local day now in progress. */
   function endedToday(entry) {
-    return localDay(entry.ended_at, entry.utc_offset) === today()
+    return localDay(entry.ended_at, entry.utc_offset) === $currentDay
   }
 
   const anyRunning = $derived(

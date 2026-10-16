@@ -2,6 +2,7 @@ import {
   catalogueOf,
   expect,
   expectSettled,
+  expireAccessToken,
   makeProject,
   makeTodo,
   openTasks,
@@ -396,6 +397,65 @@ test('pressing the cloud after a failed read reaches the server and reads again'
   await page.locator('[data-sync] button').click()
   await expect(todaysRows(page)).toHaveCount(2)
 })
+
+/** Stop a running session from the other device, as a newer write of the same session. */
+async function stopElsewhere(account, session, endedAt) {
+  const response = await account.api.post('/api/sync', {
+    data: {
+      intents: [
+        {
+          seq: 1,
+          kind: 'entry.upsert',
+          client_id: session.client_id,
+          client_updated_at: `${TODAY}T23:00:00`,
+          payload: {
+            project_id: session.project_id,
+            started_at: session.started_at,
+            ended_at: endedAt,
+            utc_offset: session.utc_offset,
+          },
+        },
+      ],
+    },
+  })
+  expect((await response.json()).results[0].outcome).toBe('applied')
+}
+
+for (const [trigger, how] of [
+  ['pressing the cloud', (page) => page.locator('[data-sync] button').click()],
+  [
+    'the check when the tab comes back',
+    async (page) => {
+      await page.clock.fastForward(PAST_THE_FLOOR)
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    },
+  ],
+]) {
+  test(`${trigger} after the access token expired renews it and reads again`, async ({
+    page,
+    account,
+  }) => {
+    // A phone left overnight wakes with an access token an hour dead. The
+    // change check asked with it, got a 401, and gave up without reading —
+    // every check, and every press of the cloud — until a reload, whose reads
+    // renew the token the way every loader does.
+    const project = await makeProject(account, 'The rewrite')
+    const running = await recordSession(account, project.id, `${TODAY}T07:00:00`, null)
+    const baseline = page.waitForResponse((response) => response.url().includes('/api/changes'))
+    await page.goto('/time/record')
+    await expect(page.locator('[data-live="yes"]')).toHaveCount(1)
+    await baseline
+
+    // A stop changes no count, and the digest stamps in whole seconds: made in
+    // the second the baseline was taken, it is invisible to the change check —
+    // the documented limit, not this defect. On the phone it was hours later.
+    await page.waitForTimeout(1_100)
+    await stopElsewhere(account, running, `${TODAY}T10:00:00`)
+    await expireAccessToken(page)
+    await how(page)
+    await expect(page.locator('[data-live="yes"]')).toHaveCount(0)
+  })
+}
 
 test('pressing the cloud re-reads only what this tab has read', async ({ page }) => {
   // A reload of the record reads sessions, not tasks or answers, and neither

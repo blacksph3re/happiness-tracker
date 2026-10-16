@@ -775,3 +775,15 @@ test('the move asks first, and cancelling moves nothing', async ({ page, account
   await expect(page.locator('[data-sweep="past"]')).toHaveText('Move 1 to Later')
   expect((await storedTodos(account))[0].planned_on).toBe('2026-06-12')
 })
+
+test('a board left open past midnight moves its days', async ({ page, account }) => {
+  // The board read today once, when it was opened, so a phone left on it
+  // overnight kept yesterday's Today and Tomorrow.
+  await makeTodos(account, [{ title: 'Feed the cat', planned_on: '2026-06-16' }])
+  await openTasks(page, account, 'date')
+  await expect(page.locator('[data-count="tomorrow"]')).toHaveText('1')
+
+  await page.clock.fastForward('10:30:00')
+  await expect(page.locator('[data-count="today"]')).toHaveText('1')
+  await expect(page.locator('[data-count="tomorrow"]')).toHaveText('0')
+})

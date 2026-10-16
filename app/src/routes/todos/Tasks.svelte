@@ -21,7 +21,7 @@
   import { cardDrag } from '../../lib/todos/drag.svelte.js'
   import { taskMenu } from '../../lib/todos/task-menu.svelte.js'
   import { between, isRank, needsRebalance, placeBetween, spread } from '../../lib/todos/rank.js'
-  import { dayLabel, today as todayKey } from '../../lib/day.js'
+  import { currentDay, dayLabel } from '../../lib/day.js'
   import { chipColour } from '../../lib/palette.js'
   import { wide } from '../../lib/media.js'
   import { resource } from '../../lib/resource.svelte.js'
@@ -65,7 +65,7 @@
    * moving a card goes through.
    */
 
-  const today = todayKey()
+  const today = $derived($currentDay)
 
   /**
    * Which lists are on screen, how they are grouped, and how that is laid out.

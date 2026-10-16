@@ -1,5 +1,6 @@
 import { get } from 'svelte/store'
 
+import { unwrap } from './api.js'
 import { diffDigest } from './digest.js'
 import { getChanges } from './generated/sdk.gen'
 import { path } from './router.js'
@@ -111,7 +112,17 @@ function run(everything) {
  * @returns {Promise<Array<string>>} The collections re-read.
  */
 async function check(everything) {
-  const { data } = await getChanges()
+  // Through `unwrap`, as every loader reads, because that is where an expired
+  // access token is renewed. A token lives an hour, so a tab back from a night
+  // in a pocket holds a dead one; asked directly, the 401 read as no answer, and
+  // neither a background check nor a press of the cloud re-read anything until a
+  // reload's loaders renewed it.
+  let data = null
+  try {
+    data = await unwrap(() => getChanges())
+  } catch {
+    // Silent, as before: unreachable is what `connection` is for.
+  }
   // No answer: leave `lastSeen` alone. Overwriting it with nothing would make
   // the next successful check compare against a baseline that never existed and
   // re-read every collection at once.

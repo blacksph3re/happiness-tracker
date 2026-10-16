@@ -23,7 +23,7 @@ import { elapsed } from '../lib/time/duration.js'
     timeEntries,
     todos as todoStore,
   } from '../lib/store.js'
-  import { today } from '../lib/day.js'
+  import { currentDay } from '../lib/day.js'
   import { isOverdue } from '../lib/todos/fields.js'
   import {
     bestRun,
@@ -55,7 +55,7 @@ import { elapsed } from '../lib/time/duration.js'
   let hydrated = $state(false)
   let settled = $state(false)
 
-  const day = today()
+  const day = $derived($currentDay)
 
   /**
    * The look of every card action, named once because there are eight of them.

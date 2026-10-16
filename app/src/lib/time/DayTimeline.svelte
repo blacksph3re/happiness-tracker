@@ -1,6 +1,6 @@
 <script>
   import { swipe } from '../swipe.js'
-  import { dayLabel, shiftDay, today } from '../day.js'
+  import { currentDay, dayLabel, shiftDay, today } from '../day.js'
   import { clockOfSeconds, formatDuration } from '../clock.js'
   import { coveredSeconds, dayOffsets, slices } from './duration.js'
   import { now } from './tick.js'
@@ -152,7 +152,7 @@
     }
   })
 
-  const isToday = $derived(!byDay && day === today())
+  const isToday = $derived(!byDay && day === $currentDay)
 
   /** Seconds since local midnight, for the "now" marker. */
   const nowSeconds = $derived.by(() => {
@@ -202,7 +202,7 @@
     data-timeline={day}
     use:swipe={{
       onswipe: (delta) => (day = shiftDay(day, delta)),
-      forward: () => day < today(),
+      forward: () => day < $currentDay,
     }}
   >
     <Swimlanes {lanes} {window} marker={isToday ? nowSeconds : null} />

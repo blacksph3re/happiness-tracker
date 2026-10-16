@@ -1,6 +1,8 @@
+import { createHmac } from 'node:crypto'
+
 import { test as base, expect, request } from '@playwright/test'
 
-import { ADMIN, NOW, TEMPLATE, TODAY, baseUrlFor } from '../playwright.config.js'
+import { ADMIN, BACKEND_ENV, NOW, TEMPLATE, TODAY, baseUrlFor } from '../playwright.config.js'
 
 export { expect, NOW, TODAY }
 
@@ -668,6 +670,32 @@ export async function outboxEmpty(page) {
   await expect(page.locator('[data-sync]')).toHaveAttribute('data-pending', '0', {
     timeout: 15_000,
   })
+}
+
+/**
+ * Replace the page's access token with the same token, expired.
+ *
+ * What a phone left in a pocket overnight wakes up holding: access tokens live
+ * an hour, and nothing renews one while the tab is suspended. Same claims, so
+ * `tokenHolder()` still names the account; re-signed with the suite's own key,
+ * so the server refuses it as expired rather than as forged.
+ *
+ * @param {import('@playwright/test').Page} page
+ */
+export async function expireAccessToken(page) {
+  const token = await page.evaluate(() => localStorage.getItem('ht.access'))
+  const [head, body] = token.split('.')
+  const claims = JSON.parse(Buffer.from(body, 'base64url').toString())
+  // The server's clock, not the page's: the page's is pinned to June.
+  claims.exp = Math.floor(Date.now() / 1000) - 60
+  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url')
+  const signature = createHmac('sha256', BACKEND_ENV.JWT_SECRET)
+    .update(`${head}.${payload}`)
+    .digest('base64url')
+  await page.evaluate(
+    (expired) => localStorage.setItem('ht.access', expired),
+    `${head}.${payload}.${signature}`
+  )
 }
 
 /**

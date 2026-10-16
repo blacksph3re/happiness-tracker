@@ -496,6 +496,47 @@ test('an overlapping session added offline shows at once and survives the sync',
   await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('4h 00m')
 })
 
+/** Today's headings on the record, in page order: the label each day block carries. */
+async function dayHeadings(page) {
+  return page
+    .locator('[data-day]')
+    .evaluateAll((blocks) =>
+      blocks.map((block) => [block.dataset.day, block.querySelector('p.meta').textContent.trim()])
+    )
+}
+
+for (const [how, crossMidnight] of [
+  // 22:30 UTC is 00:30 in Berlin on the 16th.
+  ['at midnight', (page) => page.clock.fastForward('10:30:00')],
+  [
+    'when it comes back into view',
+    async (page) => {
+      // A suspended tab's timers can be late: the jump fires none of them.
+      await page.clock.setSystemTime(new Date(`${TODAY}T22:30:00Z`))
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    },
+  ],
+]) {
+  test(`a record left open past midnight moves Today ${how}`, async ({ page, account }) => {
+    // Reported from a phone left open overnight: yesterday's block still read
+    // "Today" beside the new day's, because a day's heading compared it with a
+    // `today()` read once, when the block was drawn.
+    const project = await makeProject(account, 'The rewrite')
+    // Running since 09:00 Berlin, so it reaches into the next day.
+    await recordSession(account, project.id, `${TODAY}T07:00:00`, null, 120)
+    await page.goto('/time/record')
+    await expect.poll(() => dayHeadings(page)).toEqual([[TODAY, 'Today']])
+
+    await crossMidnight(page)
+    await expect
+      .poll(() => dayHeadings(page))
+      .toEqual([
+        ['2026-06-16', 'Today'],
+        [TODAY, 'Mon, Jun 15'],
+      ])
+  })
+}
+
 test('the export downloads the three CSVs', async ({ page, account }) => {
   const project = await makeProject(account, 'The rewrite')
   await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)

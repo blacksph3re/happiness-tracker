@@ -1,7 +1,7 @@
 <script>
   import Frame from '../../lib/Frame.svelte'
   import { COLUMN } from '../../lib/pomodoro/column.js'
-  import { dayLabel, shiftDay, today } from '../../lib/day.js'
+  import { currentDay, dayLabel, shiftDay, today } from '../../lib/day.js'
   import { clockLabel, clockOfSeconds, formatDuration, localDay } from '../../lib/clock.js'
   import { period, stepPeriod, daysIn } from '../../lib/period.js'
   import { now } from '../../lib/time/tick.js'
@@ -59,8 +59,8 @@
 
   /** `period` labels a day with its raw key; everywhere else reads a heading. */
   const heading = $derived(unit === 'day' ? dayLabel(anchor, { withYear: true }) : shown.label)
-  const days = $derived(daysIn(unit, anchor).filter((day) => day <= today()))
-  const atLatest = $derived(today() >= shown.start && today() <= shown.end)
+  const days = $derived(daysIn(unit, anchor).filter((day) => day <= $currentDay))
+  const atLatest = $derived($currentDay >= shown.start && $currentDay <= shown.end)
 
   // Read from the store, not snapshotted out of the loader: stepping to a
   // window already held must paint from what is there rather than wait.

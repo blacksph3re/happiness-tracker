@@ -1,7 +1,7 @@
 <script>
   import Frame from '../../lib/Frame.svelte'
   import { COLUMN } from '../../lib/pomodoro/column.js'
-  import { today } from '../../lib/day.js'
+  import { currentDay } from '../../lib/day.js'
   import {
     clockLabel,
     formatDuration,
@@ -62,7 +62,7 @@
    * starting the next one cuts a break short.
    */
 
-  const day = today()
+  const day = $derived($currentDay)
 
   let task = $state('')
   /**

@@ -1,7 +1,51 @@
-/** Return today's date in the browser's own timezone as YYYY-MM-DD. */
+import { readable } from 'svelte/store'
+
+/**
+ * Return today's date in the browser's own timezone as YYYY-MM-DD.
+ *
+ * Read once, so right for the moment of an action — the day a session is added
+ * to, the day an answer is filed under. Anything a page *draws* or derives from
+ * today reads `currentDay` instead.
+ */
 export function today() {
   return toKey(new Date())
 }
+
+/**
+ * Today, as a store that moves at local midnight.
+ *
+ * A page left open — a phone in a pocket overnight — kept whatever `today()`
+ * said when it drew: the record headed yesterday's block *Today* beside the new
+ * day's, and the board kept yesterday's Today and Tomorrow. Checked again at the
+ * next local midnight, and whenever the page comes back into view or regains
+ * focus, because a suspended tab's timer can fire late. An unchanged day
+ * notifies nobody.
+ */
+export const currentDay = readable(today(), (set) => {
+  set(today())
+  if (typeof window === 'undefined') return
+
+  let timer
+  const check = () => {
+    set(today())
+    clearTimeout(timer)
+    const now = new Date()
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+    // A moment past it, so the check lands on the new day rather than a hair
+    // before it on a timer that fired early.
+    timer = setTimeout(check, midnight.getTime() - now.getTime() + 50)
+  }
+  check()
+  document.addEventListener('visibilitychange', check)
+  window.addEventListener('focus', check)
+  window.addEventListener('pageshow', check)
+  return () => {
+    clearTimeout(timer)
+    document.removeEventListener('visibilitychange', check)
+    window.removeEventListener('focus', check)
+    window.removeEventListener('pageshow', check)
+  }
+})
 
 /** Format a Date as the YYYY-MM-DD key the API stores answers under. */
 function toKey(date) {
