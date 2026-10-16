@@ -1,7 +1,14 @@
 from datetime import UTC, date, datetime, time
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from pydantic.fields import FieldInfo
 
 from config import get_settings
@@ -12,7 +19,9 @@ from models import (
     RANK_MAX_LENGTH,
     TODO_TITLE_MAX_LENGTH,
     TRACK_NAME_MAX_LENGTH,
+    DayOffKind,
     EntrySource,
+    GermanState,
     HabitDirection,
     HabitPeriod,
     ListKind,
@@ -187,6 +196,15 @@ class Changes(BaseModel):
 
     me: Fingerprint
     """The account row itself, whose default catalogue decides what is asked."""
+
+    contracts: Fingerprint
+    """Contract periods, counted through the tag they sit on."""
+
+    days_off: Fingerprint
+    """Days off marked by hand, cleared ones included — a clear is an edit."""
+
+    budget_resets: Fingerprint
+    """Budget resets, cleared ones included."""
 
 
 class LoginRequest(BaseModel):
@@ -1058,9 +1076,58 @@ class DeductionBandIn(BaseModel):
     deduct_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
     """Minutes it removes from the day, or null to cap the day at the threshold."""
 
+    in_budget: bool = True
+    """Whether the band counts toward the tag's hour budget.
+
+    Off, the budget reads the rule as if this band were not there. The reported
+    totals never change with it.
+    """
+
 
 class DeductionBandOut(DeductionBandIn):
     """A band as exposed by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    in_budget: bool = True
+    """Whether the band counts toward the hour budget; a stored NULL reads as yes."""
+
+    @field_validator("in_budget", mode="before")
+    @classmethod
+    def _null_reads_as_on(cls, value: bool | None) -> bool:
+        """Read a band stored before the switch existed as switched on.
+
+        Parameters
+        ----------
+        value : bool or None
+            The stored value.
+
+        Returns
+        -------
+        bool
+            True unless the band was switched off.
+        """
+        return value is not False
+
+
+class ContractPeriodIn(BaseModel):
+    """One period of a tag's contract, in force from its start until the next."""
+
+    starts_on: date
+    """The first local day this period applies to — a whole day."""
+
+    daily_minutes: int = Field(ge=0, le=24 * 60)
+    """The average hours per workday, in minutes. Zero ends the contract."""
+
+    workdays: int = Field(default=31, ge=0, le=127)
+    """The days it works, as a bitmask with Monday as 1 and Sunday as 64."""
+
+    state: GermanState | None = None
+    """The federal state whose public holidays it keeps, or null for none."""
+
+
+class ContractPeriodOut(ContractPeriodIn):
+    """A contract period as exposed by the API."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1080,8 +1147,19 @@ class TagRuleIn(BaseModel):
     Zero is stored as null, so a rule that adds nothing has one spelling.
     """
 
+    add_in_budget: bool = True
+    """Whether the addition counts toward the tag's hour budget."""
+
     bands: list[DeductionBandIn] = []
     """The deduction bands, in any order."""
+
+    contracts: list[ContractPeriodIn] | None = None
+    """The contract's periods, in any order; an empty list removes the contract.
+
+    Left out — or null — keeps the stored periods. That is read off
+    `model_fields_set` rather than a default, because an app released before
+    contracts existed sends a whole rule without them, and must not wipe one.
+    """
 
 
 class TagRuleOut(BaseModel):
@@ -1090,8 +1168,57 @@ class TagRuleOut(BaseModel):
     add_minutes: int | None
     """Minutes added to every tracked day, or null for none."""
 
+    add_in_budget: bool = True
+    """Whether the addition counts toward the hour budget."""
+
     bands: list[DeductionBandOut] = []
     """The deduction bands, lowest threshold first."""
+
+    contracts: list[ContractPeriodOut] = []
+    """The contract's periods, oldest first; empty for a tag with no budget."""
+
+
+class DayOffOut(BaseModel):
+    """A day off marked by hand on a contracted tag."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    tag_id: int
+    """The tag it is a day off from."""
+
+    day: date
+    """The local day."""
+
+    kind: DayOffKind
+    """What the day off was."""
+
+    note: str | None = None
+    """Optional free text."""
+
+
+class BudgetResetOut(BaseModel):
+    """A *Set hour budget* record: a tag's balance at the start of a day."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    tag_id: int
+    """The contracted tag."""
+
+    day: date
+    """The local day whose start the balance is fixed at."""
+
+    balance_minutes: int
+    """The balance, in minutes; may be negative."""
+
+
+class BudgetRecords(BaseModel):
+    """Every day off and budget reset an account holds, across its tags."""
+
+    days_off: list[DayOffOut] = []
+    """Days off, earliest first."""
+
+    resets: list[BudgetResetOut] = []
+    """Budget resets, earliest first."""
 
 
 class TrackedRange(BaseModel):
@@ -1127,6 +1254,8 @@ class SyncIntent(BaseModel):
         "todo.delete",
         "step.upsert",
         "step.delete",
+        "dayoff.put",
+        "budget.put",
     ]
     """What the intent does.
 
@@ -1142,8 +1271,8 @@ class SyncIntent(BaseModel):
     client_id: str | None = Field(default=None, max_length=36)
     """The device's identity for a session or pomodoro.
 
-    Required for every kind but `answer.put`, which is keyed by question and day
-    instead.
+    Required for every kind but `answer.put`, `dayoff.put` and `budget.put`,
+    which are keyed by what they are about and the day instead.
     """
 
     payload: dict = Field(default_factory=dict)
@@ -1712,6 +1841,43 @@ class SyncTodoPayload(BaseModel):
 
     active_seconds: int = Field(default=0, ge=0)
     """Seconds banked from activations that have already ended."""
+
+
+class SyncDayOffPayload(BaseModel):
+    """A day off as a device queues it, keyed on the tag and the day.
+
+    A null `kind` clears the day: the row stays, so a stale mark arriving after
+    the clear is older and loses.
+    """
+
+    tag_id: int
+    """The contracted tag."""
+
+    day: date
+    """The local day."""
+
+    kind: DayOffKind | None
+    """What the day off is, or null to clear it."""
+
+    note: str | None = Field(default=None, max_length=200)
+    """Optional free text."""
+
+
+class SyncBudgetPayload(BaseModel):
+    """A budget reset as a device queues it, keyed on the tag and the day.
+
+    A null balance clears it, kept as a row for the same reason a cleared day
+    off is.
+    """
+
+    tag_id: int
+    """The contracted tag."""
+
+    day: date
+    """The local day whose start the balance is fixed at."""
+
+    balance_minutes: int | None = Field(ge=-100_000 * 60, le=100_000 * 60)
+    """The balance, in minutes, or null to clear the reset."""
 
 
 class SyncStepPayload(BaseModel):

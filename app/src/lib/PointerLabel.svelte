@@ -53,6 +53,20 @@
     style:transform={place(tip.shown.x)}
   >
     <span class="block font-semibold">{tip.shown.name}</span>
-    <span class="block text-ink/70">{tip.shown.detail}</span>
+    {#if tip.shown.detail}
+      <span class="block text-ink/70">{tip.shown.detail}</span>
+    {/if}
+    {#if tip.shown.lines?.length}
+      <!-- Unbroken: a fixed box at the right edge only gets the room left to
+           the edge, so its figures wrapped before the clamp moved it back. -->
+      <span class="mt-1 grid grid-cols-[auto_auto] gap-x-4 gap-y-0.5 whitespace-nowrap">
+        {#each tip.shown.lines as [label, value] (label)}
+          <span class="contents" data-tip-line={label}>
+            <span class="text-ink/70">{label}</span>
+            <span class="text-right tabular-nums" data-tip-value>{value}</span>
+          </span>
+        {/each}
+      </span>
+    {/if}
   </div>
 {/if}

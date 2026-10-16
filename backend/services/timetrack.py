@@ -5,10 +5,12 @@ its duration divides across the days it touches. Nothing here reads the database
 or knows about HTTP.
 """
 
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from services.clock import MAX_UTC_OFFSET, MIN_UTC_OFFSET, local_day
+from services.holidays import public_holidays
 
 
 class TimeRuleError(ValueError):
@@ -487,3 +489,198 @@ def group_by_tag(
             for key in keys:
                 bucket[key] = bucket.get(key, 0) + seconds
     return grouped
+
+
+MONDAY_TO_FRIDAY = 0b0011111
+"""The default workdays of a contract, as a bitmask with Monday as bit 0."""
+
+BudgetKind = Literal["workday", "rest", "holiday", "off"]
+"""What a day is to a contract.
+
+``workday`` expects the contract's hours; ``rest`` is a day the contract does
+not work (a weekend, or every day of a zero-hour period); ``holiday`` is a
+public holiday in the contract's state; ``off`` is a day off marked by hand.
+Tested in that order, so a public holiday on a Saturday reads as a holiday and
+a day off marked on a weekend changes nothing.
+"""
+
+
+@dataclass(frozen=True)
+class ContractPeriod:
+    """One period of a tag's contract, in force from its start until the next."""
+
+    starts_on: date
+    """The first local day this period applies to."""
+
+    daily_minutes: int
+    """The average hours per workday, in minutes. Zero ends the contract."""
+
+    workdays: int = MONDAY_TO_FRIDAY
+    """The days of the week it works, as a bitmask with Monday as bit 0."""
+
+    state: str | None = None
+    """The federal state whose public holidays it keeps, or None for none."""
+
+
+@dataclass(frozen=True)
+class BudgetDay:
+    """One day of an hour budget."""
+
+    day: date
+    """The local day."""
+
+    kind: BudgetKind
+    """What the day is to the contract in force on it."""
+
+    name: str | None
+    """The public holiday's name, or the day off's kind; None otherwise."""
+
+    expected: int
+    """Seconds the contract expected of the day."""
+
+    counted: int
+    """Seconds the day counts: tracked, through the parts of the rule switched on."""
+
+    reset: int | None
+    """The balance a reset fixed at the start of this day, in seconds, if any."""
+
+    balance: int
+    """The balance after the day, in seconds; for today, the balance before it."""
+
+    open: bool
+    """Whether this is today, which shows its progress and counts once it is over."""
+
+
+def _counted(
+    tracked_seconds: int,
+    add_minutes: int | None,
+    add_in_budget: bool,
+    bands: list[Band],
+) -> int:
+    """Return what a day counts toward a budget.
+
+    The tag's rule restricted to the parts switched on for the budget, through
+    `reported` itself: switching a band off is the rule as if that band had not
+    been written, so a lower one can take its place, and switching the addition
+    off tests the bands against what was tracked alone.
+
+    Parameters
+    ----------
+    tracked_seconds : int
+        What the tag tracked on the day.
+    add_minutes : int or None
+        The tag's addition.
+    add_in_budget : bool
+        Whether the addition counts toward the budget.
+    bands : list of Band
+        The tag's bands; one whose ``in_budget`` is False is left out.
+
+    Returns
+    -------
+    int
+        Seconds the day counts.
+    """
+    counting = [band for band in bands if getattr(band, "in_budget", True) is not False]
+    return reported(tracked_seconds, counting, add_minutes if add_in_budget else None)
+
+
+def budget_days(
+    *,
+    tracked: dict[date, int],
+    contracts: list[ContractPeriod],
+    today: date,
+    add_minutes: int | None = None,
+    add_in_budget: bool = True,
+    bands: list[Band] | None = None,
+    days_off: dict[date, str] | None = None,
+    resets: dict[date, int] | None = None,
+) -> list[BudgetDay]:
+    """Walk a tag's hour budget from its contract's start to today.
+
+    Derived, never stored: a contract period, a day off, a reset or a switch on
+    the rule changes every day after it on the next read. Each day counts what
+    was tracked minus what the contract expected; a reset fixes the balance at
+    the start of its day; today shows its progress and counts once it is over.
+    Nothing before the first period is expected, so the walk starts there, and a
+    reset before it is ignored.
+
+    Parameters
+    ----------
+    tracked : dict
+        ``{day: seconds}`` the tag tracked, archived projects included.
+    contracts : list of ContractPeriod
+        The tag's contract periods, in any order.
+    today : datetime.date
+        The local day in progress.
+    add_minutes : int or None, optional
+        The tag's addition.
+    add_in_budget : bool, optional
+        Whether the addition counts, by default True.
+    bands : list of Band, optional
+        The tag's bands, each with ``in_budget``.
+    days_off : dict, optional
+        ``{day: kind}`` of days off marked by hand.
+    resets : dict, optional
+        ``{day: seconds}`` of the balance fixed at the start of a day.
+
+    Returns
+    -------
+    list of BudgetDay
+        One per day from the first period's start to today, oldest first. Empty
+        without a contract.
+    """
+    periods = sorted(contracts, key=lambda period: period.starts_on)
+    if not periods:
+        return []
+    bands = bands or []
+    days_off = days_off or {}
+    resets = resets or {}
+    holidays_by_year: dict[tuple[str | None, int], dict[date, str]] = {}
+
+    rows: list[BudgetDay] = []
+    balance = 0
+    day = periods[0].starts_on
+    current = 0
+    while day <= today:
+        while current + 1 < len(periods) and periods[current + 1].starts_on <= day:
+            current += 1
+        period = periods[current]
+        key = (period.state, day.year)
+        if key not in holidays_by_year:
+            holidays_by_year[key] = public_holidays(period.state, day.year)
+        holiday = holidays_by_year[key].get(day)
+        works = (
+            bool(period.workdays & (1 << day.weekday())) and period.daily_minutes > 0
+        )
+
+        if holiday is not None:
+            kind, name = "holiday", holiday
+        elif not works:
+            kind, name = "rest", None
+        elif day in days_off:
+            kind, name = "off", days_off[day]
+        else:
+            kind, name = "workday", None
+        expected = period.daily_minutes * 60 if kind == "workday" else 0
+        counted = _counted(tracked.get(day, 0), add_minutes, add_in_budget, bands)
+
+        reset = resets.get(day)
+        if reset is not None:
+            balance = reset
+        is_today = day == today
+        if not is_today:
+            balance += counted - expected
+        rows.append(
+            BudgetDay(
+                day=day,
+                kind=kind,
+                name=name,
+                expected=expected,
+                counted=counted,
+                reset=reset,
+                balance=balance,
+                open=is_today,
+            )
+        )
+        day += timedelta(days=1)
+    return rows

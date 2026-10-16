@@ -4,8 +4,10 @@ import { tokenHolder, unwrap } from './api.js'
 import { purgePush } from './push.js'
 import {
   archivedAway,
+  budgetKey,
   mergeDuringRead,
   overlayAnswers,
+  overlayBudget,
   overlayEntries,
   overlayPomodoros,
   overlayTodos,
@@ -44,6 +46,7 @@ import {
 } from './local.js'
 import {
   addTodoListMember,
+  budgetRecords as readBudgetRecords,
   getCatalogue,
   getCurrentUser,
   getMyPreferences,
@@ -114,6 +117,20 @@ export const tagRules = writable(null)
 
 /** The first and last day tracking covers, for window controls that must stop. */
 export const trackedDays = writable(null)
+
+/**
+ * Days off marked by hand and *Set hour budget* records, across every tag.
+ *
+ * The hour budget is worked out from these, the tag rules and the sessions —
+ * see `lib/time/budget.js` — and never stored. Keyed on the tag and the day,
+ * with the queue laid over the server's copy, so a day marked off with no
+ * connection shows at once.
+ *
+ * @type {import('svelte/store').Writable<{daysOff: Array<{tag_id: number,
+ *   day: string, kind: string, note?: string|null}>, resets: Array<{tag_id: number,
+ *   day: string, balance_minutes: number}>}>}
+ */
+export const budgetRecords = writable({ daysOff: [], resets: [] })
 
 /** Tracked sessions, for the days `loadedRange` covers. */
 export const timeEntries = writable([])
@@ -347,6 +364,7 @@ const PERSISTED = {
   tags,
   tagRules,
   trackedDays,
+  budgetRecords,
   timeEntries,
   pomodoros,
   todos,
@@ -396,6 +414,9 @@ const DIGEST_MARKS = {
   rules: ['rules'],
   catalogues: ['catalogues'],
   me: ['me'],
+  contracts: ['rules'],
+  days_off: ['budget-records'],
+  budget_resets: ['budget-records'],
 }
 
 /**
@@ -520,6 +541,32 @@ function todoIntentKey(intent) {
   return undefined
 }
 
+/**
+ * The budget records as the server last returned them, before the queue.
+ *
+ * The answers' `fromServer` for days off and resets, for the same reason: the
+ * queue empties as it drains, and a projection rebuilt from a stale read would
+ * take a day just marked off back off the screen.
+ */
+let budgetFromServer = { daysOff: [], resets: [] }
+
+/**
+ * Days off and resets written while a read of them was out, by tag and day;
+ * `null` for a clear. See `wroteDuringRead`.
+ */
+let daysOffWroteDuringRead = new Map()
+let resetsWroteDuringRead = new Map()
+
+/** Which day off a queued intent writes, for `unconfirmed`. */
+function dayOffIntentKey(intent) {
+  return intent.kind === 'dayoff.put' ? budgetKey(intent.payload) : undefined
+}
+
+/** Which budget reset a queued intent writes, for `unconfirmed`. */
+function resetIntentKey(intent) {
+  return intent.kind === 'budget.put' ? budgetKey(intent.payload) : undefined
+}
+
 let projecting = false
 
 /** Lay the queue over the server's answers again, whatever just changed. */
@@ -531,6 +578,7 @@ function projected(rows = fromServer) {
 function reproject() {
   if (!projecting) return
   answers.set(projected())
+  budgetRecords.set(overlayBudget(budgetFromServer, get(queued)))
 }
 
 let hydrating = null
@@ -654,6 +702,7 @@ async function hydrate(holder) {
   // What was restored is the last projection, which stands in for the server's
   // copy until a fetch replaces it.
   fromServer = get(answers)
+  budgetFromServer = get(budgetRecords)
   projecting = true
 }
 
@@ -1129,6 +1178,87 @@ export async function ensureTagRules({ force = false } = {}) {
 }
 
 /**
+ * Load every day off and budget reset, unless they are already known.
+ *
+ * One read for every tag rather than one per tag: the records are small, and
+ * a budget mode switching tags must paint at once. Writes made while it is out
+ * are merged back over the reply, clears included, as the answers' are.
+ *
+ * @param {{force?: boolean}} options
+ * @returns {Promise<{daysOff: Array<object>, resets: Array<object>}>}
+ */
+export async function ensureBudgetRecords({ force = false } = {}) {
+  await ready()
+  if (!force && fetched.has('budget-records')) return get(budgetRecords)
+  return once('budget-records', async () => {
+    daysOffWroteDuringRead = unconfirmed(daysOffWroteDuringRead, get(queued), dayOffIntentKey)
+    resetsWroteDuringRead = unconfirmed(resetsWroteDuringRead, get(queued), resetIntentKey)
+    const loaded = await quietly(() => readBudgetRecords())
+    if (!loaded) return get(budgetRecords)
+    const mineOff = daysOffWroteDuringRead
+    const mineResets = resetsWroteDuringRead
+    daysOffWroteDuringRead = unconfirmed(mineOff, get(queued), dayOffIntentKey)
+    resetsWroteDuringRead = unconfirmed(mineResets, get(queued), resetIntentKey)
+    budgetFromServer = {
+      daysOff: mergeDuringRead(loaded.days_off, mineOff, budgetKey),
+      resets: mergeDuringRead(loaded.resets, mineResets, budgetKey),
+    }
+    const shown = overlayBudget(budgetFromServer, get(queued))
+    budgetRecords.set(shown)
+    fetched.add('budget-records')
+    return shown
+  })
+}
+
+/**
+ * Fold written days off or resets into the baseline and the during-read map.
+ *
+ * @param {'daysOff'|'resets'} list
+ * @param {Array<object>} rows As written; a null value is a clear.
+ * @param {(row: object) => boolean} clears
+ */
+function rememberBudget(list, rows, clears) {
+  const map = list === 'daysOff' ? daysOffWroteDuringRead : resetsWroteDuringRead
+  let held = budgetFromServer[list]
+  for (const row of rows) {
+    map.set(budgetKey(row), clears(row) ? null : row)
+    held = held.filter((one) => budgetKey(one) !== budgetKey(row))
+    if (!clears(row)) held = [...held, row]
+  }
+  budgetFromServer = { ...budgetFromServer, [list]: held }
+  budgetRecords.set(overlayBudget(budgetFromServer, get(queued)))
+}
+
+/**
+ * Mark days off, or clear them, as one gesture.
+ *
+ * A range marked at once is one queue entry, so it lands or waits together.
+ * Durable before visible, as every write is.
+ *
+ * @param {Array<{tag_id: number, day: string, kind: 'vacation'|'sick'|'other'|null,
+ *   note?: string|null}>} days A null kind clears that day.
+ * @returns {Promise<number>} How many the device stored.
+ */
+export async function saveDaysOff(days) {
+  const rows = days.map((day) => ({ note: null, ...day }))
+  const stored = await enqueueAll(rows.map((payload) => ({ kind: 'dayoff.put', payload })))
+  rememberBudget('daysOff', rows.slice(0, stored), (row) => row.kind == null)
+  return stored
+}
+
+/**
+ * Set a tag's hour budget at the start of a day, or clear it with null.
+ *
+ * @param {{tag_id: number, day: string, balance_minutes: number|null}} reset
+ * @returns {Promise<number>} The queue entry's sequence number.
+ */
+export async function setBudget(reset) {
+  const queuedIt = await enqueue({ kind: 'budget.put', payload: reset })
+  rememberBudget('resets', [reset], (row) => row.balance_minutes == null)
+  return queuedIt
+}
+
+/**
  * Apply a tag's rule locally, so a page reading it reflects the edit at once.
  *
  * Tag totals are worked out on the device now — see `lib/time/summary.js` —
@@ -1508,7 +1638,14 @@ export async function applyChanges(moved) {
 
   if (changed.has('projects')) loads.push(ensureProjects({ force: true }))
   if (changed.has('tags')) loads.push(ensureTags({ force: true }))
-  if (changed.has('rules')) loads.push(ensureTagRules({ force: true }))
+  // A tag carries half of its own rule — the addition and its budget switch —
+  // and a contract is part of the rule too, so either moving re-reads them.
+  if (changed.has('rules') || changed.has('tags') || changed.has('contracts')) {
+    loads.push(ensureTagRules({ force: true }))
+  }
+  if (changed.has('days_off') || changed.has('budget_resets')) {
+    loads.push(ensureBudgetRecords({ force: true }))
+  }
 
   // All three regroup or re-weigh tracked time, so any of them invalidates the
   // totals even though none of them is a session.
@@ -1549,6 +1686,10 @@ export function resetStore() {
   // and the next account's first reprojection would otherwise lay its queue
   // over the previous account's answers.
   fromServer = []
+  budgetFromServer = { daysOff: [], resets: [] }
+  daysOffWroteDuringRead = new Map()
+  resetsWroteDuringRead = new Map()
+  budgetRecords.set({ daysOff: [], resets: [] })
   me.set(null)
   catalogues.set([])
   answers.set([])

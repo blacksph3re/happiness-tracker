@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'vitest'
 
 import corpus from './derivations.json' with { type: 'json' }
+import { budgetDays } from './time/budget.js'
 import { dayOffsets } from './time/duration.js'
+import { publicHolidays } from './time/holidays.js'
 import {
   addedFor,
   deductionFor,
@@ -101,6 +103,36 @@ describe('a pomodoro reads the same on both sides', () => {
         focus: one.focus_elapsed,
         rest: one.break_elapsed,
       })
+    })
+  }
+})
+
+describe("a state's public holidays are the same on both sides", () => {
+  // Every state, and none, for every year 2015-2035: the Python side is held to
+  // the maintained `holidays` library, so this holds the port to it too.
+  for (const one of corpus.holidays) {
+    test(`${one.state ?? 'no state'} ${one.year}`, () => {
+      expect(publicHolidays(one.state, one.year)).toEqual(one.holidays)
+    })
+  }
+})
+
+describe('an hour budget walks the same days on both sides', () => {
+  for (const one of corpus.budgets) {
+    test(one.name, () => {
+      const rows = budgetDays({
+        tracked: one.tracked,
+        contracts: one.contracts,
+        today: one.today,
+        addMinutes: one.add_minutes,
+        addInBudget: one.add_in_budget,
+        bands: one.bands,
+        daysOff: one.days_off,
+        resets: Object.fromEntries(
+          Object.entries(one.resets).map(([day, minutes]) => [day, minutes * 60])
+        ),
+      })
+      expect(rows).toEqual(one.rows)
     })
   }
 })

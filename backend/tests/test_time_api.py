@@ -498,7 +498,9 @@ def test_a_capping_band_holds_the_day_at_its_threshold(client, admin_headers):
     stored = client.get(f"/api/tags/{tag['id']}/rule", headers=admin_headers).json()
     assert stored == {
         "add_minutes": None,
-        "bands": [{"from_minutes": 600, "deduct_minutes": None}],
+        "add_in_budget": True,
+        "bands": [{"from_minutes": 600, "deduct_minutes": None, "in_budget": True}],
+        "contracts": [],
     }
 
 
@@ -738,3 +740,155 @@ def test_the_tracked_range_reads_each_days_own_offset(client, admin_headers):
     assert client.get("/api/time/range", headers=admin_headers).json()["first"] == (
         "2026-06-11"
     )
+
+
+# --- Contracts, days off and budget resets ------------------------------------
+
+
+def contract_rule(client, headers, tag_id, contracts, **extra):
+    """Replace a tag's rule with one carrying a contract."""
+    return client.put(
+        f"/api/tags/{tag_id}/rule",
+        headers=headers,
+        json={"add_minutes": None, "bands": [], "contracts": contracts, **extra},
+    )
+
+
+def test_a_rule_carries_its_contract_periods_oldest_first(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    response = contract_rule(
+        client,
+        admin_headers,
+        tag["id"],
+        [
+            {
+                "starts_on": "2026-04-01",
+                "daily_minutes": 384,
+                "workdays": 15,
+                "state": "NW",
+            },
+            {"starts_on": "2026-01-01", "daily_minutes": 480},
+        ],
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["contracts"] == [
+        {
+            "starts_on": "2026-01-01",
+            "daily_minutes": 480,
+            "workdays": 31,
+            "state": None,
+        },
+        {
+            "starts_on": "2026-04-01",
+            "daily_minutes": 384,
+            "workdays": 15,
+            "state": "NW",
+        },
+    ]
+    stored = client.get(f"/api/tags/{tag['id']}/rule", headers=admin_headers).json()
+    assert stored["contracts"] == response.json()["contracts"]
+
+
+def test_two_contract_periods_cannot_start_on_one_day(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    response = contract_rule(
+        client,
+        admin_headers,
+        tag["id"],
+        [
+            {"starts_on": "2026-01-01", "daily_minutes": 480},
+            {"starts_on": "2026-01-01", "daily_minutes": 240},
+        ],
+    )
+    assert response.status_code == 422
+
+
+def test_a_contract_names_a_real_state(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    response = contract_rule(
+        client,
+        admin_headers,
+        tag["id"],
+        [{"starts_on": "2026-01-01", "daily_minutes": 480, "state": "XX"}],
+    )
+    assert response.status_code == 422
+
+
+def test_a_rule_saved_without_contracts_keeps_them(client, admin_headers):
+    # An older app, open in a tab, edits a band and has never heard of
+    # contracts: the rule it sends must not wipe the contract.
+    tag = make_tag(client, admin_headers, "Work")
+    contract_rule(
+        client,
+        admin_headers,
+        tag["id"],
+        [{"starts_on": "2026-01-01", "daily_minutes": 480}],
+    )
+    assert (
+        set_rule(
+            client,
+            admin_headers,
+            tag["id"],
+            [{"from_minutes": 0, "deduct_minutes": 30}],
+        ).status_code
+        == 200
+    )
+    stored = client.get(f"/api/tags/{tag['id']}/rule", headers=admin_headers).json()
+    assert len(stored["contracts"]) == 1
+    assert stored["bands"][0]["deduct_minutes"] == 30
+
+
+def test_the_budget_switches_round_trip_and_default_to_on(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    plain = client.get(f"/api/tags/{tag['id']}/rule", headers=admin_headers).json()
+    assert plain["add_in_budget"] is True
+    response = client.put(
+        f"/api/tags/{tag['id']}/rule",
+        headers=admin_headers,
+        json={
+            "add_minutes": 30,
+            "add_in_budget": False,
+            "bands": [
+                {"from_minutes": 0, "deduct_minutes": 30},
+                {"from_minutes": 360, "deduct_minutes": 45, "in_budget": False},
+            ],
+        },
+    )
+    body = response.json()
+    assert body["add_in_budget"] is False
+    assert [band["in_budget"] for band in body["bands"]] == [True, False]
+
+
+def test_the_reported_totals_ignore_the_budget_switches(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    project = make_project(client, admin_headers, "Backend", tag_ids=[tag["id"]])
+    client.put(
+        f"/api/tags/{tag['id']}/rule",
+        headers=admin_headers,
+        json={
+            "add_minutes": 60,
+            "add_in_budget": False,
+            "bands": [{"from_minutes": 0, "deduct_minutes": 30, "in_budget": False}],
+        },
+    )
+    record(client, admin_headers, project["id"], at(10, 9), at(10, 13))
+    row = tag_rows(client, admin_headers)[("2026-06-10", tag["id"])]
+    assert row["reported"] == 4 * HOUR + 60 * 60 - 30 * 60
+
+
+def test_another_accounts_tag_rule_and_budget_records_are_missing(
+    client, admin_headers
+):
+    _, other = make_user(client, admin_headers, "nosy")
+    tag = make_tag(client, admin_headers, "Work")
+    assert (
+        contract_rule(
+            client,
+            other,
+            tag["id"],
+            [{"starts_on": "2026-01-01", "daily_minutes": 480}],
+        ).status_code
+        == 404
+    )
+    records = client.get("/api/time/budget-records", headers=other).json()
+    assert records == {"days_off": [], "resets": []}

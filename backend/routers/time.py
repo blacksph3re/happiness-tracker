@@ -6,9 +6,21 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 from deps import CurrentUser, DbSession
-from models import DeductionBand, Project, Tag, TimeEntry
+from models import (
+    BudgetReset,
+    DeductionBand,
+    Project,
+    Tag,
+    TagContract,
+    TagDayOff,
+    TimeEntry,
+)
 from routers.projects import own_tag
 from schemas import (
+    BudgetRecords,
+    BudgetResetOut,
+    ContractPeriodOut,
+    DayOffOut,
     DeductionBandOut,
     SummaryRow,
     TagRuleIn,
@@ -296,7 +308,8 @@ def get_tag_rule(tag_id: int, user: CurrentUser, db: DbSession) -> TagRuleOut:
     Returns
     -------
     TagRuleOut
-        The addition and the bands, lowest threshold first.
+        The addition, the bands lowest threshold first, the budget switches, and
+        the contract periods oldest first.
     """
     tag = own_tag(db, user, tag_id)
     bands = (
@@ -308,9 +321,20 @@ def get_tag_rule(tag_id: int, user: CurrentUser, db: DbSession) -> TagRuleOut:
         .scalars()
         .all()
     )
+    contracts = (
+        db.execute(
+            select(TagContract)
+            .where(TagContract.tag_id == tag_id)
+            .order_by(TagContract.starts_on)
+        )
+        .scalars()
+        .all()
+    )
     return TagRuleOut(
         add_minutes=tag.add_minutes,
+        add_in_budget=tag.add_in_budget is not False,
         bands=[DeductionBandOut.model_validate(band) for band in bands],
+        contracts=[ContractPeriodOut.model_validate(period) for period in contracts],
     )
 
 
@@ -353,7 +377,8 @@ def set_tag_rule(
     Raises
     ------
     fastapi.HTTPException
-        With status 422 when two bands share a threshold.
+        With status 422 when two bands share a threshold, or two contract
+        periods a start.
     """
     tag = own_tag(db, user, tag_id)
     thresholds = [band.from_minutes for band in payload.bands]
@@ -362,11 +387,39 @@ def set_tag_rule(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Two bands cannot start at the same number of minutes",
         )
+    starts = [period.starts_on for period in payload.contracts or []]
+    if len(set(starts)) != len(starts):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Two contract periods cannot start on the same day",
+        )
 
     # Zero and null both mean "adds nothing", so only one of them is stored.
     # Otherwise the same rule round-trips differently depending on how it was
     # last saved, which the change digest would report as an edit.
     tag.add_minutes = payload.add_minutes or None
+    # On is stored as NULL, which every row written before the switch already
+    # holds, so a rule saved with nothing switched off changes no column.
+    tag.add_in_budget = None if payload.add_in_budget else False
+
+    # Left out entirely, the contract stays: an app that predates contracts
+    # still sends whole rules. An empty list is a request to remove it.
+    if payload.contracts is not None:
+        for existing in db.execute(
+            select(TagContract).where(TagContract.tag_id == tag.id)
+        ).scalars():
+            db.delete(existing)
+        db.flush()
+        for period in payload.contracts:
+            db.add(
+                TagContract(
+                    tag_id=tag.id,
+                    starts_on=period.starts_on,
+                    daily_minutes=period.daily_minutes,
+                    workdays=period.workdays,
+                    state=period.state,
+                )
+            )
 
     for existing in db.execute(
         select(DeductionBand).where(DeductionBand.tag_id == tag.id)
@@ -379,10 +432,64 @@ def set_tag_rule(
                 tag_id=tag.id,
                 from_minutes=band.from_minutes,
                 deduct_minutes=band.deduct_minutes,
+                in_budget=None if band.in_budget else False,
             )
         )
     db.commit()
     return get_tag_rule(tag_id, user, db)
+
+
+@router.get(
+    "/time/budget-records",
+    response_model=BudgetRecords,
+    operation_id="budgetRecords",
+    summary="Every day off and budget reset",
+    description=(
+        "The days off marked by hand and the budget resets across all of the "
+        "account's tags, earliest first. Cleared ones are left out. The budget "
+        "itself is computed from these, the tag rules and the sessions."
+    ),
+)
+def budget_records(user: CurrentUser, db: DbSession) -> BudgetRecords:
+    """Return the account's days off and budget resets.
+
+    Parameters
+    ----------
+    user : User
+        The authenticated user.
+    db : sqlalchemy.orm.Session
+        Active database session.
+
+    Returns
+    -------
+    BudgetRecords
+        Days off and resets on the account's own tags, earliest first.
+    """
+    tags = select(Tag.id).where(Tag.user_id == user.id)
+    days_off = (
+        db.execute(
+            select(TagDayOff)
+            .where(TagDayOff.tag_id.in_(tags), TagDayOff.kind.is_not(None))
+            .order_by(TagDayOff.day, TagDayOff.tag_id)
+        )
+        .scalars()
+        .all()
+    )
+    resets = (
+        db.execute(
+            select(BudgetReset)
+            .where(
+                BudgetReset.tag_id.in_(tags), BudgetReset.balance_minutes.is_not(None)
+            )
+            .order_by(BudgetReset.day, BudgetReset.tag_id)
+        )
+        .scalars()
+        .all()
+    )
+    return BudgetRecords(
+        days_off=[DayOffOut.model_validate(row) for row in days_off],
+        resets=[BudgetResetOut.model_validate(row) for row in resets],
+    )
 
 
 @router.get(

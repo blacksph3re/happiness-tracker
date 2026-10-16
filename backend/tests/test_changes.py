@@ -111,6 +111,9 @@ def test_every_collection_is_reported(client, admin_headers):
         "todo_steps",
         "todo_lists",
         "me",
+        "contracts",
+        "days_off",
+        "budget_resets",
     }
     for name, fingerprint in body.items():
         assert set(fingerprint) == {"n", "at"}, name
@@ -606,3 +609,50 @@ def test_adding_a_member_moves_the_owners_list_watermark(
     after = digest(client, admin_headers)["todo_lists"]
     assert after["n"] == before["n"] == 3
     assert after["at"] > before["at"]
+
+
+def test_a_contract_a_day_off_and_a_reset_each_move_the_digest(client, admin_headers):
+    tag = make_tag(client, admin_headers, "Work")
+    before = digest(client, admin_headers)
+    client.put(
+        f"/api/tags/{tag['id']}/rule",
+        headers=admin_headers,
+        json={
+            "bands": [],
+            "contracts": [{"starts_on": "2026-01-01", "daily_minutes": 480}],
+        },
+    )
+    after_contract = digest(client, admin_headers)
+    assert after_contract["contracts"] != before["contracts"]
+
+    client.post(
+        "/api/sync",
+        headers=admin_headers,
+        json={
+            "intents": [
+                {
+                    "seq": 1,
+                    "kind": "dayoff.put",
+                    "client_updated_at": "2026-06-10T08:00:00",
+                    "payload": {
+                        "tag_id": tag["id"],
+                        "day": "2026-06-10",
+                        "kind": "vacation",
+                    },
+                },
+                {
+                    "seq": 2,
+                    "kind": "budget.put",
+                    "client_updated_at": "2026-06-10T08:00:00",
+                    "payload": {
+                        "tag_id": tag["id"],
+                        "day": "2026-01-01",
+                        "balance_minutes": 0,
+                    },
+                },
+            ]
+        },
+    )
+    after_records = digest(client, admin_headers)
+    assert after_records["days_off"] != after_contract["days_off"]
+    assert after_records["budget_resets"] != after_contract["budget_resets"]

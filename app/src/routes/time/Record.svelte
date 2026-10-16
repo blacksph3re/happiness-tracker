@@ -23,9 +23,13 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
   import IconPencil from '../../lib/IconPencil.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
   import IconStop from '../../lib/IconStop.svelte'
+  import BudgetView from '../../lib/time/BudgetView.svelte'
+  import { budgetTable, workdaysIn } from '../../lib/time/budget.js'
   import TimeField from '../../lib/time/TimeField.svelte'
   import { now } from '../../lib/time/tick.js'
   import {
+    budgetRecords,
+    ensureBudgetRecords,
     ensureTagRules,
     ensureProjects,
     ensureTags,
@@ -33,7 +37,9 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
     ensureTrackedRange,
     projects as projectStore,
     replaceEntry,
+    saveDaysOff,
     saveEntry,
+    setBudget,
     stopEntry,
     tagRules,
     tags as tagStore,
@@ -66,8 +72,22 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
   let adding = $state(null)
   let merged = $state(false)
 
-  /** `project` or `tag` — what a row stands for, as on the patterns page. */
+  /**
+   * `project` or `tag` — what a row stands for, as on the patterns page — or
+   * `budget`, a contracted tag's hour budget day by day.
+   */
   let by = $state('project')
+
+  /** The tags carrying a contract, in tag order: what Budget mode offers. */
+  const contracted = $derived(
+    ($tagStore ?? []).filter((tag) => ($tagRules ?? {})[tag.id]?.contracts?.length)
+  )
+
+  /** The tag Budget mode shows; the first contracted one until one is picked. */
+  let budgetPick = $state(null)
+  const budgetTag = $derived(
+    contracted.some((tag) => tag.id === budgetPick) ? budgetPick : (contracted[0]?.id ?? null)
+  )
 
   /**
    * Whether a row can be worked on rather than only read.
@@ -533,10 +553,15 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
   async function startAdding(event) {
     editing = null
     adding = {
+      kind: 'session',
       day: today(),
+      lastDay: today(),
       project_id: ($projectStore ?? []).find((p) => p.active)?.id ?? null,
       startClock: '09:00',
       endClock: '17:00',
+      offKind: 'vacation',
+      hours: 0,
+      tag_id: null,
     }
     if (event?.detail === 0) {
       await tick()
@@ -596,6 +621,34 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
     editing = null
   }
 
+  /** The contracted tag a *Day off* or *Set budget* entry is for. */
+  const entryTag = $derived(
+    contracted.some((tag) => tag.id === adding?.tag_id)
+      ? adding.tag_id
+      : (budgetTag ?? contracted[0]?.id ?? null)
+  )
+
+  /** Mark every workday in the panel's range off, as one gesture. */
+  async function saveDaysOffRange() {
+    const contracts = ($tagRules ?? {})[entryTag]?.contracts ?? []
+    const [first, last] = [adding.day, adding.lastDay || adding.day].toSorted()
+    const days = workdaysIn(contracts, first, last)
+    if (days.length) {
+      await saveDaysOff(days.map((day) => ({ tag_id: entryTag, day, kind: adding.offKind })))
+    }
+    adding = null
+  }
+
+  /** Fix the chosen tag's balance at the start of the panel's day. */
+  async function saveBudgetReset() {
+    await setBudget({
+      tag_id: entryTag,
+      day: adding.day,
+      balance_minutes: Math.round((Number(adding.hours) || 0) * 60),
+    })
+    adding = null
+  }
+
   async function saveNew() {
     const day = adding.day
     await saveEntry({
@@ -631,10 +684,11 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
    * server-rendered export it replaces, it works with no connection.
    */
   async function download() {
-    const [known, allTags, rules] = await Promise.all([
+    const [known, allTags, rules, records] = await Promise.all([
       ensureProjects(),
       ensureTags(),
       ensureTagRules(),
+      ensureBudgetRecords(),
     ])
     const tables = exportTables({
       entries: $timeEntries,
@@ -643,6 +697,18 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
       rulesOf: rules ?? {},
       asOf: $now,
     })
+    // Only once a tag has a contract: an empty budget file would be a file
+    // about nothing.
+    const budget = budgetTable({
+      tags: allTags ?? [],
+      rulesOf: rules ?? {},
+      entries: $timeEntries,
+      projects: known ?? [],
+      records: records ?? $budgetRecords,
+      today: $currentDay,
+      asOf: $now,
+    })
+    if (budget) tables['budget.csv'] = budget
     save(
       toZip(Object.fromEntries(Object.entries(tables).map(([n, rows]) => [n, toCsv(rows)]))),
       'tracked-time.zip'
@@ -683,7 +749,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
        page stands for. Grouping and merging were on opposite sides of the
        header while merging was the only one of them. -->
   <div class="mb-6 flex flex-wrap gap-1" role="group" aria-label="View">
-    {#each [['project', 'By project'], ['tag', 'By tag']] as [value, label] (value)}
+    {#each [['project', 'By project'], ['tag', 'By tag'], ...(contracted.length ? [['budget', 'Budget']] : [])] as [value, label] (value)}
       <button
         class="meta rounded-md border px-4 py-2 transition
                {by === value
@@ -698,7 +764,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
     {/each}
     <!-- Not offered by tag, where a row is already a day of that tag and the
          toggle would be a control that is permanently, invisibly on. -->
-    {#if by !== 'tag'}
+    {#if by === 'project'}
       <button
         class="meta ml-2 rounded-md border px-4 py-2 transition
                {merged
@@ -722,62 +788,174 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
         if (event.key === 'Escape' && !event.defaultPrevented) stopAdding(true)
       }}
     >
-      <div class="flex flex-wrap items-end gap-3">
-        <div class="flex flex-col gap-1.5">
-          <span class="meta">Day</span>
-          <input
-            type="date"
-            aria-label="Day"
-            max={$currentDay}
-            bind:this={addDay}
-            bind:value={adding.day}
-            class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
-          />
+      {#if contracted.length}
+        <!-- What the entry is. A day off and a reset belong to a contracted
+             tag's budget, so they are offered only once a tag has a contract. -->
+        <div class="mb-4 flex flex-wrap gap-1" role="group" aria-label="Add">
+          {#each [['session', 'Session'], ['dayoff', 'Day off'], ['budget', 'Set hour budget']] as [value, label] (value)}
+            <button
+              class="meta rounded-md border px-4 py-2 transition
+                     {adding.kind === value
+                ? 'border-ember bg-ember/10 text-paper'
+                : 'border-white/15 hover:border-white/40'}"
+              aria-pressed={adding.kind === value}
+              data-add-kind={value}
+              onclick={() => (adding.kind = value)}
+            >
+              {label}
+            </button>
+          {/each}
         </div>
-        <label class="flex flex-col gap-1.5">
-          <span class="meta">Project</span>
-          <select
-            bind:value={adding.project_id}
-            class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
-          >
-            {#each ($projectStore ?? []).filter((p) => p.active) as option (option.id)}
-              <option value={option.id}>{option.name}</option>
+      {/if}
+
+      {#if adding.kind === 'session'}
+        <div class="flex flex-wrap items-end gap-3">
+          <div class="flex flex-col gap-1.5">
+            <span class="meta">Day</span>
+            <input
+              type="date"
+              aria-label="Day"
+              max={$currentDay}
+              bind:this={addDay}
+              bind:value={adding.day}
+              class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+            />
+          </div>
+          <label class="flex flex-col gap-1.5">
+            <span class="meta">Project</span>
+            <select
+              bind:value={adding.project_id}
+              class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+            >
+              {#each ($projectStore ?? []).filter((p) => p.active) as option (option.id)}
+                <option value={option.id}>{option.name}</option>
+              {/each}
+            </select>
+          </label>
+          <div class="flex flex-col gap-1.5">
+            <span class="meta">From</span>
+            <TimeField label="From" bind:value={adding.startClock} />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <span class="meta">To</span>
+            <TimeField label="To" bind:value={adding.endClock} />
+          </div>
+          <!-- One group, so the pair wraps together: loose in the row, Cancel
+               alone went to a second line under Day at 1280. -->
+          <div class="flex gap-3">
+            <button
+              class="btn-filled flex items-center gap-2 disabled:opacity-30"
+              disabled={!adding.project_id || !adding.day || adding.day > $currentDay}
+              onclick={() => saveNew()}
+            >
+              <IconPlus class="size-4" />
+              Add session
+            </button>
+            <button
+              class="btn-outline meta"
+              onclick={(event) => stopAdding(event.detail === 0)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+        {#if adding.day > $currentDay}
+          <!-- The record is what was tracked. A day that has not happened cannot
+               have been, and the row would be written where nothing reads it. -->
+          <p class="meta mt-3 normal-case text-ember">
+            A session cannot be recorded on a day that has not happened yet.
+          </p>
+        {/if}
+      {:else}
+        {#if contracted.length > 1}
+          <div class="mb-3 flex flex-wrap gap-1" role="group" aria-label="For">
+            {#each contracted as tag (tag.id)}
+              <button
+                class="meta rounded-md border px-4 py-2 transition
+                       {entryTag === tag.id
+                  ? 'border-ember bg-ember/10 text-paper'
+                  : 'border-white/15 hover:border-white/40'}"
+                aria-pressed={entryTag === tag.id}
+                data-entry-tag={tag.id}
+                onclick={() => (adding.tag_id = tag.id)}
+              >
+                {tag.name}
+              </button>
             {/each}
-          </select>
-        </label>
-        <div class="flex flex-col gap-1.5">
-          <span class="meta">From</span>
-          <TimeField label="From" bind:value={adding.startClock} />
+          </div>
+        {/if}
+        <div class="flex flex-wrap items-end gap-3">
+          {#if adding.kind === 'dayoff'}
+            <label class="flex flex-col gap-1.5">
+              <span class="meta">From</span>
+              <input
+                type="date"
+                aria-label="First day"
+                bind:value={adding.day}
+                class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+              />
+            </label>
+            <label class="flex flex-col gap-1.5">
+              <span class="meta">To</span>
+              <input
+                type="date"
+                aria-label="Last day"
+                bind:value={adding.lastDay}
+                class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+              />
+            </label>
+            <div class="flex flex-wrap gap-1" role="group" aria-label="Kind">
+              {#each [['vacation', 'Vacation'], ['sick', 'Sick'], ['other', 'Other']] as [value, label] (value)}
+                <button
+                  class="meta min-h-11 rounded-md border px-4 transition
+                         {adding.offKind === value
+                    ? 'border-ember bg-ember/10 text-paper'
+                    : 'border-white/15 hover:border-white/40'}"
+                  aria-pressed={adding.offKind === value}
+                  data-off-kind={value}
+                  onclick={() => (adding.offKind = value)}
+                >
+                  {label}
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <label class="flex flex-col gap-1.5">
+              <span class="meta">Day</span>
+              <input
+                type="date"
+                aria-label="Day"
+                bind:value={adding.day}
+                class="rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+              />
+            </label>
+            <label class="flex flex-col gap-1.5">
+              <span class="meta">Balance in hours</span>
+              <input
+                type="number"
+                step="0.25"
+                aria-label="Balance in hours"
+                bind:value={adding.hours}
+                class="numeral w-32 rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+              />
+            </label>
+          {/if}
+          <div class="flex gap-3">
+            <button
+              class="btn-filled disabled:opacity-30"
+              disabled={!adding.day || entryTag === null}
+              onclick={() => (adding.kind === 'dayoff' ? saveDaysOffRange() : saveBudgetReset())}
+            >
+              {adding.kind === 'dayoff' ? 'Mark days off' : 'Set budget'}
+            </button>
+            <button
+              class="btn-outline meta"
+              onclick={(event) => stopAdding(event.detail === 0)}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
-        <div class="flex flex-col gap-1.5">
-          <span class="meta">To</span>
-          <TimeField label="To" bind:value={adding.endClock} />
-        </div>
-        <!-- One group, so the pair wraps together: loose in the row, Cancel
-             alone went to a second line under Day at 1280. -->
-        <div class="flex gap-3">
-          <button
-            class="btn-filled flex items-center gap-2 disabled:opacity-30"
-            disabled={!adding.project_id || !adding.day || adding.day > $currentDay}
-            onclick={() => saveNew()}
-          >
-            <IconPlus class="size-4" />
-            Add session
-          </button>
-          <button
-            class="btn-outline meta"
-            onclick={(event) => stopAdding(event.detail === 0)}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-      {#if adding.day > $currentDay}
-        <!-- The record is what was tracked. A day that has not happened cannot
-             have been, and the row would be written where nothing reads it. -->
-        <p class="meta mt-3 normal-case text-ember">
-          A session cannot be recorded on a day that has not happened yet.
-        </p>
       {/if}
     </div>
   {/if}
@@ -798,6 +976,12 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
         Manage projects →
       </a>
     </div>
+  {:else if by === 'budget'}
+    {#if budgetTag === null}
+      <p class="meta">No tag carries a contract.</p>
+    {:else}
+      <BudgetView tagId={budgetTag} tags={contracted} onpick={(id) => (budgetPick = id)} />
+    {/if}
   {:else}
     {#if merged}
       <p class="meta mb-3 normal-case">

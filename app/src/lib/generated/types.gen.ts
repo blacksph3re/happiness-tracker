@@ -53,6 +53,42 @@ export type AnswerOut = {
 };
 
 /**
+ * BudgetRecords
+ *
+ * Every day off and budget reset an account holds, across its tags.
+ */
+export type BudgetRecords = {
+    /**
+     * Days Off
+     */
+    days_off?: Array<DayOffOut>;
+    /**
+     * Resets
+     */
+    resets?: Array<BudgetResetOut>;
+};
+
+/**
+ * BudgetResetOut
+ *
+ * A *Set hour budget* record: a tag's balance at the start of a day.
+ */
+export type BudgetResetOut = {
+    /**
+     * Tag Id
+     */
+    tag_id: number;
+    /**
+     * Day
+     */
+    day: string;
+    /**
+     * Balance Minutes
+     */
+    balance_minutes: number;
+};
+
+/**
  * CatalogueCreate
  *
  * Payload for creating or renaming a catalogue.
@@ -126,6 +162,81 @@ export type Changes = {
     todo_steps: Fingerprint;
     todo_lists: Fingerprint;
     me: Fingerprint;
+    contracts: Fingerprint;
+    days_off: Fingerprint;
+    budget_resets: Fingerprint;
+};
+
+/**
+ * ContractPeriodIn
+ *
+ * One period of a tag's contract, in force from its start until the next.
+ */
+export type ContractPeriodIn = {
+    /**
+     * Starts On
+     */
+    starts_on: string;
+    /**
+     * Daily Minutes
+     */
+    daily_minutes: number;
+    /**
+     * Workdays
+     */
+    workdays?: number;
+    /**
+     * State
+     */
+    state?: 'BB' | 'BE' | 'BW' | 'BY' | 'HB' | 'HE' | 'HH' | 'MV' | 'NI' | 'NW' | 'RP' | 'SH' | 'SL' | 'SN' | 'ST' | 'TH' | null;
+};
+
+/**
+ * ContractPeriodOut
+ *
+ * A contract period as exposed by the API.
+ */
+export type ContractPeriodOut = {
+    /**
+     * Starts On
+     */
+    starts_on: string;
+    /**
+     * Daily Minutes
+     */
+    daily_minutes: number;
+    /**
+     * Workdays
+     */
+    workdays?: number;
+    /**
+     * State
+     */
+    state?: 'BB' | 'BE' | 'BW' | 'BY' | 'HB' | 'HE' | 'HH' | 'MV' | 'NI' | 'NW' | 'RP' | 'SH' | 'SL' | 'SN' | 'ST' | 'TH' | null;
+};
+
+/**
+ * DayOffOut
+ *
+ * A day off marked by hand on a contracted tag.
+ */
+export type DayOffOut = {
+    /**
+     * Tag Id
+     */
+    tag_id: number;
+    /**
+     * Day
+     */
+    day: string;
+    /**
+     * Kind
+     */
+    kind: 'vacation' | 'sick' | 'other';
+    /**
+     * Note
+     */
+    note?: string | null;
 };
 
 /**
@@ -142,6 +253,10 @@ export type DeductionBandIn = {
      * Deduct Minutes
      */
     deduct_minutes?: number | null;
+    /**
+     * In Budget
+     */
+    in_budget?: boolean;
 };
 
 /**
@@ -158,6 +273,10 @@ export type DeductionBandOut = {
      * Deduct Minutes
      */
     deduct_minutes?: number | null;
+    /**
+     * In Budget
+     */
+    in_budget?: boolean;
 };
 
 /**
@@ -1041,7 +1160,7 @@ export type SyncIntent = {
     /**
      * Kind
      */
-    kind: 'answer.put' | 'entry.upsert' | 'entry.delete' | 'pomodoro.upsert' | 'pomodoro.delete' | 'todo.upsert' | 'todo.delete' | 'step.upsert' | 'step.delete';
+    kind: 'answer.put' | 'entry.upsert' | 'entry.delete' | 'pomodoro.upsert' | 'pomodoro.delete' | 'todo.upsert' | 'todo.delete' | 'step.upsert' | 'step.delete' | 'dayoff.put' | 'budget.put';
     /**
      * Client Updated At
      */
@@ -1168,9 +1287,17 @@ export type TagRuleIn = {
      */
     add_minutes?: number | null;
     /**
+     * Add In Budget
+     */
+    add_in_budget?: boolean;
+    /**
      * Bands
      */
     bands?: Array<DeductionBandIn>;
+    /**
+     * Contracts
+     */
+    contracts?: Array<ContractPeriodIn> | null;
 };
 
 /**
@@ -1184,9 +1311,17 @@ export type TagRuleOut = {
      */
     add_minutes: number | null;
     /**
+     * Add In Budget
+     */
+    add_in_budget?: boolean;
+    /**
      * Bands
      */
     bands?: Array<DeductionBandOut>;
+    /**
+     * Contracts
+     */
+    contracts?: Array<ContractPeriodOut>;
 };
 
 /**
@@ -3011,6 +3146,22 @@ export type SetTagRuleResponses = {
 };
 
 export type SetTagRuleResponse = SetTagRuleResponses[keyof SetTagRuleResponses];
+
+export type BudgetRecordsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/time/budget-records';
+};
+
+export type BudgetRecordsResponses = {
+    /**
+     * Successful Response
+     */
+    200: BudgetRecords;
+};
+
+export type BudgetRecordsResponse = BudgetRecordsResponses[keyof BudgetRecordsResponses];
 
 export type TrackedRangeData = {
     body?: never;

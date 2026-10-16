@@ -1,8 +1,9 @@
 """Domain rules, framework-free, split by the part of the app they belong to.
 
 `wellbeing` holds the question, score and auto-tracked-answer rules, `timetrack`
-the project and session rules, `pomodoro` the focus-timer rules, `todos` the
-list, ordering and archive rules. None of the four imports another. What more
+the project, session and hour-budget rules, with `holidays` beside it for the
+German public holidays a budget reads, `pomodoro` the focus-timer rules, `todos`
+the list, ordering and archive rules. None of the four imports another. What more
 than one of them needs lives in `clock`, which is how `local_day` got there: a
 session and a pomodoro both have to agree which local day a UTC instant lands
 in.
@@ -17,6 +18,7 @@ from services.clock import (
     local_day,
     offset_is_real,
 )
+from services.holidays import easter_sunday, public_holidays
 from services.pomodoro import (
     ABANDONED,
     COMPLETE,
@@ -32,8 +34,12 @@ from services.pomodoro import (
     transferable,
 )
 from services.timetrack import (
+    MONDAY_TO_FRIDAY,
+    BudgetDay,
+    ContractPeriod,
     TimeRuleError,
     added_for,
+    budget_days,
     check_entry_shape,
     check_no_overlap,
     covered_seconds,
@@ -137,7 +143,13 @@ __all__ = [
     "QuestionRuleError",
     "ScoreRuleError",
     "TimeRuleError",
+    "MONDAY_TO_FRIDAY",
+    "BudgetDay",
+    "ContractPeriod",
     "added_for",
+    "budget_days",
+    "easter_sunday",
+    "public_holidays",
     "check_entry_shape",
     "check_habit_shape",
     "check_no_overlap",

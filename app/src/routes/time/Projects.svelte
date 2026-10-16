@@ -28,6 +28,7 @@
   import { previewPoints } from '../../lib/time/deductions.js'
   import { addedFor, deductionFor } from '../../lib/time/summary.js'
   import { formatDuration } from '../../lib/clock.js'
+  import { GERMAN_STATES, STATE_NAMES } from '../../lib/time/holidays.js'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
@@ -60,6 +61,26 @@
 
   /** Minutes the open tag's rule adds to every day it tracked anything. */
   let addMinutes = $state(0)
+
+  /** Whether that addition counts toward the tag's hour budget. */
+  let addInBudget = $state(true)
+
+  /**
+   * The open tag's contract periods, as the form edits them: hours per day as
+   * typed, the rest as the API holds it.
+   */
+  let contracts = $state([])
+
+  /** The weekdays a contract can work, Monday first, with the bit each one is. */
+  const WEEKDAYS = [
+    [1, 'Mo', 'Monday'],
+    [2, 'Tu', 'Tuesday'],
+    [4, 'We', 'Wednesday'],
+    [8, 'Th', 'Thursday'],
+    [16, 'Fr', 'Friday'],
+    [32, 'Sa', 'Saturday'],
+    [64, 'Su', 'Sunday'],
+  ]
 
   /**
    * Whether the account's own shape can be changed at all right now.
@@ -209,25 +230,42 @@
     editingBands = tag.id
     bands = []
     addMinutes = 0
+    addInBudget = true
+    contracts = []
     touched = false
     const rule = (await attempt(() => getTagRule({ path: { tag_id: tag.id } }))) ?? {}
     if (token !== bandsToken || touched) return
     bands = rule.bands ?? []
     addMinutes = rule.add_minutes ?? 0
+    addInBudget = rule.add_in_budget !== false
+    contracts = (rule.contracts ?? []).map((period) => ({
+      ...period,
+      hours: period.daily_minutes / 60,
+    }))
   }
 
   async function saveBands(tag) {
     const body = {
       // Zero and blank both mean "adds nothing"; the server stores one of them.
       add_minutes: Number(addMinutes) || null,
+      add_in_budget: addInBudget,
       bands: bands
         .map((band) => ({
           from_minutes: Number(band.from_minutes) || 0,
           // null is not "zero minutes" but "as much as it takes": a cap.
           deduct_minutes:
             band.deduct_minutes === null ? null : Number(band.deduct_minutes) || 0,
+          in_budget: band.in_budget !== false,
         }))
         .sort((a, b) => a.from_minutes - b.from_minutes),
+      contracts: contracts
+        .filter((period) => period.starts_on)
+        .map((period) => ({
+          starts_on: period.starts_on,
+          daily_minutes: Math.round((Number(period.hours) || 0) * 60),
+          workdays: period.workdays,
+          state: period.state || null,
+        })),
     }
     const saved = await attempt(() => setTagRule({ path: { tag_id: tag.id }, body }))
     if (!saved) return
@@ -548,19 +586,37 @@
                   the bands.
                 </p>
 
-                <label class="mt-3 flex flex-col gap-1.5">
-                  <span class="meta">Add to every tracked day (minutes)</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="1440"
-                    bind:value={addMinutes}
-                    oninput={touch}
-                    aria-label="Add to every tracked day"
-                    class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
-                           py-2 text-sm"
-                  />
-                </label>
+                <!-- The caption spans both, so the switch sits beside its field
+                     rather than after the caption's whole width. Every control
+                     in these rows is drawn 40px tall and a small one reaches 44
+                     through a negative margin, so their centres share a line. -->
+                <div class="mt-3 flex flex-col gap-1.5">
+                  <label class="meta" for="add-minutes-{tag.id}">
+                    Add to every tracked day (minutes)
+                  </label>
+                  <div class="flex flex-wrap items-center gap-3">
+                    <input
+                      id="add-minutes-{tag.id}"
+                      type="number"
+                      min="0"
+                      max="1440"
+                      bind:value={addMinutes}
+                      oninput={touch}
+                      aria-label="Add to every tracked day"
+                      class="numeral h-10 w-28 rounded-lg border border-white/15 bg-ink px-3
+                             py-2 text-sm"
+                    />
+                    <label class="-my-0.5 flex h-11 items-center gap-2">
+                      <input
+                        type="checkbox"
+                        bind:checked={addInBudget}
+                        onchange={touch}
+                        aria-label="The addition counts toward the hour budget"
+                      />
+                      <span class="meta">In budget</span>
+                    </label>
+                  </div>
+                </div>
 
                 <div class="mt-3 flex flex-col gap-2">
                   {#each bands as band, index (index)}
@@ -573,7 +629,7 @@
                           bind:value={band.from_minutes}
                           oninput={touch}
                           aria-label="Band {index + 1} threshold"
-                          class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
+                          class="numeral h-10 w-28 rounded-lg border border-white/15 bg-ink px-3
                                  py-2 text-sm"
                         />
                       </label>
@@ -590,11 +646,11 @@
                           }}
                           placeholder="the rest"
                           aria-label="Band {index + 1} deduction"
-                          class="numeral w-28 rounded-lg border border-white/15 bg-ink px-3
+                          class="numeral h-10 w-28 rounded-lg border border-white/15 bg-ink px-3
                                  py-2 text-sm disabled:opacity-40"
                         />
                       </label>
-                      <label class="flex items-center gap-2 py-2">
+                      <label class="-my-0.5 flex h-11 items-center gap-2">
                         <input
                           type="checkbox"
                           checked={band.deduct_minutes === null}
@@ -607,16 +663,32 @@
                         />
                         <span class="meta">Cap here</span>
                       </label>
+                      <label class="-my-0.5 flex h-11 items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={band.in_budget !== false}
+                          onchange={(event) => {
+                            band.in_budget = event.currentTarget.checked
+                            touch()
+                          }}
+                          aria-label="Band {index + 1} counts toward the hour budget"
+                        />
+                        <span class="meta">In budget</span>
+                      </label>
                       <button
-                        class="meta rounded-md border border-white/15 px-3 py-2
-                               hover:border-ember"
+                        class="group -my-0.5 flex h-11 items-center"
                         aria-label="Remove band {index + 1}"
                         onclick={() => {
                           bands = bands.filter((_, at) => at !== index)
                           touch()
                         }}
                       >
-                        ×
+                        <span
+                          class="meta flex h-10 items-center rounded-md border border-white/15 px-3
+                                 transition group-hover:border-ember"
+                        >
+                          ×
+                        </span>
                       </button>
                     </div>
                   {:else}
@@ -684,6 +756,124 @@
                   >
                     <IconPlus class="size-3.5" />
                     Add a band
+                  </button>
+                </div>
+
+                <!-- The contract is part of the tag's rule: it is what turns the
+                     tag's time into an hour budget. Periods, because a contract
+                     changes from a date and must not rewrite the months before. -->
+                <div class="mt-4 border-t border-white/10 pt-4" data-contract={tag.id}>
+                  <p class="meta">Contract</p>
+                  {#each contracts as period, index (index)}
+                    <div class="mt-3 flex flex-wrap items-end gap-3" data-contract-period={index}>
+                      <label class="flex flex-col gap-1.5">
+                        <span class="meta">From</span>
+                        <input
+                          type="date"
+                          bind:value={period.starts_on}
+                          oninput={touch}
+                          aria-label="Period {index + 1} starts on"
+                          class="h-10 rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label class="flex flex-col gap-1.5">
+                        <span class="meta">Hours a day</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="24"
+                          step="0.25"
+                          bind:value={period.hours}
+                          oninput={touch}
+                          aria-label="Period {index + 1} hours per day"
+                          class="numeral h-10 w-24 rounded-lg border border-white/15 bg-ink px-3
+                                 py-2 text-sm"
+                        />
+                      </label>
+                      <div class="flex flex-col gap-1.5">
+                        <span class="meta">Works</span>
+                        <div class="flex flex-wrap gap-1">
+                          {#each WEEKDAYS as [bit, short, long] (bit)}
+                            <button
+                              type="button"
+                              aria-pressed={Boolean(period.workdays & bit)}
+                              aria-label="Period {index + 1} works {long}"
+                              class="group -my-0.5 flex h-11 items-center"
+                              onclick={() => {
+                                period.workdays ^= bit
+                                touch()
+                              }}
+                            >
+                              <span
+                                class="meta flex h-10 min-w-9 items-center justify-center rounded-md
+                                       border px-1.5 transition
+                                       {period.workdays & bit
+                                  ? 'border-ember bg-ember/10 text-paper'
+                                  : 'border-white/15 group-hover:border-white/40'}"
+                              >
+                                {short}
+                              </span>
+                            </button>
+                          {/each}
+                        </div>
+                      </div>
+                      <label class="flex flex-col gap-1.5">
+                        <span class="meta">Public holidays</span>
+                        <select
+                          value={period.state ?? ''}
+                          onchange={(event) => {
+                            period.state = event.currentTarget.value || null
+                            touch()
+                          }}
+                          aria-label="Period {index + 1} state"
+                          class="h-10 rounded-lg border border-white/15 bg-ink px-3 py-2 text-sm"
+                        >
+                          <option value="">None</option>
+                          {#each GERMAN_STATES as code (code)}
+                            <option value={code}>{STATE_NAMES[code]}</option>
+                          {/each}
+                        </select>
+                      </label>
+                      <button
+                        class="group -my-0.5 flex h-11 items-center"
+                        aria-label="Remove period {index + 1}"
+                        onclick={() => {
+                          contracts = contracts.filter((_, at) => at !== index)
+                          touch()
+                        }}
+                      >
+                        <span
+                          class="meta flex h-10 items-center rounded-md border border-white/15 px-3
+                                 transition group-hover:border-ember"
+                        >
+                          ×
+                        </span>
+                      </button>
+                    </div>
+                  {:else}
+                    <p class="mt-2 text-sm text-haze">No contract, so no hour budget.</p>
+                  {/each}
+                </div>
+
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button
+                    class="btn-outline meta flex items-center gap-2"
+                    onclick={() => {
+                      const last = contracts.at(-1)
+                      contracts = [
+                        ...contracts,
+                        {
+                          starts_on: '',
+                          hours: last?.hours ?? 8,
+                          workdays: last?.workdays ?? 31,
+                          state: last?.state ?? null,
+                        },
+                      ]
+                      touch()
+                    }}
+                  >
+                    <IconPlus class="size-3.5" />
+                    Add a contract period
                   </button>
                   <button
                     class="btn-filled"

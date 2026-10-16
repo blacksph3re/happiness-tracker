@@ -79,6 +79,24 @@ SYSTEM_KEYS: tuple[SystemKey, ...] = (
 )
 """The five, in display order."""
 
+GermanState = Literal[
+    "BB", "BE", "BW", "BY", "HB", "HE", "HH", "MV",
+    "NI", "NW", "RP", "SH", "SL", "SN", "ST", "TH",
+]  # fmt: skip
+"""A federal state, by its ISO 3166-2:DE code: whose public holidays a contract keeps.
+
+Public holidays are calculated from it (`services.holidays`), never stored.
+"""
+
+GERMAN_STATES: tuple[str, ...] = GermanState.__args__
+"""The sixteen states, as data, for a check constraint and validation."""
+
+DayOffKind = Literal["vacation", "sick", "other"]
+"""What a day off marked by hand was. Public holidays are calculated, not marked."""
+
+DAY_OFF_KINDS: tuple[str, ...] = DayOffKind.__args__
+"""The kinds, as data."""
+
 HabitPeriod = Literal["day", "week", "month"]
 """The period a habit's target is measured over.
 
@@ -800,6 +818,21 @@ class Tag(Base):
     )
     """The rule turning this tag's tracked time into reported time."""
 
+    add_in_budget: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    """Whether `add_minutes` counts toward the tag's hour budget; NULL reads as yes.
+
+    The budget counts the tag's rule restricted to the parts switched on, so the
+    reported totals never change with this. Nullable with no default so adding
+    it is an in-place ``ADD COLUMN``.
+    """
+
+    contracts: Mapped[list[TagContract]] = relationship(
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="TagContract.starts_on",
+    )
+    """The periods of the tag's contract, oldest first; empty for no budget."""
+
 
 class ProjectTag(Base):
     """Which projects a tag covers.
@@ -861,6 +894,13 @@ class DeductionBand(Base):
     day ran past `from_minutes`, so the day reports the threshold and no more.
     """
 
+    in_budget: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    """Whether this band counts toward the tag's hour budget; NULL reads as yes.
+
+    Switched off, the budget reads the rule as if this band were not there, so
+    a lower band can take its place on a long day.
+    """
+
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         default=func.now(),
@@ -881,6 +921,136 @@ class DeductionBand(Base):
     which the digest already treats as "compare on the count alone", and the
     first edit to any of them fills it in.
     """
+
+
+class TagContract(Base):
+    """One period of a tag's contract: the hours it expects, from a date on.
+
+    A contract changes from a date and never retroactively, so it is a list of
+    periods, each in force until the next one's `starts_on`. The hour budget
+    built on it is derived on read (`services.timetrack.budget_days`) and never
+    stored.
+    """
+
+    __tablename__ = "tag_contracts"
+    __table_args__ = (
+        UniqueConstraint("tag_id", "starts_on", name="uq_contract_period_start"),
+        CheckConstraint(
+            "daily_minutes >= 0 and daily_minutes <= 1440",
+            name="ck_contract_daily_minutes",
+        ),
+        CheckConstraint(
+            "workdays >= 0 and workdays <= 127", name="ck_contract_workdays"
+        ),
+        CheckConstraint(
+            "state is null or state in ("
+            + ", ".join(f"'{code}'" for code in GERMAN_STATES)
+            + ")",
+            name="ck_contract_state",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("tags.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The contracted tag. Deleting the tag deletes its contract."""
+
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    """The first local day this period applies to."""
+
+    daily_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    """The average hours per workday, in minutes. Zero ends the contract."""
+
+    workdays: Mapped[int] = mapped_column(Integer, nullable=False)
+    """The days it works, as a bitmask with Monday as bit 0 (Mon-Fri is 31)."""
+
+    state: Mapped[GermanState | None] = mapped_column(String(2), nullable=True)
+    """The federal state whose public holidays it keeps, or NULL for none."""
+
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=True
+    )
+    """When this row was last written, for `/api/changes`."""
+
+
+class TagDayOff(Base):
+    """A day off a tag's contract does not expect, marked by hand.
+
+    Public holidays are calculated, never marked. A cleared day off keeps its
+    row with a NULL `kind`, so last-write-wins holds in both directions: a
+    stale mark arriving after a newer clear is older than the row and loses.
+    """
+
+    __tablename__ = "tag_days_off"
+    __table_args__ = (
+        UniqueConstraint("tag_id", "day", name="uq_day_off_per_tag"),
+        CheckConstraint(
+            "kind is null or kind in ("
+            + ", ".join(f"'{kind}'" for kind in DAY_OFF_KINDS)
+            + ")",
+            name="ck_day_off_kind",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("tags.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The contracted tag the day is off from."""
+
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    """The local day."""
+
+    kind: Mapped[DayOffKind | None] = mapped_column(String(8), nullable=True)
+    """``vacation``, ``sick`` or ``other``, or NULL once cleared."""
+
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    """Optional free text."""
+
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """The device's clock at the tap; what decides which write wins."""
+
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=True
+    )
+    """When this row was last written, for `/api/changes`."""
+
+
+class BudgetReset(Base):
+    """A *Set hour budget* record: a tag's balance at the start of a day.
+
+    Cleared the same way a day off is, by keeping the row with a NULL balance.
+    """
+
+    __tablename__ = "budget_resets"
+    __table_args__ = (UniqueConstraint("tag_id", "day", name="uq_reset_per_tag"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    """Surrogate primary key."""
+
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("tags.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    """The contracted tag."""
+
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    """The local day whose start the balance is fixed at."""
+
+    balance_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The balance, in minutes, may be negative; NULL once cleared."""
+
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    """The device's clock at the tap; what decides which write wins."""
+
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=True
+    )
+    """When this row was last written, for `/api/changes`."""
 
 
 class TimeEntry(Base):

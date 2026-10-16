@@ -6,11 +6,14 @@ from sqlalchemy.sql.elements import ColumnElement
 from deps import CurrentUser, DbSession
 from models import (
     Answer,
+    BudgetReset,
     Catalogue,
     DeductionBand,
     Pomodoro,
     Project,
     Tag,
+    TagContract,
+    TagDayOff,
     TimeEntry,
     Todo,
     TodoList,
@@ -68,7 +71,7 @@ def _fingerprint(db: Session, entity: type, where: ColumnElement[bool]) -> Finge
 def get_changes(user: CurrentUser, db: DbSession) -> Changes:
     """Report a fingerprint per collection for the authenticated user.
 
-    Cheap by design — eleven aggregates over indexed foreign keys — because the
+    Cheap by design — fourteen aggregates over indexed foreign keys — because the
     common answer is that nothing has moved, and that case has to cost less than
     the re-read it saves. Three of them narrow through the lists the caller can
     see, which is a subquery over two indexed columns rather than a second read.
@@ -85,6 +88,7 @@ def get_changes(user: CurrentUser, db: DbSession) -> Changes:
     Changes
         One fingerprint per collection, never counting another account's rows.
     """
+    own_tags = select(Tag.id).where(Tag.user_id == user.id)
     return Changes(
         answers=_fingerprint(db, Answer, Answer.user_id == user.id),
         time_entries=_fingerprint(db, TimeEntry, TimeEntry.user_id == user.id),
@@ -128,4 +132,10 @@ def get_changes(user: CurrentUser, db: DbSession) -> Changes:
         # timestamp carries the whole signal — which is what lets a default
         # catalogue changed on another device reach this one.
         me=_fingerprint(db, User, User.id == user.id),
+        # The budget's three collections hang off a tag, as bands do. Cleared
+        # days off and resets keep their rows, so a clear is an edit the
+        # timestamp sees rather than a row the count loses.
+        contracts=_fingerprint(db, TagContract, TagContract.tag_id.in_(own_tags)),
+        days_off=_fingerprint(db, TagDayOff, TagDayOff.tag_id.in_(own_tags)),
+        budget_resets=_fingerprint(db, BudgetReset, BudgetReset.tag_id.in_(own_tags)),
     )

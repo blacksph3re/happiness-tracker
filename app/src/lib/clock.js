@@ -32,6 +32,22 @@ export function formatDuration(seconds) {
 }
 
 /**
+ * Render a signed duration, for a balance or a day's change to one.
+ *
+ * `formatDuration` clamps at zero because a duration cannot be negative; a
+ * balance can, and a minus sign is what it carries (U+2212, which lines up with
+ * the plus). Zero is unsigned.
+ *
+ * @param {number} seconds
+ * @returns {string} e.g. `+1h 00m`, `−7h 30m`, `0h 00m`.
+ */
+export function formatSigned(seconds) {
+  const whole = Math.trunc(seconds / 60)
+  if (whole === 0) return '0h 00m'
+  return `${whole > 0 ? '+' : '\u2212'}${formatDuration(Math.abs(whole) * 60)}`
+}
+
+/**
  * Render a duration estimate compactly.
  *
  * Not `formatDuration` above, which writes `0h 45m` because it is reporting

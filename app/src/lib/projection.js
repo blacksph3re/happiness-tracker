@@ -325,3 +325,39 @@ export function overlayTodos(rows, queue) {
   }
   return out
 }
+
+/**
+ * The key a day off or a budget reset is held under: one per tag per day.
+ *
+ * @param {{tag_id: number, day: string}} row
+ * @returns {string}
+ */
+export function budgetKey(row) {
+  return `${row.tag_id}:${row.day}`
+}
+
+/**
+ * Lay queued days off and budget resets over the ones the server returned.
+ *
+ * Both are keyed on the tag and the day, so a queued write replaces whatever
+ * the server held for that day; one carrying a null kind (or balance) is a
+ * clear, and the day goes.
+ *
+ * @param {{daysOff: Array<object>, resets: Array<object>}} records
+ * @param {Array<object>} queue The outbox, oldest first.
+ * @returns {{daysOff: Array<object>, resets: Array<object>}} What a page reads.
+ */
+export function overlayBudget(records, queue) {
+  let { daysOff, resets } = records
+  for (const intent of queue) {
+    const row = intent.payload
+    if (intent.kind === 'dayoff.put') {
+      daysOff = daysOff.filter((held) => budgetKey(held) !== budgetKey(row))
+      if (row.kind != null) daysOff = [...daysOff, row]
+    } else if (intent.kind === 'budget.put') {
+      resets = resets.filter((held) => budgetKey(held) !== budgetKey(row))
+      if (row.balance_minutes != null) resets = [...resets, row]
+    }
+  }
+  return { daysOff, resets }
+}

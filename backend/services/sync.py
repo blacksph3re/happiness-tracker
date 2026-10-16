@@ -25,16 +25,21 @@ from sqlalchemy.orm import Session
 
 from models import (
     Answer,
+    BudgetReset,
     Pomodoro,
     Project,
     Question,
     QuestionOption,
+    Tag,
+    TagDayOff,
     TimeEntry,
     Todo,
     TodoStep,
 )
 from schemas import (
     AnswerIn,
+    SyncBudgetPayload,
+    SyncDayOffPayload,
     SyncEntryPayload,
     SyncPomodoroPayload,
     SyncStepPayload,
@@ -174,6 +179,113 @@ def apply_answer(
     # refuses a half-built one. With `autoflush=False`, a queue holding an
     # answer and a correction to it would not find the first when the second
     # went looking, and would insert the same day twice.
+    db.flush()
+    return SyncOutcome.APPLIED, None
+
+
+def _own_tag(db: Session, user_id: int, tag_id: int) -> Tag | None:
+    """Return one of the account's tags, or None for anybody else's or none.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session.
+    user_id : int
+        Whose tag it must be.
+    tag_id : int
+        The tag a payload names.
+
+    Returns
+    -------
+    models.Tag or None
+        The tag, when it exists and is this account's.
+    """
+    tag = db.get(Tag, tag_id)
+    return tag if tag is not None and tag.user_id == user_id else None
+
+
+def apply_day_off(
+    db: Session, user_id: int, claimed: datetime, payload: SyncDayOffPayload
+) -> tuple[str, str | None]:
+    """Mark or clear a day off on a contracted tag, keeping the newer version.
+
+    Keyed on the tag and the day, as an answer is on the question and the day. A
+    clear keeps the row with a null kind rather than deleting it, so a stale
+    mark that arrives afterwards is older than the row and loses — a deleted row
+    would have let it back in.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session. Not committed here.
+    user_id : int
+        Whose tag it must be.
+    claimed : datetime.datetime
+        When the device says the change was made.
+    payload : SyncDayOffPayload
+        The day off, or a null kind to clear it.
+
+    Returns
+    -------
+    tuple of (str, str or None)
+        The outcome and, when it is not `applied`, why.
+    """
+    if _own_tag(db, user_id, payload.tag_id) is None:
+        return SyncOutcome.CONFLICT, "That tag no longer exists"
+    stored = db.execute(
+        select(TagDayOff).where(
+            TagDayOff.tag_id == payload.tag_id, TagDayOff.day == payload.day
+        )
+    ).scalar_one_or_none()
+    if stored is not None and not _is_newer(claimed, stored.client_updated_at):
+        return SyncOutcome.SUPERSEDED, "A newer change to that day is already stored"
+    if stored is None:
+        stored = TagDayOff(tag_id=payload.tag_id, day=payload.day)
+        db.add(stored)
+    stored.kind = payload.kind
+    stored.note = payload.note if payload.kind is not None else None
+    stored.client_updated_at = claimed
+    db.flush()
+    return SyncOutcome.APPLIED, None
+
+
+def apply_budget_reset(
+    db: Session, user_id: int, claimed: datetime, payload: SyncBudgetPayload
+) -> tuple[str, str | None]:
+    """Set or clear a tag's budget at the start of a day, keeping the newer version.
+
+    Cleared the way a day off is, by keeping the row with a null balance.
+
+    Parameters
+    ----------
+    db : sqlalchemy.orm.Session
+        Active database session. Not committed here.
+    user_id : int
+        Whose tag it must be.
+    claimed : datetime.datetime
+        When the device says the change was made.
+    payload : SyncBudgetPayload
+        The balance, or null to clear the reset.
+
+    Returns
+    -------
+    tuple of (str, str or None)
+        The outcome and, when it is not `applied`, why.
+    """
+    if _own_tag(db, user_id, payload.tag_id) is None:
+        return SyncOutcome.CONFLICT, "That tag no longer exists"
+    stored = db.execute(
+        select(BudgetReset).where(
+            BudgetReset.tag_id == payload.tag_id, BudgetReset.day == payload.day
+        )
+    ).scalar_one_or_none()
+    if stored is not None and not _is_newer(claimed, stored.client_updated_at):
+        return SyncOutcome.SUPERSEDED, "A newer budget for that day is already stored"
+    if stored is None:
+        stored = BudgetReset(tag_id=payload.tag_id, day=payload.day)
+        db.add(stored)
+    stored.balance_minutes = payload.balance_minutes
+    stored.client_updated_at = claimed
     db.flush()
     return SyncOutcome.APPLIED, None
 

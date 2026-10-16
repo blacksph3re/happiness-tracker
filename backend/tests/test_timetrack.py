@@ -3,8 +3,11 @@ from datetime import date, datetime
 import pytest
 
 from services.timetrack import (
+    MONDAY_TO_FRIDAY,
+    ContractPeriod,
     TimeRuleError,
     added_for,
+    budget_days,
     check_entry_shape,
     check_no_overlap,
     daily_slices,
@@ -422,3 +425,160 @@ def test_without_offsets_a_session_is_read_in_its_own():
         (date(2026, 6, 10), 2 * HOUR),
         (date(2026, 6, 11), 2 * HOUR),
     ]
+
+
+# --- The hour budget ----------------------------------------------------------
+#
+# June 2026: the 1st is a Monday. Contracts default to Mon-Fri at 8h a day, and
+# "today" is Monday the 15th unless a test says otherwise.
+
+
+class FakeBand:
+    """A band as the budget reads it: a step of the rule, and whether it counts."""
+
+    def __init__(self, from_minutes, deduct_minutes, in_budget=True):
+        self.from_minutes = from_minutes
+        self.deduct_minutes = deduct_minutes
+        self.in_budget = in_budget
+
+
+def june(day):
+    return date(2026, 6, day)
+
+
+def contract(starts=1, hours=8, workdays=MONDAY_TO_FRIDAY, state=None):
+    return ContractPeriod(
+        starts_on=june(starts), daily_minutes=hours * 60, workdays=workdays, state=state
+    )
+
+
+def budget(tracked=None, contracts=None, today=15, **extra):
+    days = budget_days(
+        tracked={june(day): hours * HOUR for day, hours in (tracked or {}).items()},
+        contracts=contracts or [contract()],
+        today=june(today),
+        **extra,
+    )
+    return {row.day.day: row for row in days}
+
+
+def test_a_workday_expects_its_hours_and_a_weekend_nothing():
+    rows = budget(today=8)
+    assert [rows[day].expected for day in range(1, 8)] == [8 * HOUR] * 5 + [0, 0]
+    assert rows[6].kind == "rest"
+
+
+def test_an_untracked_workday_costs_its_hours():
+    rows = budget({1: 8, 2: 8, 4: 8, 5: 8}, today=8)
+    assert rows[3].counted == 0
+    assert rows[7].balance == -8 * HOUR
+
+
+def test_overtime_accumulates():
+    rows = budget({day: 9 for day in range(1, 6)}, today=8)
+    assert rows[7].balance == 5 * HOUR
+
+
+def test_time_on_a_rest_day_counts_in_full():
+    rows = budget({1: 8, 2: 8, 3: 8, 4: 8, 5: 8, 6: 3}, today=8)
+    assert rows[7].balance == 3 * HOUR
+
+
+def test_today_shows_its_progress_and_does_not_count_until_it_is_over():
+    rows = budget({1: 8, 2: 3}, today=2)
+    assert rows[2].open
+    assert (rows[2].counted, rows[2].expected) == (3 * HOUR, 8 * HOUR)
+    assert rows[2].balance == 0
+    assert 3 not in rows
+
+
+def test_nothing_is_expected_before_the_contract():
+    rows = budget(contracts=[contract(starts=3)], today=8)
+    assert min(rows) == 3
+
+
+def test_a_contract_change_applies_from_its_date_only():
+    rows = budget(contracts=[contract(), contract(starts=8, hours=4)], today=15)
+    assert rows[5].expected == 8 * HOUR
+    assert rows[8].expected == 4 * HOUR
+    assert rows[14].balance == -(5 * 8 + 5 * 4) * HOUR
+
+
+def test_a_contract_of_zero_hours_ends_the_expectation():
+    rows = budget(contracts=[contract(), contract(starts=8, hours=0)], today=15)
+    assert rows[8].expected == 0
+    assert rows[14].balance == -40 * HOUR
+
+
+def test_workdays_are_the_contracts_own():
+    monday_to_thursday = 1 | 2 | 4 | 8
+    rows = budget(contracts=[contract(workdays=monday_to_thursday)], today=8)
+    assert rows[5].kind == "rest"
+    assert rows[5].expected == 0
+
+
+def test_a_public_holiday_in_the_contracts_state_costs_nothing():
+    # Corpus Christi, Thursday 4 June 2026: kept in Bavaria, not in Berlin.
+    bavaria = budget(contracts=[contract(state="BY")], today=8)
+    berlin = budget(contracts=[contract(state="BE")], today=8)
+    assert (bavaria[4].kind, bavaria[4].name, bavaria[4].expected) == (
+        "holiday",
+        "Corpus Christi",
+        0,
+    )
+    assert berlin[4].expected == 8 * HOUR
+
+
+def test_a_day_off_costs_nothing():
+    rows = budget({1: 8, 2: 8, 4: 8, 5: 8}, days_off={june(3): "vacation"}, today=8)
+    assert (rows[3].kind, rows[3].name, rows[3].expected) == ("off", "vacation", 0)
+    assert rows[7].balance == 0
+
+
+def test_a_day_off_on_a_rest_day_changes_nothing():
+    rows = budget(days_off={june(6): "vacation"}, today=8)
+    assert rows[6].kind == "rest"
+
+
+def test_a_reset_fixes_the_balance_at_the_start_of_its_day():
+    rows = budget({8: 9}, resets={june(8): 2 * HOUR}, today=10)
+    assert rows[5].balance == -40 * HOUR
+    assert rows[8].reset == 2 * HOUR
+    assert rows[8].balance == 3 * HOUR
+    assert rows[9].balance == -5 * HOUR
+
+
+def test_the_latest_reset_before_a_day_wins():
+    rows = budget(resets={june(2): 0, june(4): 10 * HOUR}, today=5)
+    assert rows[4].balance == 2 * HOUR
+
+
+def test_the_budget_counts_reported_time_with_every_part_switched_on():
+    bands = [FakeBand(0, 30), FakeBand(360, 45)]
+    rows = budget({1: 9}, add_minutes=60, bands=bands, today=2)
+    # 9h tracked, +1h, then the 45-minute band: 9h 15m reported.
+    assert rows[1].counted == 9 * HOUR + 15 * 60
+
+
+def test_an_addition_switched_off_is_left_out_of_the_budget():
+    bands = [FakeBand(0, 30), FakeBand(360, 45)]
+    rows = budget({1: 9}, add_minutes=60, add_in_budget=False, bands=bands, today=2)
+    assert rows[1].counted == 9 * HOUR - 45 * 60
+
+
+def test_a_band_switched_off_is_as_if_it_were_not_there():
+    # The 45-minute band off: the day falls back to the 30-minute one, exactly
+    # as the rule would if the 45 had never been written.
+    bands = [FakeBand(0, 30), FakeBand(360, 45, in_budget=False)]
+    rows = budget({1: 9}, bands=bands, today=2)
+    assert rows[1].counted == 9 * HOUR - 30 * 60
+
+
+def test_every_band_switched_off_counts_what_was_tracked():
+    bands = [FakeBand(0, 30, in_budget=False), FakeBand(360, 45, in_budget=False)]
+    rows = budget({1: 9}, add_minutes=60, add_in_budget=False, bands=bands, today=2)
+    assert rows[1].counted == 9 * HOUR
+
+
+def test_a_budget_with_no_contract_is_empty():
+    assert budget_days(tracked={}, contracts=[], today=june(15)) == []

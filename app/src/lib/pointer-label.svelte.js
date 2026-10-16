@@ -30,8 +30,10 @@ import { dismissOn } from './dismiss.svelte.js'
  *   rather than dismissing it, which is what lets a tap go straight from one
  *   target to the next.
  * @returns {{shown: object|null, pinned: boolean, follow: Function,
- *   drift: Function, release: Function}} `shown` is `{name, detail, x, y}` or
- *   null. Read it in markup; call the rest from pointer handlers.
+ *   drift: Function, release: Function}} `shown` is `{name, detail, lines, x,
+ *   y}` or null, `lines` being optional `[label, value]` pairs drawn as a small
+ *   table under the name. Read it in markup; call the rest from pointer
+ *   handlers.
  */
 export function pointerLabel({ within }) {
   /** What the pointer is over, and where to put the label for it. */
@@ -69,7 +71,13 @@ export function pointerLabel({ within }) {
       // A mouse leaving un-pins; a pointer that never hovers cannot, so a tap
       // elsewhere is what closes a pinned label.
       if (event.pointerType !== 'mouse') pinned = true
-      shown = { name: what.name, detail: what.detail, x: event.clientX, y: event.clientY }
+      shown = {
+        name: what.name,
+        detail: what.detail,
+        lines: what.lines,
+        x: event.clientX,
+        y: event.clientY,
+      }
     },
     /** Track the pointer without re-pinning, so a mouse move stays a hover. */
     drift(what, event) {

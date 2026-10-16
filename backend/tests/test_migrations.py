@@ -641,3 +641,57 @@ def test_a_task_colour_is_added_without_rebuilding_the_table(migrated):
     assert column[4] is None, "a server default rebuilds the table too"
     assert db.execute("SELECT colour FROM todos").fetchall() == [(None,)]
     assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+CONTRACTS = "744d2a58c91e"
+
+
+def test_a_contract_adds_its_columns_without_rebuilding(migrated):
+    """The two budget switches add in place, and nothing a tag holds is lost.
+
+    The downgrade is the positive control: dropping a column *does* rebuild the
+    table, so the same check moving there is what makes "unmoved" a result.
+    """
+    from alembic.config import Config
+
+    from alembic import command
+
+    chain = revisions()
+    upgrade(chain[chain.index(CONTRACTS) - 1])
+
+    db = sqlite3.connect(migrated)
+    db.executescript(
+        """
+        INSERT INTO users (id, username, password_hash, is_admin)
+             VALUES (1, 'alice', 'h', 1);
+        INSERT INTO tags (id, user_id, name, colour, position, add_minutes)
+             VALUES (1, 1, 'Work', 'tide', 0, 30);
+        INSERT INTO deduction_bands (tag_id, from_minutes, deduct_minutes)
+             VALUES (1, 0, 30), (1, 360, 45);
+        """
+    )
+    db.commit()
+
+    def rootpages():
+        return dict(
+            db.execute(
+                "SELECT name, rootpage FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        )
+
+    before = rootpages()
+    upgrade(CONTRACTS)
+    after = rootpages()
+    assert after["tags"] == before["tags"]
+    assert after["deduction_bands"] == before["deduction_bands"]
+    assert {"tag_contracts", "tag_days_off", "budget_resets"} <= set(after)
+    assert db.execute("SELECT count(*) FROM deduction_bands").fetchone() == (2,)
+    assert db.execute("SELECT add_minutes, add_in_budget FROM tags").fetchone() == (
+        30,
+        None,
+    )
+
+    config = Config()
+    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    command.downgrade(config, "-1")
+    assert rootpages()["deduction_bands"] != after["deduction_bands"]

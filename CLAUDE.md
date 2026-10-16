@@ -44,12 +44,14 @@ fix — is in git: this file as of `cad5fd7` tells it at length.
   changing it. An unread collection has an unknown count, not zero.
 - **Derived values are computed on read, never stored**: scores, deduction
   bands, the midnight split, tag grouping, a day's clock, auto-tracked
-  variables, a pomodoro's outcome. A definition change is then retroactive.
-  `answers`, `time_entries`, `pomodoros` hold what happened; the rest is a view.
+  variables, a pomodoro's outcome, an hour budget, public holidays. A definition
+  change is then retroactive. `answers`, `time_entries`, `pomodoros` hold what
+  happened; the rest is a view.
 - **The server computes a number once; the client mirrors it only to draw or to
   work offline.** Where two implementations exist (`lib/time/summary.js`,
-  `systemValues`, pomodoro state), `backend/scripts/dump_derivations.py` writes
-  `app/src/lib/derivations.json` and `conformance.test.js` holds both to it.
+  `systemValues`, pomodoro state, the hour budget, public holidays),
+  `backend/scripts/dump_derivations.py` writes `app/src/lib/derivations.json`
+  and `conformance.test.js` holds both to it.
   Change a service, regenerate, keep both sides in step.
 - **Two numbers on one screen come from one source.** Where they genuinely
   differ (the transfer excludes a running pomodoro), say so on screen.
@@ -64,7 +66,7 @@ Imports point **inward to the shared zone, never across**:
 | | Wellbeing | Time | Focus | Todos | Shared |
 | --- | --- | --- | --- | --- | --- |
 | Routers | `catalogues.py`, `answers.py`, `stats.py` | `projects.py`, `time.py` | `pomodoro.py` | `todos.py` | `auth.py`, `users.py`, `admin.py`, `changes.py`, `sync.py` |
-| Services | `services/wellbeing.py` | `services/timetrack.py` | `services/pomodoro.py` | `services/todos.py` | `services/clock.py`; `services/__init__.py` re-exports all |
+| Services | `services/wellbeing.py` | `services/timetrack.py`, `services/holidays.py` | `services/pomodoro.py` | `services/todos.py` | `services/clock.py`; `services/__init__.py` re-exports all |
 | Routes | `routes/wellbeing/` | `routes/time/` | `routes/pomodoro/` | `routes/todos/` | `routes/` — Landing, Login, Settings, Users |
 | Lib | `lib/wellbeing/` | `lib/time/` | `lib/pomodoro/` | `lib/todos/` | `lib/store.js`, `api.js`, `router.js`, `clock.js`, `day.js`, `period.js`, `habits.js`, `Swimlanes.svelte`, `pointer-label.svelte.js`, `dismiss.svelte.js`, `facets.js`, `series.js`, `format.js`, `resource.svelte.js`, `palette.js`, `icons.js`, `IconPicker.svelte`, `focus-mode.js`, `todo-settings.js`, `Frame.svelte`, `theme.svelte.js` |
 
@@ -281,6 +283,35 @@ renders).
 - Leap years and DST need no special handling (`Date.UTC`, `date`/`timedelta`);
   the corpus pins spring-forward, autumn-back and leap-day sessions.
 - A tag with a deduction rule shows reported time; tags overlap.
+- **An hour budget is a walk over days, derived on read.** A tag's contract is
+  periods from a `starts_on` — an average `daily_minutes`, a `workdays` bitmask
+  (Monday is bit 0), a German `state` — and `budget_days` / `budgetDays` walk
+  each day from the first period to today. Stored is only what a person enters:
+  periods, days off, resets.
+  - A day is, tested in this order, a public holiday, a rest day, a day off or a
+    workday, so a day off on a weekend changes nothing. Only a workday expects
+    hours; time on any day counts in full.
+  - Counted is the tag's rule **restricted to the parts switched on**
+    (`add_in_budget`, each band's `in_budget`; NULL is on). A band switched off
+    is the rule without it, so a lower band can apply. All on is reported time;
+    the switches never touch tag totals.
+  - Today is open and counts once it is over. A reset fixes the balance at the
+    start of its day; one before the first period is ignored. Archived projects
+    count (`trackedFor`), unlike in tag totals.
+  - Budget mode lists every day, unlike the record: there an empty workday
+    carries a cost and an action (*Not tracked*, *Mark day off*). Days off after
+    today wait in one collapsed line above today, which stays the top record.
+- **Public holidays are described, not imported**: `services/holidays.py` and
+  `lib/time/holidays.js` hold Easter offsets, fixed dates with their states and
+  first year, and one-offs. The `holidays` package is dev-only — the reference
+  `test_holidays.py` holds the Python to for every state, 2015–2035 — and the
+  corpus holds the port to the Python. Anything below state level is a day
+  marked by hand.
+- **Days off and resets are `dayoff.put` and `budget.put`, keyed on tag and
+  day**, last write wins. A clear is the same intent with a null value and keeps
+  its row, so a stale mark arriving late cannot revive it. Contracts ride on the
+  tag rule, online-only; a rule saved **without** a `contracts` key keeps the
+  stored ones, so a client that has never heard of contracts cannot wipe them.
 
 ## Focus
 
@@ -500,12 +531,13 @@ Do not reopen without being asked.
 | Login attempts | 5 failures per submitted username per 15 minutes, in memory; never keyed on IP. Locked usernames answer 429 whether or not they exist |
 | Schema | The server never creates tables |
 | Deployment | A VM behind nginx (TLS, second auth layer). The domain is an environment variable, never in the repo |
-| Production dependencies | Only what the server imports: plain `fastapi` and `uvicorn`, never `fastapi[standard]`. `httpx` and `beartype` are dev-only. `.dockerignore` keeps tests, seeds and generators out; `clear_totp.py` ships |
+| Production dependencies | Only what the server imports: plain `fastapi` and `uvicorn`, never `fastapi[standard]`. `httpx`, `beartype` and `holidays` (the public-holiday reference) are dev-only. `.dockerignore` keeps tests, seeds and generators out; `clear_totp.py` ships |
 | TypeScript | Held at 6 for `openapi-ts` until it supports 7 |
 | Answers | Never deleted; re-answering overwrites (last write wins on the device clock) |
 | Scores | Over scaled questions only |
 | Projects, tags, catalogues | Per user. A new account gets its own catalogue from code templates (`templates.py`); deleting the last one is allowed |
-| Deduction rules | On a tag; a ruled tag shows reported time (Patterns keeps both) |
+| Deduction rules | On a tag; a ruled tag shows reported time (Patterns keeps both). Each part carries an *in budget* switch that only the hour budget reads |
+| Hour budget | Per tag: contract periods of whole days, an average per workday, a German state for public holidays. Days off are per tag (two contracted tags mark a vacation twice), whole days, vacation, sick or other, with no allowance. Today counts once it is over |
 | Parallel timers | Several projects at once, adding up. The same project over the same minutes is kept and counted once; two running sessions on one project are joined |
 | Long sessions | Never auto-closed, no warning |
 | Pomodoros | Complete at their planned end; `ended_at` only from an explicit stop |

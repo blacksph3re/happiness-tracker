@@ -1,6 +1,6 @@
 [project]
 name = "backend"
-version = "0.10.2"
+version = "0.10.3"
 description = "Add your description here"
 readme = "README.md"
 license = "MPL-2.0"
@@ -21,6 +21,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "beartype>=0.22.9",
+    "holidays>=0.106",
     "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",

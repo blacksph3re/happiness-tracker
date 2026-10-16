@@ -580,3 +580,148 @@ def test_a_pomodoro_and_a_task_stamped_with_offsets_are_stored_as_utc(
     assert pomodoro["started_at"] == at(10, 9)
     assert pomodoro["ended_at"] == at(10, 9, 10)
     assert tasks(client, admin_headers)[0]["done_at"] == at(10, 9)
+
+
+# --- Days off and budget resets -----------------------------------------------
+
+
+def day_off_intent(seq, tag_id, day, kind="vacation", when=LATER, note=None):
+    """Mark (or with `kind=None`, clear) a day off."""
+    return {
+        "seq": seq,
+        "kind": "dayoff.put",
+        "client_updated_at": when,
+        "payload": {"tag_id": tag_id, "day": day, "kind": kind, "note": note},
+    }
+
+
+def reset_intent(seq, tag_id, day, minutes, when=LATER):
+    """Set (or with `minutes=None`, clear) a tag's budget at the start of a day."""
+    return {
+        "seq": seq,
+        "kind": "budget.put",
+        "client_updated_at": when,
+        "payload": {"tag_id": tag_id, "day": day, "balance_minutes": minutes},
+    }
+
+
+def budget_records(client, headers):
+    """Every day off and reset the account holds."""
+    return client.get("/api/time/budget-records", headers=headers).json()
+
+
+def make_tag(client, headers, name="Work"):
+    """Create a tag to hang a contract on."""
+    response = client.post(
+        "/api/tags", headers=headers, json={"name": name, "colour": "tide"}
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_a_day_off_is_marked_and_read_back(client, admin_headers):
+    tag = make_tag(client, admin_headers)
+    results = sync(
+        client,
+        admin_headers,
+        [day_off_intent(1, tag["id"], "2026-06-10", note="Beach")],
+    )
+    assert results[1]["outcome"] == "applied"
+    assert budget_records(client, admin_headers)["days_off"] == [
+        {"tag_id": tag["id"], "day": "2026-06-10", "kind": "vacation", "note": "Beach"}
+    ]
+
+
+def test_a_cleared_day_off_is_gone_and_a_stale_mark_does_not_bring_it_back(
+    client, admin_headers
+):
+    tag = make_tag(client, admin_headers)
+    sync(
+        client,
+        admin_headers,
+        [day_off_intent(1, tag["id"], "2026-06-10", when=EARLIER)],
+    )
+    sync(
+        client,
+        admin_headers,
+        [day_off_intent(2, tag["id"], "2026-06-10", kind=None, when=LATER)],
+    )
+    assert budget_records(client, admin_headers)["days_off"] == []
+
+    # The mark from a device that had not heard of the clear: older, so it loses.
+    stale = sync(
+        client,
+        admin_headers,
+        [day_off_intent(3, tag["id"], "2026-06-10", when="2026-06-10T12:00:00")],
+    )
+    assert stale[3]["outcome"] == "superseded"
+    assert budget_records(client, admin_headers)["days_off"] == []
+
+
+def test_a_newer_mark_replaces_an_older_one(client, admin_headers):
+    tag = make_tag(client, admin_headers)
+    sync(
+        client,
+        admin_headers,
+        [day_off_intent(1, tag["id"], "2026-06-10", when=EARLIER)],
+    )
+    sync(
+        client,
+        admin_headers,
+        [day_off_intent(2, tag["id"], "2026-06-10", kind="sick", when=LATER)],
+    )
+    assert budget_records(client, admin_headers)["days_off"][0]["kind"] == "sick"
+
+
+def test_a_budget_reset_is_set_cleared_and_may_be_negative(client, admin_headers):
+    tag = make_tag(client, admin_headers)
+    sync(
+        client,
+        admin_headers,
+        [reset_intent(1, tag["id"], "2026-01-01", -90, when=EARLIER)],
+    )
+    assert budget_records(client, admin_headers)["resets"] == [
+        {"tag_id": tag["id"], "day": "2026-01-01", "balance_minutes": -90}
+    ]
+    sync(
+        client,
+        admin_headers,
+        [reset_intent(2, tag["id"], "2026-01-01", None, when=LATER)],
+    )
+    assert budget_records(client, admin_headers)["resets"] == []
+
+
+def test_a_day_off_or_reset_on_another_accounts_tag_is_refused_per_intent(
+    client, admin_headers
+):
+    from tests.conftest import make_user
+
+    _, other = make_user(client, admin_headers, "intruder")
+    tag = make_tag(client, admin_headers)
+    results = sync(
+        client,
+        other,
+        [
+            day_off_intent(1, tag["id"], "2026-06-10"),
+            reset_intent(2, tag["id"], "2026-06-10", 0),
+        ],
+    )
+    assert results[1]["outcome"] == "conflict"
+    assert results[2]["outcome"] == "conflict"
+    assert budget_records(client, admin_headers) == {"days_off": [], "resets": []}
+
+
+def test_a_malformed_day_off_is_refused_and_the_rest_of_the_queue_lands(
+    client, admin_headers
+):
+    tag = make_tag(client, admin_headers)
+    results = sync(
+        client,
+        admin_headers,
+        [
+            day_off_intent(1, tag["id"], "2026-06-10", kind="party"),
+            day_off_intent(2, tag["id"], "2026-06-11"),
+        ],
+    )
+    assert results[1]["outcome"] == "conflict"
+    assert results[2]["outcome"] == "applied"

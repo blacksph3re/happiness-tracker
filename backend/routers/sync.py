@@ -16,6 +16,8 @@ from deps import CurrentUser, DbSession
 from routers.pomodoro import pomodoro_out
 from schemas import (
     AnswerIn,
+    SyncBudgetPayload,
+    SyncDayOffPayload,
     SyncEntryPayload,
     SyncPomodoroPayload,
     SyncRequest,
@@ -28,6 +30,8 @@ from schemas import (
 from services.sync import (
     SyncOutcome,
     apply_answer,
+    apply_budget_reset,
+    apply_day_off,
     apply_entry,
     apply_pomodoro,
     apply_step,
@@ -146,6 +150,28 @@ def sync_intents(
                 results.append(_malformed(intent.seq, invalid))
                 continue
             outcome, detail = apply_answer(db, user.id, claimed, answer, now)
+            results.append(SyncResult(seq=intent.seq, outcome=outcome, detail=detail))
+            continue
+
+        # Keyed on the tag and the day, like an answer, so neither carries a
+        # client identity.
+        if intent.kind == "dayoff.put":
+            try:
+                day_off = SyncDayOffPayload.model_validate(intent.payload)
+            except ValidationError as invalid:
+                results.append(_malformed(intent.seq, invalid))
+                continue
+            outcome, detail = apply_day_off(db, user.id, claimed, day_off)
+            results.append(SyncResult(seq=intent.seq, outcome=outcome, detail=detail))
+            continue
+
+        if intent.kind == "budget.put":
+            try:
+                reset = SyncBudgetPayload.model_validate(intent.payload)
+            except ValidationError as invalid:
+                results.append(_malformed(intent.seq, invalid))
+                continue
+            outcome, detail = apply_budget_reset(db, user.id, claimed, reset)
             results.append(SyncResult(seq=intent.seq, outcome=outcome, detail=detail))
             continue
 

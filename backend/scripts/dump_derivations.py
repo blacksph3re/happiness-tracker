@@ -23,13 +23,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from models import GERMAN_STATES  # noqa: E402
+from services.holidays import public_holidays  # noqa: E402
 from services.pomodoro import (  # noqa: E402
     elapsed_seconds,
     pomodoro_state,
     split_seconds,
 )
 from services.timetrack import (  # noqa: E402
+    ContractPeriod,
     added_for,
+    budget_days,
     day_offsets,
     deduction_for,
     group_by_tag,
@@ -286,6 +290,175 @@ POMODORO_CASES = [
 # with the same elapsed seconds either side.
 POMODORO_MOMENTS = [("mid-flight", 10), ("afterwards", 600)]
 
+
+@dataclass
+class BudgetBand:
+    """A deduction band with its budget switch, as `budget_days` reads one."""
+
+    from_minutes: int
+    deduct_minutes: int | None
+    in_budget: bool = True
+
+
+HOLIDAY_YEARS = range(2015, 2036)
+"""Every year the public-holiday port is held to, for every state and none."""
+
+
+def _budget_case(
+    name,
+    contracts,
+    tracked,
+    today,
+    *,
+    add_minutes=None,
+    add_in_budget=True,
+    bands=(),
+    days_off=None,
+    resets=None,
+):
+    """Bundle one budget case: inputs in the wire's shapes, minutes and ISO days."""
+    return {
+        "name": name,
+        "contracts": contracts,
+        "tracked": tracked,
+        "today": today,
+        "add_minutes": add_minutes,
+        "add_in_budget": add_in_budget,
+        "bands": list(bands),
+        "days_off": days_off or {},
+        "resets": resets or {},
+    }
+
+
+BUDGET_CASES = [
+    _budget_case(
+        "a plain fortnight at eight hours",
+        [{"starts_on": "2026-06-01", "daily_minutes": 480, "workdays": 31}],
+        {"2026-06-01": 8 * 3600, "2026-06-02": 9 * 3600, "2026-06-04": 7 * 3600},
+        "2026-06-12",
+    ),
+    _budget_case(
+        "a contract that changes mid-month",
+        [
+            {"starts_on": "2026-06-01", "daily_minutes": 480, "workdays": 31},
+            {"starts_on": "2026-06-15", "daily_minutes": 384, "workdays": 15},
+        ],
+        {"2026-06-12": 8 * 3600, "2026-06-15": 7 * 3600, "2026-06-19": 3600},
+        "2026-06-22",
+    ),
+    _budget_case(
+        "a week off, and a day off on a Saturday",
+        [{"starts_on": "2026-06-01", "daily_minutes": 480, "workdays": 31}],
+        {"2026-06-01": 8 * 3600},
+        "2026-06-14",
+        days_off={
+            "2026-06-08": "vacation",
+            "2026-06-09": "vacation",
+            "2026-06-10": "sick",
+            "2026-06-11": "vacation",
+            "2026-06-12": "other",
+            "2026-06-13": "vacation",
+        },
+    ),
+    _budget_case(
+        "a reset, and a later one",
+        [{"starts_on": "2026-06-01", "daily_minutes": 480, "workdays": 31}],
+        {"2026-06-03": 10 * 3600},
+        "2026-06-10",
+        resets={"2026-06-03": 0, "2026-06-08": -90 * 60},
+    ),
+    _budget_case(
+        "public holidays in Bavaria in May and June",
+        [
+            {
+                "starts_on": "2026-05-01",
+                "daily_minutes": 480,
+                "workdays": 31,
+                "state": "BY",
+            }
+        ],
+        {"2026-05-14": 2 * 3600, "2026-06-04": 3600},
+        "2026-06-10",
+    ),
+    _budget_case(
+        "a week across the spring daylight-saving change",
+        [
+            {
+                "starts_on": "2026-03-23",
+                "daily_minutes": 480,
+                "workdays": 31,
+                "state": "NW",
+            }
+        ],
+        {"2026-03-27": 8 * 3600, "2026-03-30": 8 * 3600},
+        "2026-04-02",
+    ),
+    _budget_case(
+        "a leap day on a workday",
+        [{"starts_on": "2028-02-24", "daily_minutes": 480, "workdays": 31}],
+        {"2028-02-29": 8 * 3600},
+        "2028-03-03",
+    ),
+    _budget_case(
+        "the addition off and one band off for the budget",
+        [{"starts_on": "2026-06-01", "daily_minutes": 480, "workdays": 31}],
+        {"2026-06-01": 9 * 3600, "2026-06-02": 3 * 3600, "2026-06-03": 5 * 3600},
+        "2026-06-05",
+        add_minutes=60,
+        add_in_budget=False,
+        bands=[
+            {"from_minutes": 0, "deduct_minutes": 30, "in_budget": True},
+            {"from_minutes": 360, "deduct_minutes": 45, "in_budget": False},
+        ],
+    ),
+    _budget_case(
+        "a four-day week that ends in a zero-hour period",
+        [
+            {"starts_on": "2026-06-01", "daily_minutes": 600, "workdays": 15},
+            {"starts_on": "2026-06-10", "daily_minutes": 0, "workdays": 15},
+        ],
+        {"2026-06-05": 4 * 3600},
+        "2026-06-14",
+    ),
+]
+"""Budgets both implementations must walk to the same rows, day for day."""
+
+
+def _budget_rows(case):
+    """Walk one budget case through the Python reference."""
+    rows = budget_days(
+        tracked={date.fromisoformat(day): s for day, s in case["tracked"].items()},
+        contracts=[
+            ContractPeriod(
+                starts_on=date.fromisoformat(period["starts_on"]),
+                daily_minutes=period["daily_minutes"],
+                workdays=period["workdays"],
+                state=period.get("state"),
+            )
+            for period in case["contracts"]
+        ],
+        today=date.fromisoformat(case["today"]),
+        add_minutes=case["add_minutes"],
+        add_in_budget=case["add_in_budget"],
+        bands=[BudgetBand(**band) for band in case["bands"]],
+        days_off={date.fromisoformat(d): k for d, k in case["days_off"].items()},
+        resets={date.fromisoformat(d): m * 60 for d, m in case["resets"].items()},
+    )
+    return [
+        {
+            "day": row.day.isoformat(),
+            "kind": row.kind,
+            "name": row.name,
+            "expected": row.expected,
+            "counted": row.counted,
+            "reset": row.reset,
+            "balance": row.balance,
+            "open": row.open,
+        }
+        for row in rows
+    ]
+
+
 DAY_CASES = [
     ("2026-01-01", 9),
     ("2026-06-15", 0),
@@ -303,6 +476,8 @@ def main_() -> None:
         "scores": [],
         "days": [],
         "pomodoros": [],
+        "holidays": [],
+        "budgets": [],
     }
 
     for name, entries in SESSION_CASES:
@@ -415,6 +590,22 @@ def main_() -> None:
                 "values": system_values(date.fromisoformat(day), hour),
             }
         )
+
+    for state in (None, *GERMAN_STATES):
+        for year in HOLIDAY_YEARS:
+            corpus["holidays"].append(
+                {
+                    "state": state,
+                    "year": year,
+                    "holidays": {
+                        day.isoformat(): name
+                        for day, name in sorted(public_holidays(state, year).items())
+                    },
+                }
+            )
+
+    for case in BUDGET_CASES:
+        corpus["budgets"].append({**case, "rows": _budget_rows(case)})
 
     OUT.write_text(json.dumps(corpus, indent=2, sort_keys=True) + "\n")
     counts = {section: len(rows) for section, rows in corpus.items()}
