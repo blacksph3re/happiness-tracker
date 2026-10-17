@@ -1162,6 +1162,34 @@ test('a tag row has no project to open', async ({ page, account }) => {
   await expect(page.locator('[data-open-project]')).toHaveCount(0)
 })
 
+test("an archived project's sessions leave the record, and its time the totals", async ({
+  page,
+  account,
+}) => {
+  const kept = await makeProject(account, 'The rewrite')
+  const gone = await makeProject(account, 'Reading')
+  await recordSession(account, kept.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  await recordSession(account, gone.id, `${TODAY}T08:00:00`, `${TODAY}T09:00:00`)
+  await recordSession(account, gone.id, `${TODAY}T12:30:00`, `${TODAY}T13:00:00`)
+  const archived = await account.api.put(`/api/projects/${gone.id}`, { data: { active: false } })
+  expect(archived.status()).toBe(200)
+
+  await page.goto('/time/record')
+  const day = page.locator(`[data-day="${TODAY}"]`)
+  await expect(day.locator('[data-row]')).toHaveCount(1)
+  await expect(day).not.toContainText('Reading')
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('3h 00m')
+  await expect(page.locator('[data-week-total]').first()).toHaveText('3h 00m')
+
+  // Merged, the same.
+  await page.getByRole('button', { name: 'Merge sessions' }).click()
+  await expect(day.locator('[data-row]')).toHaveCount(1)
+  await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('3h 00m')
+
+  // Still stored: the sessions are on the server, and come back on restoring.
+  expect(await (await account.api.get('/api/time/entries')).json()).toHaveLength(3)
+})
+
 test('merging collapses a project to one row a day', async ({ page, account }) => {
   const project = await makeProject(account, 'The rewrite')
   const other = await makeProject(account, 'Reading')

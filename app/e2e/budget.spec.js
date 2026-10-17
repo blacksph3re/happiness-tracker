@@ -517,7 +517,7 @@ test('an addition switched off changes the budget and leaves the tag totals alon
   await expect(page.locator('[data-day-total="2026-06-08"]')).toHaveText('9h 00m')
 })
 
-test("an archived project's hours still count", async ({ page, account }) => {
+test("an archived project's hours no longer count", async ({ page, account }) => {
   const { project } = await contracted(account)
   await aWeek(account, project)
   const archived = await account.api.put(`/api/projects/${project.id}`, {
@@ -525,7 +525,10 @@ test("an archived project's hours still count", async ({ page, account }) => {
   })
   expect(archived.status()).toBe(200)
   await openBudget(page)
-  await expect(page.locator('[data-budget-balance]')).toHaveText(`${MINUS}7h 00m`)
+  // Archived means gone from every figure: the week's only project went, so
+  // all five of its workdays read as untracked.
+  await expect(page.locator('[data-budget-balance]')).toHaveText(`${MINUS}40h 00m`)
+  await expect(row(page, '2026-06-09')).toHaveAttribute('data-state', 'untracked')
 })
 
 test('every budget row fits a 320px screen', async ({ page, account }) => {

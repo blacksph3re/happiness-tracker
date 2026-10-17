@@ -11,6 +11,7 @@
   import Record from './routes/time/Record.svelte'
   import Patterns from './routes/time/Patterns.svelte'
   import Projects from './routes/time/Projects.svelte'
+  import Allocation from './routes/time/Allocation.svelte'
   import Focus from './routes/pomodoro/Focus.svelte'
   import Tasks from './routes/todos/Tasks.svelte'
   import TodoCalendar from './routes/todos/Calendar.svelte'
@@ -44,6 +45,7 @@
     '/time/record': Record,
     '/time/patterns': Patterns,
     '/time/projects': Projects,
+    '/time/allocation': Allocation,
     '/focus': Focus,
     '/focus/patterns': FocusStats,
     '/todos': Tasks,

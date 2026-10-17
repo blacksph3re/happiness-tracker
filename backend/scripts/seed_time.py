@@ -144,7 +144,9 @@ def seed(days: int, username: str | None, seed_value: int) -> int:
             weekend = day.weekday() >= 5
             for name, _, _, hour, length in STARTER_PROJECTS:
                 project = projects[name]
-                if (project.id, day) in existing:
+                # An archived project is one nobody can check into, so it gets
+                # no new time: its history is what it already holds.
+                if not project.active or (project.id, day) in existing:
                     continue
                 # Weekends are quieter, and nothing is tracked every single day.
                 if weekend and name != "Reading":
@@ -172,7 +174,7 @@ def seed(days: int, username: str | None, seed_value: int) -> int:
         # the record view has a session to draw on two days.
         overnight_day = date.today() - timedelta(days=2)
         overnight = projects["The rewrite"]
-        if (overnight.id, overnight_day) not in existing:
+        if overnight.active and (overnight.id, overnight_day) not in existing:
             began = datetime.combine(overnight_day, time(22, 15))
             offset = local_offset(began)
             db.add(

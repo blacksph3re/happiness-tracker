@@ -280,6 +280,17 @@ renders).
   (`09:00 – (14:00) / (10:00) – 15:00`); back to back, the times stand alone.
   A row with no buttons lets its text fill the line, or its times outgrow a
   phone and push the duration below.
+- **Allocation** (`/time/allocation`, from *Allocate* on a week's heading on
+  Record) rearranges one week of a tag so its rule deducts the least, and
+  stores nothing. Additions move whole; tracked time moves in transfers of
+  any amount in whole steps (minute or quarter hour, an `allocation`
+  preference); only tracked days that are over take part, none is emptied.
+  The order is: least deducted, fewest transfers, least time moved, fewest
+  additions moved, time kept earliest. `lib/time/allocate.js` is an **exact**
+  search, held to brute force on the whole order and to a time budget; it
+  needs a cap, so a rule without one shows *Allocate* disabled with its reason
+  in a pointer label. It uses `deductionFor`, so a day filled to exactly a cap
+  owes no lower band — the rule as written, which the allocation exploits.
 - `TimeField` with a `day`: stepping or arrow-rolling past midnight carries the
   day; a typed time never does; the add panel (no `day`) clamps.
 - **What a page draws or derives from today reads `$currentDay`**
@@ -290,6 +301,11 @@ renders).
 - Leap years and DST need no special handling (`Date.UTC`, `date`/`timedelta`);
   the corpus pins spring-forward, autumn-back and leap-day sessions.
 - A tag with a deduction rule shows reported time; tags overlap.
+- **An archived project stays stored and leaves every figure**: Record's list
+  and its totals, Patterns, the budget and the allocation. Its sessions remain
+  on the server and in the export's sessions sheet, and come back on
+  restoring. A running timer on one still shows on the landing page, since it
+  is live state rather than a record. Seed scripts never write to one.
 - **Record writes durations in the account's style** (Settings → Time:
   `4h 15m` or `4.25h`), from `lib/duration-style.js`, kept in a `record`
   preferences section of its own — never in `time`, which Patterns replaces
@@ -315,7 +331,8 @@ renders).
     the switches never touch tag totals.
   - Today is open and counts once it is over. A reset fixes the balance at the
     start of its day; one before the first period is ignored. Archived projects
-    count (`trackedFor`), unlike in tag totals.
+    do not count (`trackedFor`), so archiving one changes the balance of every
+    week it was tracked in — decided over keeping a balance steady.
   - Budget mode lists every day, unlike the record: there an empty workday
     carries a cost and an action (*Not tracked*, *Mark day off*). Days off after
     today wait in one collapsed line above today, which stays the top record.

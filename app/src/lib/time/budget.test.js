@@ -50,7 +50,9 @@ describe('trackedFor', () => {
     utc_offset: 0,
   })
 
-  test("counts an archived project's time under its tag", () => {
+  test("leaves an archived project's time out of its tag", () => {
+    // Archived means gone from every figure, the budget's included: the one
+    // archived hour below is not counted.
     const projects = [
       { id: 1, active: true, tags: [{ id: 7 }] },
       { id: 2, active: false, tags: [{ id: 7 }] },
@@ -58,7 +60,7 @@ describe('trackedFor', () => {
     ]
     const entries = [session(1, '09:00', '11:00'), session(2, '13:00', '14:00'), session(3, '09:00', '17:00')]
     expect(trackedFor(7, entries, projects, Date.UTC(2026, 5, 15))).toEqual({
-      '2026-06-10': 3 * 3600,
+      '2026-06-10': 2 * 3600,
     })
   })
 })

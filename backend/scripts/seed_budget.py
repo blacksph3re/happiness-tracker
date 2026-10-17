@@ -293,14 +293,14 @@ def seed(
             db.execute(
                 select(Project)
                 .join(ProjectTag, ProjectTag.project_id == Project.id)
-                .where(ProjectTag.tag_id == tag.id)
+                .where(ProjectTag.tag_id == tag.id, Project.active.is_(True))
                 .order_by(Project.position)
             )
             .scalars()
             .first()
         )
         if project is None:
-            raise RuntimeError(f"{tag.name} has no project to track time on")
+            raise RuntimeError(f"{tag.name} has no active project to track time on")
 
         entries = list(
             db.execute(

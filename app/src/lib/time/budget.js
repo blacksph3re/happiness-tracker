@@ -194,12 +194,14 @@ export function workdaysIn(contracts, first, last) {
 }
 
 /**
- * What a tag tracked per day, archived projects included.
+ * What a tag tracked per day, leaving archived projects out.
  *
- * The tag totals drop an archived project, because a pattern nobody tracks any
- * more is noise; a budget must not, or archiving last year's project would
- * change this year's balance. Through the same `summarise` and `groupByTag` as
- * the totals, so a project's overlapping sessions count once here too.
+ * Archived means kept in storage and gone from every figure — the budget and
+ * the allocation as well as the totals — so archiving a project changes the
+ * balance of every week it was tracked in. That was decided against the
+ * opposite rule, which kept a balance steady through an archive. Through the
+ * same `summarise` and `groupByTag` as the totals, so a project's overlapping
+ * sessions count once here too.
  *
  * @param {number} tagId
  * @param {Array<object>} entries Sessions.
@@ -211,7 +213,14 @@ export function trackedFor(tagId, entries, projects, asOf) {
   const tagsOf = Object.fromEntries(
     projects.map((project) => [project.id, (project.tags ?? []).map((tag) => tag.id)])
   )
-  const byTag = groupByTag(summarise(entries, asOf), tagsOf)
+  const live = new Set(projects.filter((project) => project.active).map((project) => project.id))
+  const byTag = groupByTag(
+    summarise(
+      entries.filter((entry) => live.has(entry.project_id)),
+      asOf
+    ),
+    tagsOf
+  )
   return Object.fromEntries(
     Object.entries(byTag)
       .filter(([, bucket]) => bucket[tagId])

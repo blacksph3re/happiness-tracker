@@ -29,6 +29,9 @@
   import IconPlus from '../../lib/IconPlus.svelte'
   import IconStop from '../../lib/IconStop.svelte'
   import BudgetView from '../../lib/time/BudgetView.svelte'
+  import PointerLabel from '../../lib/PointerLabel.svelte'
+  import { pointerLabel } from '../../lib/pointer-label.svelte.js'
+  import { hasCap } from '../../lib/time/allocate.js'
   import { durationFormat, durationStyle } from '../../lib/duration-style.js'
   import { budgetTable, workdaysIn } from '../../lib/time/budget.js'
   import TimeField from '../../lib/time/TimeField.svelte'
@@ -98,6 +101,19 @@
   const contracted = $derived(
     ($tagStore ?? []).filter((tag) => ($tagRules ?? {})[tag.id]?.contracts?.length)
   )
+
+  /**
+   * Tags whose rule deducts anything — what a week can be allocated for — and
+   * whether any has the cap allocating needs. Without one, *Allocate* is drawn
+   * disabled, with the reason in a pointer label: a `title` never shows on a
+   * phone.
+   */
+  const ruledTags = $derived(
+    ($tagStore ?? []).filter((tag) => ($tagRules ?? {})[tag.id]?.bands?.length)
+  )
+  const canAllocate = $derived(ruledTags.some((tag) => hasCap(($tagRules ?? {})[tag.id])))
+  const allocateTip = pointerLabel({ within: '[data-allocate]' })
+  const NEEDS_CAP = { name: 'Allocate', detail: "Needs a cap in the tag's rule" }
 
   /** The tag Budget mode shows; the first contracted one until one is picked. */
   let budgetPick = $state(null)
@@ -289,6 +305,9 @@
     const offsets = dayOffsets($timeEntries)
     const last = $currentDay
     for (const entry of $timeEntries) {
+      // An archived project stays stored and leaves the record, its sessions
+      // and its time alike.
+      if (!liveProjects.has(entry.project_id)) continue
       const parts = slices(entry, $now, offsets)
       const crosses = parts.length > 1 || parts.some((part) => part.whole)
       for (const slice of parts) {
@@ -1036,6 +1055,33 @@
           >
             <p class="meta">{week.heading}</p>
             <div class="flex items-baseline gap-4">
+              {#if ruledTags.length}
+                {#if canAllocate}
+                  <a
+                    href="/time/allocation?week={week.start}"
+                    use:link
+                    class="meta -my-3 inline-flex min-h-11 items-center underline-offset-4
+                           hover:text-paper hover:underline"
+                    data-allocate={week.start}
+                  >
+                    Allocate
+                  </a>
+                {:else}
+                  <button
+                    type="button"
+                    aria-disabled="true"
+                    aria-describedby="allocate-needs-cap"
+                    class="meta -my-3 inline-flex min-h-11 cursor-not-allowed items-center opacity-50"
+                    data-allocate={week.start}
+                    onpointerdown={(event) => allocateTip.follow(NEEDS_CAP, event)}
+                    onpointerenter={(event) => allocateTip.drift(NEEDS_CAP, event)}
+                    onpointermove={(event) => allocateTip.drift(NEEDS_CAP, event)}
+                    onpointerleave={(event) => allocateTip.release(event)}
+                  >
+                    Allocate
+                  </button>
+                {/if}
+              {/if}
               {#if index === 0 && years.length > 1}
                 <!-- On the newest week alone, and only where there is more than
                      one year to choose between: a way back to last autumn
@@ -1385,5 +1431,7 @@
       {/if}
     </div>
   {/if}
+<span id="allocate-needs-cap" class="sr-only">Needs a cap in the tag's rule</span>
+<PointerLabel tip={allocateTip} />
 </section>
 </Frame>
