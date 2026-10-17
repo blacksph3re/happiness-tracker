@@ -8,6 +8,7 @@ import {
   trackedFor,
   workdaysIn,
 } from './budget.js'
+import { reportedFor } from './summary.js'
 
 const EIGHT_HOURS = { starts_on: '2026-06-01', daily_minutes: 480, workdays: 31, state: 'BY' }
 
@@ -68,84 +69,57 @@ describe('trackedFor', () => {
 describe('countedParts', () => {
   const HOUR = 3600
   const LUNCH = { from_minutes: 180, deduct_minutes: 30 }
+  const CAP = { from_minutes: 600, deduct_minutes: null }
 
   test('splits a day into what was tracked, added and deducted', () => {
-    expect(countedParts(9 * HOUR, 60, true, [LUNCH])).toEqual({
+    expect(countedParts(9 * HOUR, 60, [LUNCH])).toEqual({
       tracked: 9 * HOUR,
       added: HOUR,
       deducted: HOUR / 2,
       counted: 9.5 * HOUR,
-      addOff: false,
-      bandOff: false,
       byBand: { 0: HOUR / 2 },
     })
   })
 
+  test('counts what the tag reports: the whole rule', () => {
+    const long = { from_minutes: 360, deduct_minutes: 45 }
+    for (const tracked of [0, 2 * HOUR, 2.5 * HOUR, 9 * HOUR, 12 * HOUR]) {
+      expect(countedParts(tracked, 60, [LUNCH, long, CAP]).counted).toBe(
+        reportedFor(tracked, [LUNCH, long, CAP], 60)
+      )
+    }
+  })
+
   test('names what each band took, by its place in the rule', () => {
     const long = { from_minutes: 600, deduct_minutes: 45 }
-    expect(countedParts(9 * HOUR, 60, true, [LUNCH, long]).byBand).toEqual({ 1: 0.75 * HOUR })
-    expect(countedParts(8 * HOUR, 60, true, [LUNCH, long]).byBand).toEqual({ 0: HOUR / 2 })
-    expect(countedParts(2 * HOUR, null, true, [LUNCH, long]).byBand).toEqual({})
-    // A band switched off takes nothing.
-    expect(countedParts(9 * HOUR, 60, true, [LUNCH, { ...long, in_budget: false }]).byBand).toEqual({
-      0: HOUR / 2,
-    })
+    expect(countedParts(9 * HOUR, 60, [LUNCH, long]).byBand).toEqual({ 1: 0.75 * HOUR })
+    expect(countedParts(8 * HOUR, 60, [LUNCH, long]).byBand).toEqual({ 0: HOUR / 2 })
+    expect(countedParts(2 * HOUR, null, [LUNCH, long]).byBand).toEqual({})
   })
 
   test('a capped day owes its break first, and the cap takes what is left over', () => {
     const long = { from_minutes: 480, deduct_minutes: 45 }
-    const cap = { from_minutes: 600, deduct_minutes: null }
     // Eleven hours and one added: 45 minutes of break leave 11h15, and the cap
     // takes the 1h15 past ten.
-    expect(countedParts(11 * HOUR, 60, true, [long, LUNCH, cap])).toMatchObject({
+    expect(countedParts(11 * HOUR, 60, [long, LUNCH, CAP])).toMatchObject({
       deducted: 2 * HOUR,
       counted: 10 * HOUR,
       byBand: { 0: 0.75 * HOUR, 2: 1.25 * HOUR },
     })
     // Ten hours exactly, with the addition, still owe the break and nothing more.
-    expect(countedParts(9 * HOUR, 60, true, [long, LUNCH, cap])).toMatchObject({
+    expect(countedParts(9 * HOUR, 60, [long, LUNCH, CAP])).toMatchObject({
       counted: 9.25 * HOUR,
       byBand: { 0: 0.75 * HOUR },
     })
   })
 
-  test('an addition switched off adds nothing and says it was switched off', () => {
-    const parts = countedParts(9 * HOUR, 60, false, [LUNCH])
-    expect(parts).toMatchObject({ added: 0, addOff: true, deducted: HOUR / 2 })
-    expect(parts.counted).toBe(8.5 * HOUR)
-  })
-
-  test('a band switched off deducts nothing and says it was switched off', () => {
-    const parts = countedParts(9 * HOUR, null, true, [{ ...LUNCH, in_budget: false }])
-    expect(parts).toMatchObject({ deducted: 0, bandOff: true, counted: 9 * HOUR })
-  })
-
-  test('a lower band takes the place of one switched off', () => {
-    const long = { from_minutes: 360, deduct_minutes: 45, in_budget: false }
-    expect(countedParts(9 * HOUR, null, true, [LUNCH, long])).toMatchObject({
-      deducted: HOUR / 2,
-      bandOff: true,
-    })
-  })
-
-  test('a switch changes nothing on a day it would not have applied to', () => {
-    // Nothing tracked adds nothing, and two hours reach no band either way.
-    expect(countedParts(0, 60, false, [LUNCH])).toMatchObject({ addOff: false, counted: 0 })
-    expect(countedParts(2 * HOUR, null, true, [{ ...LUNCH, in_budget: false }])).toMatchObject({
-      bandOff: false,
-      counted: 2 * HOUR,
-    })
-  })
-
   test('is what countedFor counts', () => {
-    for (const [tracked, add, on, bands] of [
-      [9 * HOUR, 60, true, [LUNCH]],
-      [9 * HOUR, 60, false, [LUNCH]],
-      [2.5 * HOUR, 60, true, [LUNCH]],
-      [2.5 * HOUR, 60, false, [LUNCH]],
-      [7 * HOUR, null, true, [{ ...LUNCH, in_budget: false }]],
+    for (const [tracked, add, bands] of [
+      [9 * HOUR, 60, [LUNCH]],
+      [2.5 * HOUR, 60, [LUNCH]],
+      [7 * HOUR, null, [LUNCH, CAP]],
     ]) {
-      expect(countedParts(tracked, add, on, bands).counted).toBe(countedFor(tracked, add, on, bands))
+      expect(countedParts(tracked, add, bands).counted).toBe(countedFor(tracked, add, bands))
     }
   })
 })
@@ -253,11 +227,10 @@ describe('budgetWindow', () => {
     expect(window.sums.deducted).toBe(3.25 * HOUR)
   })
 
-  test('with the addition switched off nothing is added, and the split still adds up', () => {
-    const rule = { add_minutes: 60, add_in_budget: false, bands: [LUNCH] }
+  test('the split adds up: counted and deducted are what was tracked and added', () => {
+    const rule = { add_minutes: 60, bands: [LUNCH] }
     const { sums } = budgetWindow(rowsFor({ rule }), '2026-06-01', '2026-06-14')
-    expect(sums.added).toBe(0)
-    expect(sums.counted + sums.deducted).toBe(sums.tracked)
+    expect(sums.counted + sums.deducted).toBe(sums.tracked + sums.added)
   })
 
   test('splits the expected hours into met, short, days off and holidays', () => {

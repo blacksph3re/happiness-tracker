@@ -341,10 +341,9 @@ renders).
     untracked workday does, reads as a day off rather than a gap, and is
     *Taken off* in Patterns' expected-hours pie. Time on any day counts in
     full.
-  - Counted is the tag's rule **restricted to the parts switched on**
-    (`add_in_budget`, each band's `in_budget`; NULL is on). A band switched off
-    is the rule without it, so a lower band can apply. All on is reported time;
-    the switches never touch tag totals.
+  - Counted is **what the tag reports**: the whole rule, addition and every
+    band. There is nothing to switch out of the budget — per-part switches
+    existed and were removed, as nobody left a part out.
   - Today is open and counts once it is over. A reset fixes the balance at the
     start of its day; one before the first period is ignored. Archived projects
     do not count (`trackedFor`), so archiving one changes the balance of every
@@ -613,7 +612,7 @@ Do not reopen without being asked.
 | Answers | Never deleted; re-answering overwrites (last write wins on the device clock) |
 | Scores | Over scaled questions only |
 | Projects, tags, catalogues | Per user. A new account gets its own catalogue from code templates (`templates.py`); deleting the last one is allowed |
-| Deduction rules | On a tag; a ruled tag shows reported time (Patterns keeps both). Each part carries an *in budget* switch that only the hour budget reads |
+| Deduction rules | On a tag; a ruled tag shows reported time (Patterns keeps both), and its hour budget counts the same |
 | Hour budget | Per tag: contract periods of whole days, an average per workday, a German state for public holidays. Days off are per tag (two contracted tags mark a vacation twice), whole days, vacation, sick or other — which excuse the day — or a day off taken from the balance, which costs it; no allowance. Today counts once it is over |
 | Parallel timers | Several projects at once, adding up. The same project over the same minutes is kept and counted once; two running sessions on one project are joined |
 | Long sessions | Never auto-closed, no warning |

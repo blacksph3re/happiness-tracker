@@ -1,7 +1,6 @@
 {
   "budgets": [
     {
-      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [
@@ -144,7 +143,6 @@
       }
     },
     {
-      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [
@@ -392,7 +390,6 @@
       }
     },
     {
-      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [
@@ -560,7 +557,6 @@
       }
     },
     {
-      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [
@@ -679,7 +675,6 @@
       }
     },
     {
-      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [
@@ -803,7 +798,6 @@
       }
     },
     {
-      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [
@@ -1236,7 +1230,6 @@
       }
     },
     {
-      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [
@@ -1369,7 +1362,6 @@
       }
     },
     {
-      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [
@@ -1480,18 +1472,15 @@
       }
     },
     {
-      "add_in_budget": false,
       "add_minutes": 60,
       "bands": [
         {
           "deduct_minutes": 30,
-          "from_minutes": 0,
-          "in_budget": true
+          "from_minutes": 0
         },
         {
           "deduct_minutes": 45,
-          "from_minutes": 360,
-          "in_budget": false
+          "from_minutes": 360
         }
       ],
       "contracts": [
@@ -1502,12 +1491,12 @@
         }
       ],
       "days_off": {},
-      "name": "the addition off and one band off for the budget",
+      "name": "an addition and two bands: the budget counts what the tag reports",
       "resets": {},
       "rows": [
         {
-          "balance": 1800,
-          "counted": 30600,
+          "balance": 4500,
+          "counted": 33300,
           "day": "2026-06-01",
           "expected": 28800,
           "kind": "workday",
@@ -1516,8 +1505,8 @@
           "reset": null
         },
         {
-          "balance": -18000,
-          "counted": 9000,
+          "balance": -11700,
+          "counted": 12600,
           "day": "2026-06-02",
           "expected": 28800,
           "kind": "workday",
@@ -1526,8 +1515,8 @@
           "reset": null
         },
         {
-          "balance": -30600,
-          "counted": 16200,
+          "balance": -21600,
+          "counted": 18900,
           "day": "2026-06-03",
           "expected": 28800,
           "kind": "workday",
@@ -1536,7 +1525,7 @@
           "reset": null
         },
         {
-          "balance": -59400,
+          "balance": -50400,
           "counted": 0,
           "day": "2026-06-04",
           "expected": 28800,
@@ -1546,7 +1535,7 @@
           "reset": null
         },
         {
-          "balance": -59400,
+          "balance": -50400,
           "counted": 0,
           "day": "2026-06-05",
           "expected": 28800,
@@ -1564,23 +1553,19 @@
       }
     },
     {
-      "add_in_budget": true,
       "add_minutes": 60,
       "bands": [
         {
           "deduct_minutes": 30,
-          "from_minutes": 360,
-          "in_budget": true
+          "from_minutes": 360
         },
         {
           "deduct_minutes": 45,
-          "from_minutes": 480,
-          "in_budget": true
+          "from_minutes": 480
         },
         {
           "deduct_minutes": null,
-          "from_minutes": 600,
-          "in_budget": true
+          "from_minutes": 600
         }
       ],
       "contracts": [
@@ -1643,75 +1628,6 @@
       }
     },
     {
-      "add_in_budget": true,
-      "add_minutes": 60,
-      "bands": [
-        {
-          "deduct_minutes": 45,
-          "from_minutes": 480,
-          "in_budget": false
-        },
-        {
-          "deduct_minutes": 30,
-          "from_minutes": 360,
-          "in_budget": true
-        },
-        {
-          "deduct_minutes": null,
-          "from_minutes": 600,
-          "in_budget": true
-        }
-      ],
-      "contracts": [
-        {
-          "daily_minutes": 444,
-          "starts_on": "2026-06-01",
-          "workdays": 31
-        }
-      ],
-      "days_off": {},
-      "name": "the long break left out of the budget: the short one comes off before the cap",
-      "resets": {},
-      "rows": [
-        {
-          "balance": 7560,
-          "counted": 34200,
-          "day": "2026-06-01",
-          "expected": 26640,
-          "kind": "workday",
-          "name": null,
-          "open": false,
-          "reset": null
-        },
-        {
-          "balance": 16920,
-          "counted": 36000,
-          "day": "2026-06-02",
-          "expected": 26640,
-          "kind": "workday",
-          "name": null,
-          "open": false,
-          "reset": null
-        },
-        {
-          "balance": 16920,
-          "counted": 0,
-          "day": "2026-06-03",
-          "expected": 26640,
-          "kind": "workday",
-          "name": null,
-          "open": true,
-          "reset": null
-        }
-      ],
-      "today": "2026-06-03",
-      "tracked": {
-        "2026-06-01": 32400,
-        "2026-06-02": 39600
-      }
-    },
-    {
-      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [

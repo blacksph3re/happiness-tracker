@@ -253,10 +253,6 @@ export type DeductionBandIn = {
      * Deduct Minutes
      */
     deduct_minutes?: number | null;
-    /**
-     * In Budget
-     */
-    in_budget?: boolean;
 };
 
 /**
@@ -273,10 +269,6 @@ export type DeductionBandOut = {
      * Deduct Minutes
      */
     deduct_minutes?: number | null;
-    /**
-     * In Budget
-     */
-    in_budget?: boolean;
 };
 
 /**
@@ -1287,10 +1279,6 @@ export type TagRuleIn = {
      */
     add_minutes?: number | null;
     /**
-     * Add In Budget
-     */
-    add_in_budget?: boolean;
-    /**
      * Bands
      */
     bands?: Array<DeductionBandIn>;
@@ -1310,10 +1298,6 @@ export type TagRuleOut = {
      * Add Minutes
      */
     add_minutes: number | null;
-    /**
-     * Add In Budget
-     */
-    add_in_budget?: boolean;
     /**
      * Bands
      */

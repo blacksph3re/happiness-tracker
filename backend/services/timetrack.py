@@ -562,58 +562,24 @@ class BudgetDay:
     """Whether this is today, which shows its progress and counts once it is over."""
 
 
-def _counted(
-    tracked_seconds: int,
-    add_minutes: int | None,
-    add_in_budget: bool,
-    bands: list[Band],
-) -> int:
-    """Return what a day counts toward a budget.
-
-    The tag's rule restricted to the parts switched on for the budget, through
-    `reported` itself: switching a band off is the rule as if that band had not
-    been written, so a lower one can take its place, and switching the addition
-    off tests the bands against what was tracked alone.
-
-    Parameters
-    ----------
-    tracked_seconds : int
-        What the tag tracked on the day.
-    add_minutes : int or None
-        The tag's addition.
-    add_in_budget : bool
-        Whether the addition counts toward the budget.
-    bands : list of Band
-        The tag's bands; one whose ``in_budget`` is False is left out.
-
-    Returns
-    -------
-    int
-        Seconds the day counts.
-    """
-    counting = [band for band in bands if getattr(band, "in_budget", True) is not False]
-    return reported(tracked_seconds, counting, add_minutes if add_in_budget else None)
-
-
 def budget_days(
     *,
     tracked: dict[date, int],
     contracts: list[ContractPeriod],
     today: date,
     add_minutes: int | None = None,
-    add_in_budget: bool = True,
     bands: list[Band] | None = None,
     days_off: dict[date, str] | None = None,
     resets: dict[date, int] | None = None,
 ) -> list[BudgetDay]:
     """Walk a tag's hour budget from its contract's start to today.
 
-    Derived, never stored: a contract period, a day off, a reset or a switch on
+    Derived, never stored: a contract period, a day off, a reset or a change to
     the rule changes every day after it on the next read. Each day counts what
-    was tracked minus what the contract expected; a reset fixes the balance at
-    the start of its day; today shows its progress and counts once it is over.
-    Nothing before the first period is expected, so the walk starts there, and a
-    reset before it is ignored.
+    the tag reports — the whole rule — minus what the contract expected; a reset
+    fixes the balance at the start of its day; today shows its progress and
+    counts once it is over. Nothing before the first period is expected, so the
+    walk starts there, and a reset before it is ignored.
 
     Parameters
     ----------
@@ -625,10 +591,8 @@ def budget_days(
         The local day in progress.
     add_minutes : int or None, optional
         The tag's addition.
-    add_in_budget : bool, optional
-        Whether the addition counts, by default True.
     bands : list of Band, optional
-        The tag's bands, each with ``in_budget``.
+        The tag's bands.
     days_off : dict, optional
         ``{day: kind}`` of days off marked by hand. Every kind but
         ``balance`` excuses the day; ``balance`` keeps its expected hours, so it
@@ -678,7 +642,7 @@ def budget_days(
         # hours: only the kinds that excuse a day take its expectation away.
         costs = kind == "workday" or (kind == "off" and name == TAKEN_FROM_BALANCE)
         expected = period.daily_minutes * 60 if costs else 0
-        counted = _counted(tracked.get(day, 0), add_minutes, add_in_budget, bands)
+        counted = reported(tracked.get(day, 0), bands, add_minutes)
 
         reset = resets.get(day)
         if reset is not None:

@@ -298,11 +298,10 @@ POMODORO_MOMENTS = [("mid-flight", 10), ("afterwards", 600)]
 
 @dataclass
 class BudgetBand:
-    """A deduction band with its budget switch, as `budget_days` reads one."""
+    """A deduction band, as `budget_days` reads one."""
 
     from_minutes: int
     deduct_minutes: int | None
-    in_budget: bool = True
 
 
 HOLIDAY_YEARS = range(2015, 2036)
@@ -316,7 +315,6 @@ def _budget_case(
     today,
     *,
     add_minutes=None,
-    add_in_budget=True,
     bands=(),
     days_off=None,
     resets=None,
@@ -328,7 +326,6 @@ def _budget_case(
         "tracked": tracked,
         "today": today,
         "add_minutes": add_minutes,
-        "add_in_budget": add_in_budget,
         "bands": list(bands),
         "days_off": days_off or {},
         "resets": resets or {},
@@ -425,15 +422,14 @@ BUDGET_CASES = [
         "2028-03-03",
     ),
     _budget_case(
-        "the addition off and one band off for the budget",
+        "an addition and two bands: the budget counts what the tag reports",
         [{"starts_on": "2026-06-01", "daily_minutes": 480, "workdays": 31}],
         {"2026-06-01": 9 * 3600, "2026-06-02": 3 * 3600, "2026-06-03": 5 * 3600},
         "2026-06-05",
         add_minutes=60,
-        add_in_budget=False,
         bands=[
-            {"from_minutes": 0, "deduct_minutes": 30, "in_budget": True},
-            {"from_minutes": 360, "deduct_minutes": 45, "in_budget": False},
+            {"from_minutes": 0, "deduct_minutes": 30},
+            {"from_minutes": 360, "deduct_minutes": 45},
         ],
     ),
     _budget_case(
@@ -447,21 +443,9 @@ BUDGET_CASES = [
         "2026-06-04",
         add_minutes=60,
         bands=[
-            {"from_minutes": 360, "deduct_minutes": 30, "in_budget": True},
-            {"from_minutes": 480, "deduct_minutes": 45, "in_budget": True},
-            {"from_minutes": 600, "deduct_minutes": None, "in_budget": True},
-        ],
-    ),
-    _budget_case(
-        "the long break left out of the budget: the short one comes off before the cap",
-        [{"starts_on": "2026-06-01", "daily_minutes": 444, "workdays": 31}],
-        {"2026-06-01": 9 * 3600, "2026-06-02": 11 * 3600},
-        "2026-06-03",
-        add_minutes=60,
-        bands=[
-            {"from_minutes": 480, "deduct_minutes": 45, "in_budget": False},
-            {"from_minutes": 360, "deduct_minutes": 30, "in_budget": True},
-            {"from_minutes": 600, "deduct_minutes": None, "in_budget": True},
+            {"from_minutes": 360, "deduct_minutes": 30},
+            {"from_minutes": 480, "deduct_minutes": 45},
+            {"from_minutes": 600, "deduct_minutes": None},
         ],
     ),
     _budget_case(
@@ -492,7 +476,6 @@ def _budget_rows(case):
         ],
         today=date.fromisoformat(case["today"]),
         add_minutes=case["add_minutes"],
-        add_in_budget=case["add_in_budget"],
         bands=[BudgetBand(**band) for band in case["bands"]],
         days_off={date.fromisoformat(d): k for d, k in case["days_off"].items()},
         resets={date.fromisoformat(d): m * 60 for d, m in case["resets"].items()},

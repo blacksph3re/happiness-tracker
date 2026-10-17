@@ -458,15 +458,6 @@ def test_without_offsets_a_session_is_read_in_its_own():
 # "today" is Monday the 15th unless a test says otherwise.
 
 
-class FakeBand:
-    """A band as the budget reads it: a step of the rule, and whether it counts."""
-
-    def __init__(self, from_minutes, deduct_minutes, in_budget=True):
-        self.from_minutes = from_minutes
-        self.deduct_minutes = deduct_minutes
-        self.in_budget = in_budget
-
-
 def june(day):
     return date(2026, 6, day)
 
@@ -578,31 +569,13 @@ def test_the_latest_reset_before_a_day_wins():
     assert rows[4].balance == 2 * HOUR
 
 
-def test_the_budget_counts_reported_time_with_every_part_switched_on():
+def test_the_budget_counts_what_the_tag_reports():
+    # The whole rule, addition and every band: 9h tracked, +1h, then the
+    # 45-minute band — 9h 15m, what the tag reports for the day.
     bands = [FakeBand(0, 30), FakeBand(360, 45)]
     rows = budget({1: 9}, add_minutes=60, bands=bands, today=2)
-    # 9h tracked, +1h, then the 45-minute band: 9h 15m reported.
     assert rows[1].counted == 9 * HOUR + 15 * 60
-
-
-def test_an_addition_switched_off_is_left_out_of_the_budget():
-    bands = [FakeBand(0, 30), FakeBand(360, 45)]
-    rows = budget({1: 9}, add_minutes=60, add_in_budget=False, bands=bands, today=2)
-    assert rows[1].counted == 9 * HOUR - 45 * 60
-
-
-def test_a_band_switched_off_is_as_if_it_were_not_there():
-    # The 45-minute band off: the day falls back to the 30-minute one, exactly
-    # as the rule would if the 45 had never been written.
-    bands = [FakeBand(0, 30), FakeBand(360, 45, in_budget=False)]
-    rows = budget({1: 9}, bands=bands, today=2)
-    assert rows[1].counted == 9 * HOUR - 30 * 60
-
-
-def test_every_band_switched_off_counts_what_was_tracked():
-    bands = [FakeBand(0, 30, in_budget=False), FakeBand(360, 45, in_budget=False)]
-    rows = budget({1: 9}, add_minutes=60, add_in_budget=False, bands=bands, today=2)
-    assert rows[1].counted == 9 * HOUR
+    assert rows[1].counted == reported(9 * HOUR, bands, add_minutes=60)
 
 
 def test_a_budget_with_no_contract_is_empty():

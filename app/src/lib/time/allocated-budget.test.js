@@ -103,12 +103,12 @@ describe('the budget, allocated', () => {
   ]
 
   test('an addition counts where the allocation put it', () => {
-    expect(countedParts(8 * HOUR, 60, true, [LUNCH, CAP_10], 2)).toMatchObject({
+    expect(countedParts(8 * HOUR, 60, [LUNCH, CAP_10], 2)).toMatchObject({
       added: 2 * HOUR,
       deducted: 30 * MINUTE,
       counted: 9.5 * HOUR,
     })
-    expect(countedParts(2 * HOUR, 60, true, [LUNCH, CAP_10], 0)).toMatchObject({ added: 0, counted: 2 * HOUR })
+    expect(countedParts(2 * HOUR, 60, [LUNCH, CAP_10], 0)).toMatchObject({ added: 0, counted: 2 * HOUR })
   })
 
   test("the window counts the allocated week: Wednesday's lunch saved", () => {

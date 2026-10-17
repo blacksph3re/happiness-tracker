@@ -125,7 +125,6 @@ describe('an hour budget walks the same days on both sides', () => {
         contracts: one.contracts,
         today: one.today,
         addMinutes: one.add_minutes,
-        addInBudget: one.add_in_budget,
         bands: one.bands,
         daysOff: one.days_off,
         resets: Object.fromEntries(

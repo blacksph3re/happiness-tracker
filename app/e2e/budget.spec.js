@@ -140,7 +140,7 @@ test('the Budget pill appears only once a tag has a contract', async ({ page, ac
   await expect(page.locator('[data-group-by="budget"]')).toBeVisible()
 })
 
-test('a contract and the budget switches are edited in the tag rule', async ({
+test('a contract is edited in the tag rule, which has no budget switches', async ({
   page,
   account,
 }) => {
@@ -148,9 +148,10 @@ test('a contract and the budget switches are edited in the tag rule', async ({
   await page.goto('/time/projects')
   await page.locator(`[data-tag-row="${tag.id}"]`).getByRole('button', { name: 'Rule' }).click()
   await page.getByLabel('Add to every tracked day').fill('30')
-  await page.getByLabel('The addition counts toward the hour budget').uncheck()
   await page.getByRole('button', { name: 'Add a band' }).click()
-  await page.getByLabel('Band 1 counts toward the hour budget').uncheck()
+  // The budget counts the whole rule: nothing to switch out of it.
+  await expect(page.getByLabel('The addition counts toward the hour budget')).toHaveCount(0)
+  await expect(page.getByLabel('Band 1 counts toward the hour budget')).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Add a contract period' }).click()
   await page.getByLabel('Period 1 starts on', { exact: true }).fill('2026-06-01')
@@ -166,8 +167,8 @@ test('a contract and the budget switches are edited in the tag rule', async ({
   await expect(page.locator(`[data-bands="${tag.id}"]`)).toHaveCount(0)
 
   const rule = await (await account.api.get(`/api/tags/${tag.id}/rule`)).json()
-  expect(rule.add_in_budget).toBe(false)
-  expect(rule.bands[0].in_budget).toBe(false)
+  expect(rule.add_minutes).toBe(30)
+  expect(rule.bands).toEqual([{ from_minutes: 0, deduct_minutes: 30 }])
   expect(rule.contracts).toEqual([
     { starts_on: '2026-06-01', daily_minutes: 450, workdays: 15, state: 'BY' },
   ])
@@ -249,21 +250,20 @@ test("a tap on today's total holds open what the day expects", async ({ page, ac
   await expect(page.locator('[data-span-tip]')).toBeVisible()
 })
 
-test('a part of the rule switched off for the budget says so on the total', async ({
+test('the budget counts what the tag reports, and the label on a total says how', async ({
   page,
   account,
 }) => {
-  const { project } = await contracted(account, {
-    rule: { add_minutes: 60, add_in_budget: false, bands: [{ ...LUNCH, in_budget: false }] },
-  })
+  const { project } = await contracted(account, { rule: { add_minutes: 60, bands: [LUNCH] } })
   await aWeek(account, project)
   await openBudget(page)
 
+  // Tuesday: nine hours, one added, the lunch taken.
   const total = row(page, '2026-06-09').locator('[data-budget-total]')
-  await expect(total).toHaveText('9h 00m')
+  await expect(total).toHaveText('9h 30m')
   await total.hover()
-  await expect(tipLine(page, 'Added')).toHaveText('not counted')
-  await expect(tipLine(page, 'Deducted')).toHaveText('not counted')
+  await expect(tipLine(page, 'Added')).toHaveText('+1h 00m')
+  await expect(tipLine(page, 'Deducted')).toHaveText(`${MINUS}0h 30m`)
 })
 
 test('marking an untracked day off clears it and moves the balance by its hours', async ({
@@ -500,18 +500,16 @@ test('a planned day off waits in the line above today and joins the list on its 
   await expect(planned).toHaveCount(0)
 })
 
-test('an addition switched off changes the budget and leaves the tag totals alone', async ({
+test('an addition counts in the budget as it does in the tag totals', async ({
   page,
   account,
 }) => {
-  const { project } = await contracted(account, {
-    rule: { add_minutes: 60, add_in_budget: false },
-  })
+  const { project } = await contracted(account, { rule: { add_minutes: 60 } })
   await workDay(account, project, '08', 8)
   await openBudget(page)
-  // Only Monday tracked, at exactly its eight hours; the addition is left out,
-  // so the four untracked days cost 32h.
-  await expect(page.locator('[data-budget-balance]')).toHaveText(`${MINUS}32h 00m`)
+  // Only Monday tracked: eight hours and the one added, an hour over; the four
+  // untracked days cost 32h.
+  await expect(page.locator('[data-budget-balance]')).toHaveText(`${MINUS}31h 00m`)
 
   await page.locator('[data-group-by="tag"]').click()
   await expect(page.locator('[data-day-total="2026-06-08"]')).toHaveText('9h 00m')
@@ -573,10 +571,7 @@ test('every budget row fits a 320px screen', async ({ page, account }) => {
   expect(worst, 'the page scrolls sideways').toBe(0)
 })
 
-/**
- * How far apart, vertically, the centres of each row's controls sit in the
- * tag rule editor, and how far the addition's switch sits from its field.
- */
+/** How far apart, vertically, the centres of each row's controls sit in the tag rule editor. */
 async function ruleEditorLayout(page) {
   return page.locator('[data-bands]').evaluate((editor) => {
     const root = editor.closest('[data-tag-row]') ?? editor.parentElement
@@ -605,21 +600,8 @@ async function ruleEditorLayout(page) {
     const captionRects = [...root.querySelectorAll('[data-contract-period="0"] .meta')]
       .filter((node) => node.children.length === 0 && node.closest('button') === null)
       .map((node) => node.getBoundingClientRect())
-    const field = box('Add to every tracked day')
-    const toggle = box('The addition counts toward the hour budget')
     return {
-      // One line, whatever the width: the switch belongs beside its field.
-      addition: Math.abs(centre(field) - centre(toggle)),
-      additionGap:
-        box('The addition counts toward the hour budget').left -
-        box('Add to every tracked day').right,
-      band: spread([
-        'Band 1 threshold',
-        'Band 1 deduction',
-        'Band 1 caps the day',
-        'Band 1 counts toward the hour budget',
-        'Remove band 1',
-      ]),
+      band: spread(['Band 1 threshold', 'Band 1 deduction', 'Band 1 caps the day', 'Remove band 1']),
       contract: spread([
         'Period 1 starts on',
         'Period 1 hours per day',
@@ -637,11 +619,9 @@ async function ruleEditorLayout(page) {
       // What a tap lands on: a checkbox's label, a button's own box.
       reach: Math.min(
         ...[
-          ...[
-            'The addition counts toward the hour budget',
-            'Band 1 caps the day',
-            'Band 1 counts toward the hour budget',
-          ].map((label) => root.querySelector(`[aria-label="${label}"]`).closest('label')),
+          ...['Band 1 caps the day'].map((label) =>
+            root.querySelector(`[aria-label="${label}"]`).closest('label')
+          ),
           ...['Remove band 1', 'Period 1 works Monday', 'Remove period 1'].map((label) =>
             root.querySelector(`[aria-label="${label}"]`)
           ),
@@ -662,9 +642,6 @@ async function openRuleEditor(page, account) {
 async function expectRuleEditorAligned(page) {
   const layout = await ruleEditorLayout(page)
   expect(layout.captionCount, 'the contract row has its four captions').toBe(4)
-  expect(layout.addition, 'the addition and its switch').toBeLessThanOrEqual(1)
-  expect(layout.additionGap, 'the switch sits beside its field').toBeGreaterThanOrEqual(0)
-  expect(layout.additionGap, 'the switch sits beside its field').toBeLessThanOrEqual(16)
   expect(layout.band, 'a band row').toBeLessThanOrEqual(1)
   expect(layout.contract, 'a contract row').toBeLessThanOrEqual(1)
   expect(layout.captions, 'the contract captions').toBeLessThanOrEqual(1)
@@ -757,12 +734,12 @@ test('a day off marked on another device arrives with the next check', async ({
   await expect(page.locator('[data-budget-balance]')).toHaveText('+1h 00m')
 })
 
-test('the addition switched off on another device arrives with the next check', async ({
+test('the addition changed on another device arrives with the next check', async ({
   page,
   account,
 }) => {
-  // The addition and its switch live on the tag row, not with the bands, so
-  // only the digest's `tags` moves — and that alone has to re-read the rules.
+  // The addition lives on the tag row, not with the bands, so only the
+  // digest's `tags` moves — and that alone has to re-read the rules.
   const { tag, project } = await contracted(account, { rule: { add_minutes: 60 } })
   await aWeek(account, project)
   await openBudget(page)
@@ -772,7 +749,7 @@ test('the addition switched off on another device arrives with the next check', 
   // The digest stamps whole seconds, and this change moves no count.
   await new Promise((resolve) => setTimeout(resolve, 1100))
   const response = await account.api.put(`/api/tags/${tag.id}/rule`, {
-    data: { add_minutes: 60, add_in_budget: false, bands: [] },
+    data: { add_minutes: null, bands: [] },
   })
   expect(response.status(), await response.text()).toBe(200)
 

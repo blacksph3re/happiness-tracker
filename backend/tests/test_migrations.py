@@ -776,3 +776,74 @@ def test_the_downgrade_refuses_while_a_day_off_is_taken_from_the_balance(migrate
     with pytest.raises(RuntimeError, match="from the balance"):
         command.downgrade(config, "-1")
     assert db.execute("SELECT kind FROM tag_days_off").fetchall() == [("balance",)]
+
+
+NO_BUDGET_SWITCHES = "9e4b1d7c3a52"
+
+
+def test_the_budget_switches_are_dropped_in_place_and_every_rule_kept(migrated):
+    """Both switches go without rebuilding either table, and nothing they sat on.
+
+    ``tags`` is what most tables point at; dropping the columns in place leaves
+    it, and every row naming it, where it was. The downgrade gives both columns
+    back empty, which reads as on.
+    """
+    chain = revisions()
+    upgrade(chain[chain.index(NO_BUDGET_SWITCHES) - 1])
+
+    db = sqlite3.connect(migrated)
+    db.executescript(
+        """
+        INSERT INTO users (id, username, password_hash, is_admin)
+             VALUES (1, 'alice', 'h', 1);
+        INSERT INTO tags
+                    (id, user_id, name, colour, position, add_minutes, add_in_budget)
+             VALUES (1, 1, 'Work', 'tide', 0, 60, 0);
+        INSERT INTO projects (id, user_id, name, colour, position, active)
+             VALUES (1, 1, 'Backend', 'tide', 0, 1);
+        INSERT INTO project_tags (project_id, tag_id) VALUES (1, 1);
+        INSERT INTO deduction_bands (tag_id, from_minutes, deduct_minutes, in_budget)
+             VALUES (1, 360, 30, NULL), (1, 480, 45, 0), (1, 600, NULL, 1);
+        INSERT INTO tag_contracts (tag_id, starts_on, daily_minutes, workdays)
+             VALUES (1, '2026-01-01', 444, 31);
+        """
+    )
+    db.commit()
+
+    def rootpages():
+        return dict(
+            db.execute(
+                "SELECT name, rootpage FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        )
+
+    def columns(table):
+        return [row[1] for row in db.execute(f"PRAGMA table_info({table})")]
+
+    before = rootpages()
+    upgrade(NO_BUDGET_SWITCHES)
+    assert rootpages()["tags"] == before["tags"]
+    assert rootpages()["deduction_bands"] == before["deduction_bands"]
+    assert "add_in_budget" not in columns("tags")
+    assert "in_budget" not in columns("deduction_bands")
+    assert db.execute("SELECT id, add_minutes FROM tags").fetchall() == [(1, 60)]
+    assert db.execute(
+        "SELECT from_minutes, deduct_minutes FROM deduction_bands ORDER BY from_minutes"
+    ).fetchall() == [(360, 30), (480, 45), (600, None)]
+    assert db.execute("SELECT count(*) FROM project_tags").fetchone() == (1,)
+    assert db.execute("SELECT count(*) FROM tag_contracts").fetchone() == (1,)
+    assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    from alembic.config import Config
+
+    from alembic import command
+
+    config = Config()
+    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    command.downgrade(config, "-1")
+    assert db.execute("SELECT add_in_budget FROM tags").fetchall() == [(None,)]
+    assert db.execute("SELECT in_budget FROM deduction_bands").fetchall() == [
+        (None,),
+        (None,),
+        (None,),
+    ]

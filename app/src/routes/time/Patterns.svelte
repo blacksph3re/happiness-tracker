@@ -758,20 +758,15 @@
 
   const bandsPie = $derived({
     slices: slices(
-      (budgetRule?.bands ?? [])
-        .map((band, index) => [band, index])
-        .filter(([band]) => band.in_budget !== false)
-        .map(([band, index]) => [
-          `From ${formatDuration(band.from_minutes * 60)}`,
-          budget.bands[index] ?? 0,
-        ])
+      (budgetRule?.bands ?? []).map((band, index) => [
+        `From ${formatDuration(band.from_minutes * 60)}`,
+        budget.bands[index] ?? 0,
+      ])
     ),
   })
 
   /** The band pie only says something when there are two bands to split between. */
-  const bandPieShown = $derived(
-    (budgetRule?.bands ?? []).filter((band) => band.in_budget !== false).length > 1
-  )
+  const bandPieShown = $derived((budgetRule?.bands ?? []).length > 1)
 
   const expectedPie = $derived({
     slices: slices([

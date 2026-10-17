@@ -1,6 +1,6 @@
 import { formatDuration, formatSigned } from '../clock.js'
 import { publicHolidays } from './holidays.js'
-import { addedFor, deductionFor, deductionParts, groupByTag, summarise } from './summary.js'
+import { addedFor, deductionParts, groupByTag, summarise } from './summary.js'
 
 /**
  * A tag's hour budget, walked day by day.
@@ -29,54 +29,33 @@ function weekdayBit(day) {
 }
 
 /**
- * What a day counts toward a budget, part by part: the tag's rule with only the
- * parts switched on.
+ * What a day counts toward a budget, part by part: what the tag reports, the
+ * whole rule.
  *
  * The addition lands first and the bands are tested against the result, the
- * order `reportedFor` keeps. A band switched off is the rule as if it were not
- * there, so a lower band can take its place; the addition switched off tests
- * the bands against what was tracked alone.
- *
- * `addOff` and `bandOff` say whether a switch changed *this* day — an addition
- * on a day that tracked something, a band that would have deducted something
- * else — so the label on a total names a switch only where it made the
- * difference.
+ * order `reportedFor` keeps.
  *
  * @param {number} tracked Seconds the tag tracked on the day.
  * @param {number|null} addMinutes The tag's addition.
- * @param {boolean} addInBudget Whether the addition counts.
- * @param {Array<{from_minutes: number, deduct_minutes: number|null, in_budget?: boolean}>} bands
+ * @param {Array<{from_minutes: number, deduct_minutes: number|null}>} bands
  * @param {number} [additions] How many additions the day holds, where an
  *   allocation moved them; one on any tracked day otherwise.
- * `byBand` is what each band took, keyed by its place in `bands` — a break, and
- * on a capped day the cap besides — and what the patterns page splits its
- * deductions by.
- *
  * @returns {{tracked: number, added: number, deducted: number, counted: number,
- *   addOff: boolean, bandOff: boolean, byBand: Record<number, number>}} Seconds,
- *   the two switches' effect, and what each band took.
+ *   byBand: Record<number, number>}} Seconds, and what each band took, keyed by
+ *   its place in `bands` — a break, and on a capped day the cap besides — which
+ *   the patterns page splits its deductions by.
  */
-export function countedParts(tracked, addMinutes, addInBudget, bands, additions) {
-  const counting = bands.filter((band) => band.in_budget !== false)
-  const earned =
+export function countedParts(tracked, addMinutes, bands, additions) {
+  const added =
     additions === undefined ? addedFor(tracked, addMinutes) : additions * (addMinutes ?? 0) * 60
-  const added = addInBudget ? earned : 0
   const base = tracked + added
   const byBand = {}
   let deducted = 0
-  for (const part of deductionParts(base, counting)) {
+  for (const part of deductionParts(base, bands)) {
     byBand[bands.indexOf(part.band)] = part.seconds
     deducted += part.seconds
   }
-  return {
-    tracked,
-    added,
-    deducted,
-    counted: base - deducted,
-    addOff: !addInBudget && earned > 0,
-    bandOff: deductionFor(base, bands) !== deducted,
-    byBand,
-  }
+  return { tracked, added, deducted, counted: base - deducted, byBand }
 }
 
 /**
@@ -84,19 +63,18 @@ export function countedParts(tracked, addMinutes, addInBudget, bands, additions)
  *
  * @param {number} tracked Seconds the tag tracked on the day.
  * @param {number|null} addMinutes The tag's addition.
- * @param {boolean} addInBudget Whether the addition counts.
  * @param {Array<object>} bands
  * @param {number} [additions] As `countedParts` takes it.
  * @returns {number} Seconds.
  */
-export function countedFor(tracked, addMinutes, addInBudget, bands, additions) {
-  return countedParts(tracked, addMinutes, addInBudget, bands, additions).counted
+export function countedFor(tracked, addMinutes, bands, additions) {
+  return countedParts(tracked, addMinutes, bands, additions).counted
 }
 
 /**
  * Walk a tag's hour budget from its contract's start to today.
  *
- * Each day counts what was tracked minus what the contract expected; a reset
+ * Each day counts what the tag reports minus what the contract expected; a reset
  * fixes the balance at the start of its day; today shows its progress and
  * counts once it is over. A public holiday is tested before a rest day, and a
  * rest day before a day off, so a day off marked on a weekend changes nothing.
@@ -108,7 +86,6 @@ export function countedFor(tracked, addMinutes, addInBudget, bands, additions) {
  *   state?: string|null}>} input.contracts The periods, in any order.
  * @param {string} input.today The local day in progress.
  * @param {number|null} [input.addMinutes]
- * @param {boolean} [input.addInBudget]
  * @param {Array<object>} [input.bands]
  * @param {Record<string, string>} [input.daysOff] `{day: kind}`. Every kind but
  *   `balance` excuses the day; `balance` keeps its hours, and so costs them.
@@ -125,7 +102,6 @@ export function budgetDays({
   contracts,
   today,
   addMinutes = null,
-  addInBudget = true,
   bands = [],
   daysOff = {},
   resets = {},
@@ -161,7 +137,7 @@ export function budgetDays({
     // Only the kinds that excuse a day take its expectation away.
     const costs = kind === 'workday' || (kind === 'off' && name === TAKEN_FROM_BALANCE)
     const expected = costs ? period.daily_minutes * 60 : 0
-    const counted = countedFor(tracked[day] ?? 0, addMinutes, addInBudget, bands, additions[day])
+    const counted = countedFor(tracked[day] ?? 0, addMinutes, bands, additions[day])
     const reset = resets[day] ?? null
     if (reset !== null) balance = reset
     const open = day === today
@@ -261,14 +237,12 @@ export function budgetForTag({ tagId, rule, entries, projects, records, today, a
   if (!rule?.contracts?.length) return []
   const tracked = { ...trackedFor(tagId, entries, projects, asOf), ...allocated?.tracked }
   const additions = allocated?.additions ?? {}
-  const addInBudget = rule.add_in_budget !== false
   const bands = rule.bands ?? []
   const rows = budgetDays({
     tracked,
     contracts: rule.contracts,
     today,
     addMinutes: rule.add_minutes,
-    addInBudget,
     bands,
     additions,
     daysOff: Object.fromEntries(
@@ -283,7 +257,7 @@ export function budgetForTag({ tagId, rule, entries, projects, records, today, a
   const periods = rule.contracts.toSorted((one, two) => (one.starts_on < two.starts_on ? -1 : 1))
   return rows.map((row) => ({
     ...row,
-    parts: countedParts(tracked[row.day] ?? 0, rule.add_minutes, addInBudget, bands, additions[row.day]),
+    parts: countedParts(tracked[row.day] ?? 0, rule.add_minutes, bands, additions[row.day]),
     nominal: nominalFor(periods, row.day),
   }))
 }
@@ -388,7 +362,7 @@ export function budgetWindow(rows, start, end) {
  * The label on a total on the record and the Day card on patterns, so the two
  * explain a day in the same words. Added and Deducted appear only where the rule
  * has them, Counted only where it changed something, so it never restates
- * Tracked; a part switched out of the budget reads *not counted*.
+ * Tracked.
  *
  * @param {object} row A row from `budgetForTag`.
  * @param {object|null} rule The tag's rule.
@@ -401,14 +375,9 @@ export function breakdownLines(row, rule, format = CLOCK) {
   const { parts } = row
   const lines = [['Tracked', format.duration(parts.tracked)]]
   if (rule?.add_minutes) {
-    lines.push(['Added', parts.addOff ? 'not counted' : format.signed(parts.added)])
+    lines.push(['Added', format.signed(parts.added)])
   }
-  if (rule?.bands?.length) {
-    lines.push([
-      'Deducted',
-      parts.bandOff && parts.deducted === 0 ? 'not counted' : format.signed(-parts.deducted),
-    ])
-  }
+  if (rule?.bands?.length) lines.push(['Deducted', format.signed(-parts.deducted)])
   if (lines.length > 1) lines.push(['Counted', format.duration(row.counted)])
   lines.push(['Expected', row.expected ? format.duration(row.expected) : 'nothing'])
   return lines

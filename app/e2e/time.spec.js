@@ -874,7 +874,7 @@ test('a band typed before the rule loads is not wiped when it arrives', async ({
   await page.getByRole('button', { name: 'Save rule' }).click()
   await savedRule(page)
   const stored = await (await account.api.get(`/api/tags/${errands.id}/rule`)).json()
-  expect(stored.bands).toEqual([{ from_minutes: 360, deduct_minutes: 45, in_budget: true }])
+  expect(stored.bands).toEqual([{ from_minutes: 360, deduct_minutes: 45 }])
 })
 
 test('a tag list that fails to load does not cache "no tag has a rule"', async ({

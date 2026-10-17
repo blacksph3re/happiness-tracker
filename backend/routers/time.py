@@ -332,7 +332,6 @@ def get_tag_rule(tag_id: int, user: CurrentUser, db: DbSession) -> TagRuleOut:
     )
     return TagRuleOut(
         add_minutes=tag.add_minutes,
-        add_in_budget=tag.add_in_budget is not False,
         bands=[DeductionBandOut.model_validate(band) for band in bands],
         contracts=[ContractPeriodOut.model_validate(period) for period in contracts],
     )
@@ -398,9 +397,6 @@ def set_tag_rule(
     # Otherwise the same rule round-trips differently depending on how it was
     # last saved, which the change digest would report as an edit.
     tag.add_minutes = payload.add_minutes or None
-    # On is stored as NULL, which every row written before the switch already
-    # holds, so a rule saved with nothing switched off changes no column.
-    tag.add_in_budget = None if payload.add_in_budget else False
 
     # Left out entirely, the contract stays: an app that predates contracts
     # still sends whole rules. An empty list is a request to remove it.
@@ -432,7 +428,6 @@ def set_tag_rule(
                 tag_id=tag.id,
                 from_minutes=band.from_minutes,
                 deduct_minutes=band.deduct_minutes,
-                in_budget=None if band.in_budget else False,
             )
         )
     db.commit()

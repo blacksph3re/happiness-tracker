@@ -498,8 +498,7 @@ def test_a_capping_band_holds_the_day_at_its_threshold(client, admin_headers):
     stored = client.get(f"/api/tags/{tag['id']}/rule", headers=admin_headers).json()
     assert stored == {
         "add_minutes": None,
-        "add_in_budget": True,
-        "bands": [{"from_minutes": 600, "deduct_minutes": None, "in_budget": True}],
+        "bands": [{"from_minutes": 600, "deduct_minutes": None}],
         "contracts": [],
     }
 
@@ -838,10 +837,13 @@ def test_a_rule_saved_without_contracts_keeps_them(client, admin_headers):
     assert stored["bands"][0]["deduct_minutes"] == 30
 
 
-def test_the_budget_switches_round_trip_and_default_to_on(client, admin_headers):
+def test_a_rule_has_no_budget_switches_and_an_app_still_sending_them_is_heard_without(
+    client, admin_headers
+):
     tag = make_tag(client, admin_headers, "Work")
     plain = client.get(f"/api/tags/{tag['id']}/rule", headers=admin_headers).json()
-    assert plain["add_in_budget"] is True
+    assert "add_in_budget" not in plain
+    # An app cached from before the switches went still sends them.
     response = client.put(
         f"/api/tags/{tag['id']}/rule",
         headers=admin_headers,
@@ -854,12 +856,16 @@ def test_the_budget_switches_round_trip_and_default_to_on(client, admin_headers)
             ],
         },
     )
+    assert response.status_code == 200
     body = response.json()
-    assert body["add_in_budget"] is False
-    assert [band["in_budget"] for band in body["bands"]] == [True, False]
+    assert "add_in_budget" not in body
+    assert body["bands"] == [
+        {"from_minutes": 0, "deduct_minutes": 30},
+        {"from_minutes": 360, "deduct_minutes": 45},
+    ]
 
 
-def test_the_reported_totals_ignore_the_budget_switches(client, admin_headers):
+def test_switches_from_an_old_app_change_nothing_reported(client, admin_headers):
     tag = make_tag(client, admin_headers, "Work")
     project = make_project(client, admin_headers, "Backend", tag_ids=[tag["id"]])
     client.put(

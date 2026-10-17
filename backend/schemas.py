@@ -6,7 +6,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    field_validator,
     model_validator,
 )
 from pydantic.fields import FieldInfo
@@ -1077,38 +1076,11 @@ class DeductionBandIn(BaseModel):
     """Minutes it removes from the day, or null to cap what the day reports, after its
     break, at the threshold."""
 
-    in_budget: bool = True
-    """Whether the band counts toward the tag's hour budget.
-
-    Off, the budget reads the rule as if this band were not there. The reported
-    totals never change with it.
-    """
-
 
 class DeductionBandOut(DeductionBandIn):
     """A band as exposed by the API."""
 
     model_config = ConfigDict(from_attributes=True)
-
-    in_budget: bool = True
-    """Whether the band counts toward the hour budget; a stored NULL reads as yes."""
-
-    @field_validator("in_budget", mode="before")
-    @classmethod
-    def _null_reads_as_on(cls, value: bool | None) -> bool:
-        """Read a band stored before the switch existed as switched on.
-
-        Parameters
-        ----------
-        value : bool or None
-            The stored value.
-
-        Returns
-        -------
-        bool
-            True unless the band was switched off.
-        """
-        return value is not False
 
 
 class ContractPeriodIn(BaseModel):
@@ -1148,9 +1120,6 @@ class TagRuleIn(BaseModel):
     Zero is stored as null, so a rule that adds nothing has one spelling.
     """
 
-    add_in_budget: bool = True
-    """Whether the addition counts toward the tag's hour budget."""
-
     bands: list[DeductionBandIn] = []
     """The deduction bands, in any order."""
 
@@ -1168,9 +1137,6 @@ class TagRuleOut(BaseModel):
 
     add_minutes: int | None
     """Minutes added to every tracked day, or null for none."""
-
-    add_in_budget: bool = True
-    """Whether the addition counts toward the hour budget."""
 
     bands: list[DeductionBandOut] = []
     """The deduction bands, lowest threshold first."""

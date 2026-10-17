@@ -824,14 +824,6 @@ class Tag(Base):
     )
     """The rule turning this tag's tracked time into reported time."""
 
-    add_in_budget: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    """Whether `add_minutes` counts toward the tag's hour budget; NULL reads as yes.
-
-    The budget counts the tag's rule restricted to the parts switched on, so the
-    reported totals never change with this. Nullable with no default so adding
-    it is an in-place ``ADD COLUMN``.
-    """
-
     contracts: Mapped[list[TagContract]] = relationship(
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -899,13 +891,6 @@ class DeductionBand(Base):
     A cap is the open-ended case of a deduction: the break comes off first, and
     the cap takes whatever is left past `from_minutes`, so the day reports the
     threshold and no more.
-    """
-
-    in_budget: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    """Whether this band counts toward the tag's hour budget; NULL reads as yes.
-
-    Switched off, the budget reads the rule as if this band were not there, so
-    a lower band can take its place on a long day.
     """
 
     updated_at: Mapped[datetime | None] = mapped_column(
