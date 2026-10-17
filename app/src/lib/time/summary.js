@@ -70,13 +70,51 @@ export function groupByTag(totals, tagsOf) {
   return grouped
 }
 
+/** Whether a band caps the day rather than deducting a fixed amount from it. */
+const caps = (band) => band.deduct_minutes === null || band.deduct_minutes === undefined
+
 /**
- * The deduction a day of this length attracts, in seconds.
+ * What each band of a rule takes from a day of this length, in seconds.
  *
- * The highest threshold the day reaches applies, and the deduction never takes
- * the day below zero — ten minutes tracked minus a thirty minute break is
- * nothing, not minus twenty. A band with no `deduct_minutes` caps instead: it
- * removes whatever the day ran past its threshold.
+ * Of the bands that deduct (breaks), the highest threshold the day reaches
+ * applies, and it never takes the day below zero — ten minutes tracked minus a
+ * thirty minute break is nothing, not minus twenty. A band with no
+ * `deduct_minutes` caps instead: what the day reports after its break never
+ * exceeds the threshold. The break comes off first, as the employer takes it,
+ * so a ten hour cap behind a 45 minute break bites only past 10h45, and a day
+ * of exactly ten hours still owes its break. Of two caps the lower binds.
+ *
+ * @param {number} trackedSeconds What was tracked on the day, for one tag.
+ * @param {Array<{from_minutes: number, deduct_minutes: number|null}>} bands The
+ *   tag's rule, in any order.
+ * @returns {Array<{band: object, seconds: number}>} The break, then the cap,
+ *   each only where it took something: empty when nothing was tracked, since a
+ *   day off owes no lunch break.
+ */
+export function deductionParts(trackedSeconds, bands) {
+  if (trackedSeconds <= 0 || !bands?.length) return []
+  const parts = []
+  const reached = bands.filter(
+    (band) => !caps(band) && band.from_minutes * 60 <= trackedSeconds
+  )
+  let taken = 0
+  if (reached.length) {
+    const band = reached.reduce((held, one) => (one.from_minutes > held.from_minutes ? one : held))
+    taken = Math.min(trackedSeconds, band.deduct_minutes * 60)
+    if (taken > 0) parts.push({ band, seconds: taken })
+  }
+  const ceilings = bands.filter(caps)
+  if (ceilings.length) {
+    const band = ceilings.reduce((held, one) => (one.from_minutes < held.from_minutes ? one : held))
+    const over = trackedSeconds - taken - band.from_minutes * 60
+    if (over > 0) parts.push({ band, seconds: over })
+  }
+  return parts
+}
+
+/**
+ * The deduction a day of this length attracts, in seconds: `deductionParts`
+ * summed.
  *
  * @param {number} trackedSeconds What was tracked on the day, for one tag.
  * @param {Array<{from_minutes: number, deduct_minutes: number|null}>} bands The
@@ -85,16 +123,7 @@ export function groupByTag(totals, tagsOf) {
  *   owes no lunch break.
  */
 export function deductionFor(trackedSeconds, bands) {
-  if (trackedSeconds <= 0 || !bands?.length) return 0
-  const reached = bands.filter((band) => band.from_minutes * 60 <= trackedSeconds)
-  if (!reached.length) return 0
-  const band = reached.reduce((held, one) =>
-    one.from_minutes > held.from_minutes ? one : held
-  )
-  if (band.deduct_minutes === null || band.deduct_minutes === undefined) {
-    return trackedSeconds - band.from_minutes * 60
-  }
-  return Math.min(trackedSeconds, band.deduct_minutes * 60)
+  return deductionParts(trackedSeconds, bands).reduce((sum, part) => sum + part.seconds, 0)
 }
 
 /**

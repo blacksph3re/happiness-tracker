@@ -1565,6 +1565,153 @@
     },
     {
       "add_in_budget": true,
+      "add_minutes": 60,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360,
+          "in_budget": true
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480,
+          "in_budget": true
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600,
+          "in_budget": true
+        }
+      ],
+      "contracts": [
+        {
+          "daily_minutes": 444,
+          "starts_on": "2026-06-01",
+          "workdays": 31
+        }
+      ],
+      "days_off": {},
+      "name": "breaks before a cap: ten hours with the addition still owe the break",
+      "resets": {},
+      "rows": [
+        {
+          "balance": 6660,
+          "counted": 33300,
+          "day": "2026-06-01",
+          "expected": 26640,
+          "kind": "workday",
+          "name": null,
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": 16020,
+          "counted": 36000,
+          "day": "2026-06-02",
+          "expected": 26640,
+          "kind": "workday",
+          "name": null,
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": 25380,
+          "counted": 36000,
+          "day": "2026-06-03",
+          "expected": 26640,
+          "kind": "workday",
+          "name": null,
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": 25380,
+          "counted": 0,
+          "day": "2026-06-04",
+          "expected": 26640,
+          "kind": "workday",
+          "name": null,
+          "open": true,
+          "reset": null
+        }
+      ],
+      "today": "2026-06-04",
+      "tracked": {
+        "2026-06-01": 32400,
+        "2026-06-02": 39600,
+        "2026-06-03": 35100
+      }
+    },
+    {
+      "add_in_budget": true,
+      "add_minutes": 60,
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480,
+          "in_budget": false
+        },
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360,
+          "in_budget": true
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600,
+          "in_budget": true
+        }
+      ],
+      "contracts": [
+        {
+          "daily_minutes": 444,
+          "starts_on": "2026-06-01",
+          "workdays": 31
+        }
+      ],
+      "days_off": {},
+      "name": "the long break left out of the budget: the short one comes off before the cap",
+      "resets": {},
+      "rows": [
+        {
+          "balance": 7560,
+          "counted": 34200,
+          "day": "2026-06-01",
+          "expected": 26640,
+          "kind": "workday",
+          "name": null,
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": 16920,
+          "counted": 36000,
+          "day": "2026-06-02",
+          "expected": 26640,
+          "kind": "workday",
+          "name": null,
+          "open": false,
+          "reset": null
+        },
+        {
+          "balance": 16920,
+          "counted": 0,
+          "day": "2026-06-03",
+          "expected": 26640,
+          "kind": "workday",
+          "name": null,
+          "open": true,
+          "reset": null
+        }
+      ],
+      "today": "2026-06-03",
+      "tracked": {
+        "2026-06-01": 32400,
+        "2026-06-02": 39600
+      }
+    },
+    {
+      "add_in_budget": true,
       "add_minutes": null,
       "bands": [],
       "contracts": [
@@ -7913,6 +8060,24 @@
       "added": 0,
       "bands": [],
       "deduction": 0,
+      "name": "no rule, 38700s tracked, +0m",
+      "reported": 38700,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [],
+      "deduction": 0,
+      "name": "no rule, 38700s tracked, +60m",
+      "reported": 42300,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [],
+      "deduction": 0,
       "name": "no rule, 43200s tracked, +0m",
       "reported": 43200,
       "tracked": 43200
@@ -8121,6 +8286,34 @@
       "name": "a lunch deduction, 36000s tracked, +60m",
       "reported": 36900,
       "tracked": 36000
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "a lunch deduction, 38700s tracked, +0m",
+      "reported": 36000,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "a lunch deduction, 38700s tracked, +60m",
+      "reported": 39600,
+      "tracked": 38700
     },
     {
       "add_minutes": null,
@@ -8416,6 +8609,42 @@
         }
       ],
       "deduction": 2700,
+      "name": "two bands, the higher one reached, 38700s tracked, +0m",
+      "reported": 36000,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 15,
+          "from_minutes": 240
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
+      "name": "two bands, the higher one reached, 38700s tracked, +60m",
+      "reported": 39600,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 15,
+          "from_minutes": 240
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 360
+        }
+      ],
+      "deduction": 2700,
       "name": "two bands, the higher one reached, 43200s tracked, +0m",
       "reported": 40500,
       "tracked": 43200
@@ -8643,6 +8872,34 @@
           "from_minutes": 600
         }
       ],
+      "deduction": 2700,
+      "name": "a cap, 38700s tracked, +0m",
+      "reported": 36000,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 6300,
+      "name": "a cap, 38700s tracked, +60m",
+      "reported": 36000,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
       "deduction": 7200,
       "name": "a cap, 43200s tracked, +0m",
       "reported": 36000,
@@ -8659,6 +8916,726 @@
       ],
       "deduction": 10800,
       "name": "a cap, 43200s tracked, +60m",
+      "reported": 36000,
+      "tracked": 43200
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "breaks, then a cap on what is left, 0s tracked, +0m",
+      "reported": 0,
+      "tracked": 0
+    },
+    {
+      "add_minutes": 60,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "breaks, then a cap on what is left, 0s tracked, +60m",
+      "reported": 0,
+      "tracked": 0
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "breaks, then a cap on what is left, 60s tracked, +0m",
+      "reported": 60,
+      "tracked": 60
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "breaks, then a cap on what is left, 60s tracked, +60m",
+      "reported": 3660,
+      "tracked": 60
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "breaks, then a cap on what is left, 3600s tracked, +0m",
+      "reported": 3600,
+      "tracked": 3600
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "breaks, then a cap on what is left, 3600s tracked, +60m",
+      "reported": 7200,
+      "tracked": 3600
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "breaks, then a cap on what is left, 10800s tracked, +0m",
+      "reported": 10800,
+      "tracked": 10800
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "breaks, then a cap on what is left, 10800s tracked, +60m",
+      "reported": 14400,
+      "tracked": 10800
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 1800,
+      "name": "breaks, then a cap on what is left, 21600s tracked, +0m",
+      "reported": 19800,
+      "tracked": 21600
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 1800,
+      "name": "breaks, then a cap on what is left, 21600s tracked, +60m",
+      "reported": 23400,
+      "tracked": 21600
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 2700,
+      "name": "breaks, then a cap on what is left, 28800s tracked, +0m",
+      "reported": 26100,
+      "tracked": 28800
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 2700,
+      "name": "breaks, then a cap on what is left, 28800s tracked, +60m",
+      "reported": 29700,
+      "tracked": 28800
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 2700,
+      "name": "breaks, then a cap on what is left, 36000s tracked, +0m",
+      "reported": 33300,
+      "tracked": 36000
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 3600,
+      "name": "breaks, then a cap on what is left, 36000s tracked, +60m",
+      "reported": 36000,
+      "tracked": 36000
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 2700,
+      "name": "breaks, then a cap on what is left, 38700s tracked, +0m",
+      "reported": 36000,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 6300,
+      "name": "breaks, then a cap on what is left, 38700s tracked, +60m",
+      "reported": 36000,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 7200,
+      "name": "breaks, then a cap on what is left, 43200s tracked, +0m",
+      "reported": 36000,
+      "tracked": 43200
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 30,
+          "from_minutes": 360
+        },
+        {
+          "deduct_minutes": 45,
+          "from_minutes": 480
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 10800,
+      "name": "breaks, then a cap on what is left, 43200s tracked, +60m",
+      "reported": 36000,
+      "tracked": 43200
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 0s tracked, +0m",
+      "reported": 0,
+      "tracked": 0
+    },
+    {
+      "add_minutes": 60,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 0s tracked, +60m",
+      "reported": 0,
+      "tracked": 0
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 60s tracked, +0m",
+      "reported": 60,
+      "tracked": 60
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 60s tracked, +60m",
+      "reported": 3660,
+      "tracked": 60
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 3600s tracked, +0m",
+      "reported": 3600,
+      "tracked": 3600
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 3600s tracked, +60m",
+      "reported": 7200,
+      "tracked": 3600
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 10800s tracked, +0m",
+      "reported": 10800,
+      "tracked": 10800
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 10800s tracked, +60m",
+      "reported": 14400,
+      "tracked": 10800
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 21600s tracked, +0m",
+      "reported": 21600,
+      "tracked": 21600
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 21600s tracked, +60m",
+      "reported": 25200,
+      "tracked": 21600
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 28800s tracked, +0m",
+      "reported": 28800,
+      "tracked": 28800
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 28800s tracked, +60m",
+      "reported": 32400,
+      "tracked": 28800
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 0,
+      "name": "two caps, the lower binding, 36000s tracked, +0m",
+      "reported": 36000,
+      "tracked": 36000
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 3600,
+      "name": "two caps, the lower binding, 36000s tracked, +60m",
+      "reported": 36000,
+      "tracked": 36000
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 2700,
+      "name": "two caps, the lower binding, 38700s tracked, +0m",
+      "reported": 36000,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 6300,
+      "name": "two caps, the lower binding, 38700s tracked, +60m",
+      "reported": 36000,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 7200,
+      "name": "two caps, the lower binding, 43200s tracked, +0m",
+      "reported": 36000,
+      "tracked": 43200
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": null,
+          "from_minutes": 660
+        },
+        {
+          "deduct_minutes": null,
+          "from_minutes": 600
+        }
+      ],
+      "deduction": 10800,
+      "name": "two caps, the lower binding, 43200s tracked, +60m",
       "reported": 36000,
       "tracked": 43200
     },
@@ -8857,6 +9834,34 @@
       "name": "a deduction larger than the day, 36000s tracked, +60m",
       "reported": 3600,
       "tracked": 36000
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 600,
+          "from_minutes": 1
+        }
+      ],
+      "deduction": 36000,
+      "name": "a deduction larger than the day, 38700s tracked, +0m",
+      "reported": 2700,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 600,
+          "from_minutes": 1
+        }
+      ],
+      "deduction": 36000,
+      "name": "a deduction larger than the day, 38700s tracked, +60m",
+      "reported": 6300,
+      "tracked": 38700
     },
     {
       "add_minutes": null,
@@ -9081,6 +10086,34 @@
       "name": "a threshold only an addition reaches, 36000s tracked, +60m",
       "reported": 38400,
       "tracked": 36000
+    },
+    {
+      "add_minutes": null,
+      "added": 0,
+      "bands": [
+        {
+          "deduct_minutes": 20,
+          "from_minutes": 210
+        }
+      ],
+      "deduction": 1200,
+      "name": "a threshold only an addition reaches, 38700s tracked, +0m",
+      "reported": 37500,
+      "tracked": 38700
+    },
+    {
+      "add_minutes": 60,
+      "added": 3600,
+      "bands": [
+        {
+          "deduct_minutes": 20,
+          "from_minutes": 210
+        }
+      ],
+      "deduction": 1200,
+      "name": "a threshold only an addition reaches, 38700s tracked, +60m",
+      "reported": 41100,
+      "tracked": 38700
     },
     {
       "add_minutes": null,

@@ -27,8 +27,8 @@ import { deductionFor } from './summary.js'
  *
  * **An exact search.** The rule's deduction is a step and slope function of a
  * day's total (`deductionFor`), so each day's total falls in one of a few
- * *segments* — between two thresholds, or past a cap — inside which the
- * deduction is constant or grows a second per second. The search tries every
+ * *segments* — between two thresholds, or past a cap and the break owed before
+ * it — inside which the deduction is constant or grows a second per second. The search tries every
  * way the additions can sit and every segment each day can land in, with
  * bounds pruning what cannot win; for each candidate, the fewest transfers is
  * the number of moving days less the most groups they can be split into that
@@ -58,30 +58,50 @@ export function hasCap(rule) {
 /**
  * The segments of a day's total inside which the rule deducts at one rate.
  *
- * Breakpoints are the thresholds, and the point a flat band's deduction stops
- * growing (`min(total, deduct)` bends there). Within a segment the deduction
- * rises by `slope` — 0 or 1 — per second.
+ * Breakpoints are the thresholds, the point a break stops growing
+ * (`min(total, deduct)` bends there), and the point a cap starts to bite: past
+ * its threshold by the break owed there, since the break comes off first —
+ * every break is tried, as the one owed is not known here. Within a segment the
+ * deduction rises by `slope` — 0 or 1 — per second.
  *
  * @param {Array<object>} bands
  * @param {number} most The largest total any day could reach: the whole week.
  * @returns {Array<{lo: number, hi: number, slope: number}>}
  */
 function segmentsOf(bands, most) {
+  const caps = (band) => band.deduct_minutes === null || band.deduct_minutes === undefined
+  const owed = [0, ...bands.filter((band) => !caps(band)).map((band) => band.deduct_minutes * 60)]
   const points = new Set([1])
   for (const band of bands) {
     const from = band.from_minutes * 60
     points.add(Math.max(1, from))
-    if (band.deduct_minutes !== null && band.deduct_minutes !== undefined) {
+    if (caps(band)) {
+      for (const deduct of owed) points.add(Math.max(1, from + deduct))
+    } else {
       const deduct = band.deduct_minutes * 60
       if (deduct > from) points.add(deduct)
     }
   }
   const sorted = [...points].filter((point) => point <= most).sort((a, b) => a - b)
-  return sorted.map((lo, index) => {
+  const segments = sorted.map((lo, index) => {
     const hi = index + 1 < sorted.length ? sorted[index + 1] - 1 : most
     const slope = lo < hi ? deductionFor(lo + 1, bands) - deductionFor(lo, bands) : 0
     return { lo, hi, slope }
   })
+  // A point that changed nothing — a cap tried behind a break this rule never
+  // owes there — leaves a segment continuing the one before it on the same
+  // line. Joined, they are one choice to the search rather than several.
+  const joined = []
+  for (const segment of segments) {
+    const last = joined.at(-1)
+    const continues =
+      last &&
+      last.slope === segment.slope &&
+      deductionFor(segment.lo, bands) === deductionFor(last.lo, bands) + last.slope * (segment.lo - last.lo)
+    if (continues) last.hi = segment.hi
+    else joined.push(segment)
+  }
+  return joined
 }
 
 /**
@@ -164,28 +184,50 @@ export function allocateWeek({ days, rule, step }) {
     return list
   })
 
-  // Bounds for pruning: the cheapest any later day can be, the least and most
-  // it can hold, and the most it can hold at no extra cost — past which the
-  // week's time has to spill into sloped segments, a second per second.
-  const restCost = new Array(count + 1).fill(0)
+  // Bounds for pruning: the least and most the later days can hold, and what
+  // they cost. A choice costs its segments' deductions plus whatever the week's
+  // time spills past the room they hold at that cost (a flat segment's top, a
+  // sloped one's bottom), a second per second. For the later days, every
+  // pairing of cost and room no other beats — cheaper, or roomier for the same
+  // — so the least they can add for any time left to hold is a short minimum,
+  // and tight: what makes a day roomier makes it dearer.
   const restLo = new Array(count + 1).fill(0)
   const restHi = new Array(count + 1).fill(0)
-  const restFree = new Array(count + 1).fill(0)
+  const restFront = new Array(count + 1)
+  restFront[count] = [{ cost: 0, room: 0 }]
   for (let index = count - 1; index >= 0; index -= 1) {
     const list = options[index]
-    restCost[index] = restCost[index + 1] + Math.min(...list.map((one) => one.cost))
     restLo[index] = restLo[index + 1] + Math.min(...list.map((one) => one.lo))
     restHi[index] = restHi[index + 1] + Math.max(...list.map((one) => one.hi))
-    restFree[index] =
-      restFree[index + 1] + Math.max(...list.map((one) => (one.slope === 0 ? one.hi : one.lo)))
+    const pairs = []
+    for (const one of list) {
+      for (const rest of restFront[index + 1]) {
+        pairs.push({ cost: one.cost + rest.cost, room: (one.slope === 0 ? one.hi : one.lo) + rest.room })
+      }
+    }
+    pairs.sort((a, b) => a.cost - b.cost || b.room - a.room)
+    restFront[index] = []
+    for (const pair of pairs) {
+      if (pair.room > (restFront[index].at(-1)?.room ?? -Infinity)) restFront[index].push(pair)
+    }
+  }
+  /** The least the days from `index` on add to a choice that leaves `left` to hold for free. */
+  const restCost = (index, left) => {
+    let least = Infinity
+    for (const pair of restFront[index]) {
+      least = Math.min(least, pair.cost + Math.max(0, left - pair.room))
+    }
+    return least
   }
 
-  // The distance a day's tracked time must move to land in an option, which
-  // bounds what any candidate holding that option can do.
+  // What a day's tracked time must receive, or give, to land in an option,
+  // which bounds what any candidate holding that option can do.
   for (const [index, list] of options.entries()) {
     for (const option of list) {
       const base = option.held * add
-      option.distance = Math.max(0, option.lo - base - tracked[index], tracked[index] - (option.hi - base))
+      option.receive = Math.max(0, option.lo - base - tracked[index])
+      option.give = Math.max(0, tracked[index] - (option.hi - base))
+      option.distance = option.receive + option.give
     }
   }
   // Cheapest first for the first pass, so the least deduction is found early;
@@ -224,11 +266,10 @@ export function allocateWeek({ days, rule, step }) {
    */
   const walk = (order, limit, hopeless, visit) => {
     const chosen = []
-    const descend = (index, held, lo, hi, free, cost, moving, distance, emptied) => {
-      const spill = Math.max(0, total - free - restFree[index])
-      if (cost + restCost[index] + spill > limit()) return
+    const descend = (index, held, lo, hi, free, cost, takers, givers, receive, give, emptied) => {
+      if (cost + restCost(index, total - free) > limit()) return
       if (lo + restLo[index] > total || hi + restHi[index] < total) return
-      if (hopeless(moving, distance, emptied)) return
+      if (hopeless(Math.max(takers, givers), Math.max(receive, give), emptied)) return
       if (index === count) {
         if (held === additions) visit(chosen)
         return
@@ -243,14 +284,16 @@ export function allocateWeek({ days, rule, step }) {
           hi + option.hi,
           free + (option.slope === 0 ? option.hi : option.lo),
           cost + option.cost,
-          moving + (option.distance > 0 ? 1 : 0),
-          distance + option.distance,
+          takers + (option.receive > 0 ? 1 : 0),
+          givers + (option.give > 0 ? 1 : 0),
+          receive + option.receive,
+          give + option.give,
           emptied + (additions && option.held === 0 ? 1 : 0)
         )
         chosen.pop()
       }
     }
-    descend(0, 0, 0, 0, 0, 0, 0, 0, 0)
+    descend(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
   }
 
   // The least deduction anything can reach. Only something strictly cheaper
@@ -266,27 +309,30 @@ export function allocateWeek({ days, rule, step }) {
     }
   )
 
-  // Of every choice reaching it, the best by the rest of the order. A day that
-  // must move is in a group of two or more, so a partial choice needs at least
-  // half its moving days in transfers, and at least half their distance moved.
+  // Of every choice reaching it, the best by the rest of the order. Each day
+  // that must receive time needs a transfer of its own into it, and each day
+  // that must give one out of it, so a partial choice needs at least as many
+  // transfers as the larger of the two; and what its days must receive arrives
+  // by transfer, as what they must give leaves by one, so it moves at least the
+  // larger of those amounts.
   let best = null
-  walk(
-    byDistance,
-    () => least,
-    (moving, distance, emptied) => {
-      if (!best) return false
-      const transfers = Math.ceil(moving / 2)
-      if (transfers !== best.transfers) return transfers > best.transfers
-      const moved = Math.ceil(distance / 2)
-      if (moved !== best.moved) return moved > best.moved
-      return emptied > best.additionsMoved
-    },
-    (chosen) => {
-      if (costOf(chosen) !== least) return
-      const candidate = settle(chosen)
-      if (candidate && (!best || better(candidate, best))) best = candidate
-    }
-  )
+  walk(byDistance, () => least, behind, (chosen) => {
+    if (costOf(chosen) !== least) return
+    const candidate = settle(chosen)
+    if (candidate && (!best || better(candidate, best))) best = candidate
+  })
+
+  /**
+   * Whether anything at least this many transfers, this much time moved and
+   * this many additions moved is behind the best found — numbers that are lower
+   * bounds, so ranking behind on them is ranking behind for good.
+   */
+  function behind(transfers, moved, additionsMoved) {
+    if (!best) return false
+    if (transfers !== best.transfers) return transfers > best.transfers
+    if (moved !== best.moved) return moved > best.moved
+    return additionsMoved > best.additionsMoved
+  }
 
   /**
    * How a choice of segments is reached with the fewest transfers, the least
@@ -315,17 +361,25 @@ export function allocateWeek({ days, rule, step }) {
 
     const held = chosen.map((option) => option.held)
     const additionsMoved = additions ? held.filter((one) => one === 0).length : 0
-    const counted = splitCounts(tracked, range)
-    // Behind the best on the numbers alone: not worth realising.
-    if (best) {
-      if (counted.transfers !== best.transfers) {
-        if (counted.transfers > best.transfers) return null
-      } else if (counted.moved !== best.moved) {
-        if (counted.moved > best.moved) return null
-      } else if (additionsMoved > best.additionsMoved) {
-        return null
+    // The same bounds the walk uses, now on the pinned ranges: one look at each
+    // day, where counting the split looks at every subset of them.
+    let takers = 0
+    let givers = 0
+    let receive = 0
+    let give = 0
+    for (const { low, high, index } of range) {
+      if (tracked[index] < low) {
+        takers += 1
+        receive += low - tracked[index]
+      } else if (tracked[index] > high) {
+        givers += 1
+        give += tracked[index] - high
       }
     }
+    if (behind(Math.max(takers, givers), Math.max(receive, give), additionsMoved)) return null
+    const counted = splitCounts(tracked, range)
+    // Behind the best on the numbers alone: not worth realising.
+    if (behind(counted.transfers, counted.moved, additionsMoved)) return null
     const plan = fewestTransfers(tracked, range)
     return {
       held,

@@ -2094,6 +2094,38 @@ test('a capping band holds the day at its threshold', async ({ page, account }) 
   await expect(page.locator('[data-period]')).toContainText('10h 00m reported')
 })
 
+test('a capped day owes its break first, so the cap bites only past cap and break', async ({
+  page,
+  account,
+}) => {
+  const work = await makeTag(account, 'Work')
+  const project = await makeProject(account, 'Backend', { tag_ids: [work.id] })
+  await recordSession(account, project.id, `${TODAY}T08:00:00`, `${TODAY}T18:00:00`)
+
+  await page.goto('/time/projects')
+  await page.locator(`[data-tag-row="${work.id}"]`).getByRole('button', { name: 'Rule' }).click()
+  await page.getByRole('button', { name: 'Add a band' }).click()
+  await page.getByLabel('Band 1 threshold').fill('480')
+  await page.getByLabel('Band 1 deduction').fill('45')
+  await page.getByRole('button', { name: 'Add a band' }).click()
+  await page.getByLabel('Band 2 threshold').fill('600')
+  await page.getByLabel('Band 2 caps the day').check()
+  // The preview shows ten hours owing the break, and the cap first biting at
+  // 10h45: day, gains, loses, reports.
+  const row = (length) =>
+    page.locator(`[data-bands="${work.id}"] tbody tr`).filter({ hasText: new RegExp(`^${length}`) })
+  await expect(row('10h 00m').locator('td')).toHaveText(['10h 00m', '0h 00m', '0h 45m', '9h 15m'])
+  await expect(row('10h 45m').locator('td')).toHaveText(['10h 45m', '0h 00m', '0h 45m', '10h 00m'])
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await savedRule(page)
+
+  // Ten tracked hours report 9h 15m: under the cap once the break is off.
+  await page.goto('/time/patterns')
+  await page.getByRole('button', { name: 'By tag' }).click()
+  await expect(page.locator('[data-group="Work"]')).toContainText('10h 00m')
+  await expect(page.locator('[data-period]')).toContainText('9h 15m reported')
+})
+
 test('weekdays narrow the hours', async ({ page, account }) => {
   const project = await makeProject(account, 'The rewrite')
   // The pinned clock is Monday 15 June; the 13th is a Saturday.

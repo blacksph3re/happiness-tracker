@@ -238,6 +238,11 @@ BAND_CASES = [
     ("a lunch deduction", [Band(360, 45)]),
     ("two bands, the higher one reached", [Band(240, 15), Band(360, 45)]),
     ("a cap", [Band(600, None)]),
+    (
+        "breaks, then a cap on what is left",
+        [Band(360, 30), Band(480, 45), Band(600, None)],
+    ),
+    ("two caps, the lower binding", [Band(660, None), Band(600, None)]),
     ("a deduction larger than the day", [Band(1, 600)]),
     ("a threshold only an addition reaches", [Band(210, 20)]),
 ]
@@ -432,6 +437,34 @@ BUDGET_CASES = [
         ],
     ),
     _budget_case(
+        "breaks before a cap: ten hours with the addition still owe the break",
+        [{"starts_on": "2026-06-01", "daily_minutes": 444, "workdays": 31}],
+        {
+            "2026-06-01": 9 * 3600,
+            "2026-06-02": 11 * 3600,
+            "2026-06-03": 9 * 3600 + 45 * 60,
+        },
+        "2026-06-04",
+        add_minutes=60,
+        bands=[
+            {"from_minutes": 360, "deduct_minutes": 30, "in_budget": True},
+            {"from_minutes": 480, "deduct_minutes": 45, "in_budget": True},
+            {"from_minutes": 600, "deduct_minutes": None, "in_budget": True},
+        ],
+    ),
+    _budget_case(
+        "the long break left out of the budget: the short one comes off before the cap",
+        [{"starts_on": "2026-06-01", "daily_minutes": 444, "workdays": 31}],
+        {"2026-06-01": 9 * 3600, "2026-06-02": 11 * 3600},
+        "2026-06-03",
+        add_minutes=60,
+        bands=[
+            {"from_minutes": 480, "deduct_minutes": 45, "in_budget": False},
+            {"from_minutes": 360, "deduct_minutes": 30, "in_budget": True},
+            {"from_minutes": 600, "deduct_minutes": None, "in_budget": True},
+        ],
+    ),
+    _budget_case(
         "a four-day week that ends in a zero-hour period",
         [
             {"starts_on": "2026-06-01", "daily_minutes": 600, "workdays": 15},
@@ -557,8 +590,9 @@ def main_() -> None:
 
     for name, bands in BAND_CASES:
         # 10_800 is three hours: the length in the reported case, which only
-        # reaches a 210-minute threshold once an hour has been added.
-        for tracked in (0, 60, 3600, 10_800, 21_600, 28_800, 36_000, 43_200):
+        # reaches a 210-minute threshold once an hour has been added. 38_700 is
+        # 10h45: a ten-hour cap behind a 45-minute break bites from there.
+        for tracked in (0, 60, 3600, 10_800, 21_600, 28_800, 36_000, 38_700, 43_200):
             # None and 60 for every case, so each band shape is exercised with
             # and without an addition — the pair is what pins the *ordering*,
             # since a mirror that deducted first would agree on one and not the

@@ -11,7 +11,7 @@ import { expect, makeProject, makeTag, recordSession, test } from './fixtures.js
 
 /** Half an hour off a day of three hours or more. */
 const LUNCH = { from_minutes: 180, deduct_minutes: 30 }
-/** Everything past ten hours deducted. */
+/** Ten hours reported at most, after the lunch: it bites past 10h30. */
 const CAP_10 = { from_minutes: 600, deduct_minutes: null }
 /** A cap no week here reaches. */
 const CAP_24 = { from_minutes: 1440, deduct_minutes: null }
@@ -40,9 +40,13 @@ async function track(account, project, day, hours) {
   )
 }
 
-/** The week the proposal worked through: 7h, 1h30, 8h, 2h30 and 6h. */
-async function theWorkedWeek(account, project) {
-  for (const [day, hours] of [['08', 7], ['09', 1.5], ['10', 8], ['11', 2.5], ['12', 6]]) {
+/**
+ * 8h, 1h30 and 2h, with an hour added to each: Monday and Wednesday lose their
+ * lunch. Wednesday's addition on Monday saves Wednesday's, and Monday's 10h
+ * still owes its own — the one move the allocation makes.
+ */
+async function threeDays(account, project) {
+  for (const [day, hours] of [['08', 8], ['09', 1.5], ['10', 2]]) {
     await track(account, project, day, hours)
   }
 }
@@ -54,31 +58,27 @@ test('a week is drawn as tracked beside its allocation, with every move listed',
   account,
 }) => {
   const { project } = await ruled(account, { add_minutes: 60, bands: [LUNCH, CAP_10] })
-  await theWorkedWeek(account, project)
+  await threeDays(account, project)
 
   // From the week's heading on Record.
   await page.goto('/time/record')
   await page.locator('[data-allocate="2026-06-08"]').click()
   await expect(page).toHaveURL(/\/time\/allocation\?week=2026-06-08/)
 
-  await expect(page.locator('[data-allocation-saving]')).toHaveText('Deducted 2h 00m → 0h 30m')
-  await expect(page.locator('[data-move]')).toHaveText([
-    '+1h 00m addition: Tue → Mon',
-    '+1h 00m addition: Thu → Mon',
-    '+1h 00m addition: Fri → Wed',
-  ])
+  await expect(page.locator('[data-allocation-saving]')).toHaveText('Deducted 1h 00m → 0h 30m')
+  await expect(page.locator('[data-move]')).toHaveText(['+1h 00m addition: Wed → Mon'])
 
-  // Monday: seven hours from nine, then three additions on the clock.
-  await expect(day(page, '08').locator('[data-side="tracked"] [data-span]')).toHaveText('09:00 – 16:00')
+  // Monday: eight hours from nine, then two additions on the clock — ten
+  // hours, which still owe the lunch.
+  await expect(day(page, '08').locator('[data-side="tracked"] [data-span]')).toHaveText('09:00 – 17:00')
   await expect(day(page, '08').locator('[data-side="allocated"] [data-span]')).toHaveText('09:00 – 19:00')
-  await expect(day(page, '08').locator('[data-side="allocated"] [data-reported]')).toHaveText('10h 00m')
-  // Thursday gives its addition away and drops below the lunch band.
-  await expect(day(page, '11').locator('[data-side="allocated"] [data-span]')).toHaveText('09:00 – 11:30')
-  await expect(day(page, '11').locator('[data-side="allocated"] [data-reported]')).toHaveText('2h 30m')
-  // Every day that gave or took is marked; Friday took nothing but gave.
-  for (const date of ['08', '09', '10', '11', '12']) {
-    await expect(day(page, date)).toHaveAttribute('data-changed', '')
-  }
+  await expect(day(page, '08').locator('[data-side="allocated"] [data-reported]')).toHaveText('9h 30m')
+  // Wednesday gives its addition away and drops below the lunch band.
+  await expect(day(page, '10').locator('[data-side="allocated"] [data-span]')).toHaveText('09:00 – 11:00')
+  await expect(day(page, '10').locator('[data-side="allocated"] [data-reported]')).toHaveText('2h 00m')
+  // The two days that gave or took are marked; Tuesday did neither.
+  for (const date of ['08', '10']) await expect(day(page, date)).toHaveAttribute('data-changed', '')
+  await expect(day(page, '09')).not.toHaveAttribute('data-changed')
 })
 
 test('a tag whose rule has no cap cannot be allocated, and says why', async ({
@@ -144,13 +144,13 @@ test('the same week gives the same allocation after a reload, and weeks step', a
   account,
 }) => {
   const { project } = await ruled(account, { add_minutes: 60, bands: [LUNCH, CAP_10] })
-  await theWorkedWeek(account, project)
+  await threeDays(account, project)
   await page.goto('/time/allocation?week=2026-06-08')
   const moves = page.locator('[data-move]')
-  await expect(moves).toHaveCount(3)
+  await expect(moves).toHaveCount(1)
   const first = await moves.allTextContents()
   await page.reload()
-  await expect(moves).toHaveCount(3)
+  await expect(moves).toHaveCount(1)
   expect(await moves.allTextContents()).toEqual(first)
 
   // Forward is this week, with no day over yet; back again is the same week.
@@ -158,7 +158,7 @@ test('the same week gives the same allocation after a reload, and weeks step', a
   await expect(page.locator('[data-allocation-empty]')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Next →' })).toBeDisabled()
   await page.getByRole('button', { name: '← Previous' }).click()
-  await expect(moves).toHaveCount(3)
+  await expect(moves).toHaveCount(1)
   expect(await moves.allTextContents()).toEqual(first)
 })
 
@@ -176,24 +176,24 @@ test('allocating writes nothing to the account but the choice of step', async ({
   account,
 }) => {
   const { project } = await ruled(account, { add_minutes: 60, bands: [LUNCH, CAP_10] })
-  await theWorkedWeek(account, project)
+  await threeDays(account, project)
   const writes = []
   page.on('request', (request) => {
     if (request.method() !== 'GET') writes.push(`${request.method()} ${new URL(request.url()).pathname}`)
   })
   await page.goto('/time/allocation?week=2026-06-08')
-  await expect(page.locator('[data-move]')).toHaveCount(3)
+  await expect(page.locator('[data-move]')).toHaveCount(1)
   await page.waitForTimeout(800)
   expect(writes.filter((write) => write !== 'PUT /api/me/preferences')).toEqual([])
-  expect(await (await account.api.get('/api/time/entries')).json()).toHaveLength(5)
+  expect(await (await account.api.get('/api/time/entries')).json()).toHaveLength(3)
 })
 
 test('at 320px the two sides stack and nothing scrolls sideways', async ({ page, account }) => {
   const { project } = await ruled(account, { add_minutes: 60, bands: [LUNCH, CAP_10] })
-  await theWorkedWeek(account, project)
+  await threeDays(account, project)
   await page.setViewportSize({ width: 320, height: 700 })
   await page.goto('/time/allocation?week=2026-06-08')
-  await expect(page.locator('[data-move]')).toHaveCount(3)
+  await expect(page.locator('[data-move]')).toHaveCount(1)
 
   const monday = day(page, '08')
   const sides = await monday.evaluate((node) => {
@@ -235,10 +235,10 @@ test('at 320px the two sides stack and nothing scrolls sideways', async ({ page,
 })
 
 test('a deduction under a minute is not written as a zero one', async ({ page, account }) => {
-  // Thirty seconds past a 10h cap, on the week's only day: nothing can move,
-  // so they stay deducted — and read as nothing at the app's precision, not as
-  // "· 0h 00m".
-  const { project } = await ruled(account, { bands: [LUNCH, CAP_10] })
+  // Thirty seconds past a 10h cap with no break before it, on the week's only
+  // day: nothing can move, so they stay deducted — and read as nothing at the
+  // app's precision, not as "· 0h 00m".
+  const { project } = await ruled(account, { bands: [CAP_10] })
   await recordSession(account, project.id, '2026-06-08T07:00:00', '2026-06-08T17:00:30', 120)
   await page.goto('/time/allocation?week=2026-06-08')
   const monday = day(page, '08')

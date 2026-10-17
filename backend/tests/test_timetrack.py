@@ -273,6 +273,31 @@ def test_a_capping_band_sits_above_deducting_ones():
     assert reported(12 * HOUR, bands) == 10 * HOUR
 
 
+def test_a_capped_day_owes_its_break_before_the_cap():
+    # The employer takes the break first and caps what is left, so a ten-hour
+    # cap behind a 45-minute break bites only past 10h45 tracked.
+    bands = [FakeBand(360, 30), FakeBand(480, 45), FakeBand(600, None)]
+    assert reported(10 * HOUR, bands) == 9 * HOUR + 15 * 60
+    assert deduction_for(10 * HOUR, bands) == 45 * 60
+    assert reported(10 * HOUR + 45 * 60, bands) == 10 * HOUR
+    assert reported(11 * HOUR, bands) == 10 * HOUR
+    assert deduction_for(11 * HOUR, bands) == HOUR
+
+
+def test_the_break_is_chosen_by_the_day_before_the_cap():
+    # Twelve hours reach the 45-minute band, whatever the cap leaves.
+    bands = [FakeBand(360, 30), FakeBand(480, 45), FakeBand(600, None)]
+    assert reported(12 * HOUR, bands, add_minutes=60) == 10 * HOUR
+    assert reported(9 * HOUR, bands, add_minutes=60) == 9 * HOUR + 15 * 60
+
+
+def test_the_lowest_of_two_caps_binds():
+    # A cap is a ceiling on what the day reports; a higher one changes nothing.
+    bands = [FakeBand(600, None), FakeBand(660, None)]
+    assert reported(12 * HOUR, bands) == 10 * HOUR
+    assert reported(10 * HOUR + 30 * 60, bands) == 10 * HOUR
+
+
 def test_a_cap_at_zero_reports_nothing():
     assert reported(4 * HOUR, [FakeBand(0, None)]) == 0
 

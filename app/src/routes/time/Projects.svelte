@@ -740,7 +740,7 @@
                       </tbody>
                     </table>
                     <p class="meta mt-2 normal-case">
-                      Only the highest band reached applies.
+                      Only the highest break reached applies; a cap limits what is left after it.
                     </p>
                   </div>
                 {/if}

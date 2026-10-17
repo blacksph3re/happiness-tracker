@@ -896,8 +896,9 @@ class DeductionBand(Base):
     deduct_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """Minutes it removes from the day, or None to cap the day at the threshold.
 
-    A cap is the open-ended case of a deduction: it takes off however much the
-    day ran past `from_minutes`, so the day reports the threshold and no more.
+    A cap is the open-ended case of a deduction: the break comes off first, and
+    the cap takes whatever is left past `from_minutes`, so the day reports the
+    threshold and no more.
     """
 
     in_budget: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

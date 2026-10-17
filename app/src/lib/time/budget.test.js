@@ -77,17 +77,36 @@ describe('countedParts', () => {
       counted: 9.5 * HOUR,
       addOff: false,
       bandOff: false,
-      band: 0,
+      byBand: { 0: HOUR / 2 },
     })
   })
 
-  test('names the band that took the deduction, by its place in the rule', () => {
+  test('names what each band took, by its place in the rule', () => {
     const long = { from_minutes: 600, deduct_minutes: 45 }
-    expect(countedParts(9 * HOUR, 60, true, [LUNCH, long]).band).toBe(1)
-    expect(countedParts(8 * HOUR, 60, true, [LUNCH, long]).band).toBe(0)
-    expect(countedParts(2 * HOUR, null, true, [LUNCH, long]).band).toBe(null)
-    // A band switched off cannot be the one that took it.
-    expect(countedParts(9 * HOUR, 60, true, [LUNCH, { ...long, in_budget: false }]).band).toBe(0)
+    expect(countedParts(9 * HOUR, 60, true, [LUNCH, long]).byBand).toEqual({ 1: 0.75 * HOUR })
+    expect(countedParts(8 * HOUR, 60, true, [LUNCH, long]).byBand).toEqual({ 0: HOUR / 2 })
+    expect(countedParts(2 * HOUR, null, true, [LUNCH, long]).byBand).toEqual({})
+    // A band switched off takes nothing.
+    expect(countedParts(9 * HOUR, 60, true, [LUNCH, { ...long, in_budget: false }]).byBand).toEqual({
+      0: HOUR / 2,
+    })
+  })
+
+  test('a capped day owes its break first, and the cap takes what is left over', () => {
+    const long = { from_minutes: 480, deduct_minutes: 45 }
+    const cap = { from_minutes: 600, deduct_minutes: null }
+    // Eleven hours and one added: 45 minutes of break leave 11h15, and the cap
+    // takes the 1h15 past ten.
+    expect(countedParts(11 * HOUR, 60, true, [long, LUNCH, cap])).toMatchObject({
+      deducted: 2 * HOUR,
+      counted: 10 * HOUR,
+      byBand: { 0: 0.75 * HOUR, 2: 1.25 * HOUR },
+    })
+    // Ten hours exactly, with the addition, still owe the break and nothing more.
+    expect(countedParts(9 * HOUR, 60, true, [long, LUNCH, cap])).toMatchObject({
+      counted: 9.25 * HOUR,
+      byBand: { 0: 0.75 * HOUR },
+    })
   })
 
   test('an addition switched off adds nothing and says it was switched off', () => {
@@ -220,6 +239,18 @@ describe('budgetWindow', () => {
     const window = budgetWindow(rowsFor({ rule }), '2026-06-01', '2026-06-14')
     expect(window.bands).toEqual([1.5 * HOUR, 0.75 * HOUR])
     expect(window.bands[0] + window.bands[1]).toBe(window.sums.deducted)
+  })
+
+  test("a capped day's deduction is split between its break and its cap", () => {
+    // With the addition: 9h, 10h, 9h and 9h. Each owes the long break; only the
+    // 10h day passes the 9h cap after it, by a quarter hour.
+    const rule = {
+      add_minutes: 60,
+      bands: [LUNCH, { from_minutes: 480, deduct_minutes: 45 }, { from_minutes: 540, deduct_minutes: null }],
+    }
+    const window = budgetWindow(rowsFor({ rule }), '2026-06-08', '2026-06-14')
+    expect(window.bands).toEqual([0, 3 * HOUR, 0.25 * HOUR])
+    expect(window.sums.deducted).toBe(3.25 * HOUR)
   })
 
   test('with the addition switched off nothing is added, and the split still adds up', () => {

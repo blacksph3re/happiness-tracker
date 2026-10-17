@@ -332,7 +332,7 @@ class Band(Protocol):
     """Tracked minutes at or above which this band applies."""
 
     deduct_minutes: int | None
-    """Minutes to take off, or None to cap the day at `from_minutes` instead."""
+    """Minutes to take off, or None to cap what the day reports after its break."""
 
 
 def added_for(tracked_seconds: int, add_minutes: int | None) -> int:
@@ -363,13 +363,15 @@ def added_for(tracked_seconds: int, add_minutes: int | None) -> int:
 def deduction_for(tracked_seconds: int, bands: list[Band]) -> int:
     """Return the deduction a day of this length attracts, in seconds.
 
-    The highest threshold the day reaches is the one that applies, and the
-    deduction never takes the day below zero - ten minutes tracked minus a
-    thirty minute break is nothing, not minus twenty.
+    Of the bands that deduct (breaks), the highest threshold the day reaches is
+    the one that applies, and it never takes the day below zero - ten minutes
+    tracked minus a thirty minute break is nothing, not minus twenty.
 
-    A band with no `deduct_minutes` caps instead of deducting: it removes
-    whatever the day ran past its threshold, so a ten hour cap reports ten
-    hours however long the day actually was.
+    A band with no `deduct_minutes` caps instead: what the day reports after
+    its break never exceeds the threshold. The break comes off first, as the
+    employer takes it, so a ten hour cap behind a 45 minute break bites only
+    past 10h45, and a day of exactly ten hours still owes its break. Of two
+    caps the lower binds.
 
     Parameters
     ----------
@@ -386,13 +388,19 @@ def deduction_for(tracked_seconds: int, bands: list[Band]) -> int:
     """
     if tracked_seconds <= 0 or not bands:
         return 0
-    reached = [band for band in bands if band.from_minutes * 60 <= tracked_seconds]
-    if not reached:
-        return 0
-    band = max(reached, key=lambda held: held.from_minutes)
-    if band.deduct_minutes is None:
-        return tracked_seconds - band.from_minutes * 60
-    return min(tracked_seconds, band.deduct_minutes * 60)
+    reached = [
+        band
+        for band in bands
+        if band.deduct_minutes is not None and band.from_minutes * 60 <= tracked_seconds
+    ]
+    taken = 0
+    if reached:
+        band = max(reached, key=lambda held: held.from_minutes)
+        taken = min(tracked_seconds, band.deduct_minutes * 60)
+    caps = [band.from_minutes * 60 for band in bands if band.deduct_minutes is None]
+    if caps:
+        taken += max(0, tracked_seconds - taken - min(caps))
+    return taken
 
 
 def reported(

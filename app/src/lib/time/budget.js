@@ -1,6 +1,6 @@
 import { formatDuration, formatSigned } from '../clock.js'
 import { publicHolidays } from './holidays.js'
-import { addedFor, deductionFor, groupByTag, summarise } from './summary.js'
+import { addedFor, deductionFor, deductionParts, groupByTag, summarise } from './summary.js'
 
 /**
  * A tag's hour budget, walked day by day.
@@ -46,23 +46,23 @@ function weekdayBit(day) {
  * @param {number|null} addMinutes The tag's addition.
  * @param {boolean} addInBudget Whether the addition counts.
  * @param {Array<{from_minutes: number, deduct_minutes: number|null, in_budget?: boolean}>} bands
- * `band` is the index in `bands` of the band that took the deduction, or null
- * when none did — what the patterns page splits its deductions by.
+ * `byBand` is what each band took, keyed by its place in `bands` — a break, and
+ * on a capped day the cap besides — and what the patterns page splits its
+ * deductions by.
  *
  * @returns {{tracked: number, added: number, deducted: number, counted: number,
- *   addOff: boolean, bandOff: boolean, band: number|null}} Seconds, the two
- *   switches' effect, and the band that applied.
+ *   addOff: boolean, bandOff: boolean, byBand: Record<number, number>}} Seconds,
+ *   the two switches' effect, and what each band took.
  */
 export function countedParts(tracked, addMinutes, addInBudget, bands) {
   const counting = bands.filter((band) => band.in_budget !== false)
   const added = addInBudget ? addedFor(tracked, addMinutes) : 0
   const base = tracked + added
-  const deducted = deductionFor(base, counting)
-  // The highest band reached is the one `deductionFor` applied.
-  let band = null
-  for (const [index, one] of bands.entries()) {
-    if (one.in_budget === false || base <= 0 || one.from_minutes * 60 > base) continue
-    if (band === null || one.from_minutes > bands[band].from_minutes) band = index
+  const byBand = {}
+  let deducted = 0
+  for (const part of deductionParts(base, counting)) {
+    byBand[bands.indexOf(part.band)] = part.seconds
+    deducted += part.seconds
   }
   return {
     tracked,
@@ -71,7 +71,7 @@ export function countedParts(tracked, addMinutes, addInBudget, bands) {
     counted: base - deducted,
     addOff: !addInBudget && addedFor(tracked, addMinutes) > 0,
     bandOff: deductionFor(base, bands) !== deducted,
-    band: deducted > 0 ? band : null,
+    byBand,
   }
 }
 
@@ -342,7 +342,9 @@ export function budgetWindow(rows, start, end) {
     sums.deducted += parts.deducted
     sums.counted += row.counted
     sums.expected += row.expected
-    if (parts.band !== null) bands[parts.band] = (bands[parts.band] ?? 0) + parts.deducted
+    for (const [index, seconds] of Object.entries(parts.byBand)) {
+      bands[index] = (bands[index] ?? 0) + seconds
+    }
     if (row.expected > 0) {
       // A workday, or a day off taken from the balance: both expect their hours.
       const left = Math.max(0, row.expected - row.counted)

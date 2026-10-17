@@ -55,6 +55,14 @@ describe('previewPoints', () => {
     expect(previewPoints([band(120)], 90)).toContain(30)
   })
 
+  test('a cap is illustrated where it starts to bite, after the break', () => {
+    // The break comes off first, so a ten-hour cap behind a 45-minute break
+    // first takes something at 10h45 — 9h45 tracked with an hour added.
+    const rule = [{ from_minutes: 480, deduct_minutes: 45 }, { from_minutes: 600, deduct_minutes: null }]
+    expect(previewPoints(rule, 0)).toContain(645)
+    expect(previewPoints(rule, 60)).toContain(585)
+  })
+
   test('the rows are ascending and free of duplicates', () => {
     const points = previewPoints([band(60), band(120)], 60)
 

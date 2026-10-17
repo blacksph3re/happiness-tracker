@@ -1,3 +1,5 @@
+import { deductionFor } from './summary.js'
+
 /**
  * Which day lengths are worth showing a tag's rule against.
  *
@@ -31,8 +33,8 @@ const PLAIN_DAYS = [0, 240, 480]
  */
 export function previewPoints(bands, addMinutes = 0) {
   const added = Number(addMinutes) || 0
-  const thresholds = bands
-    .map((band) => Math.max(0, (Number(band.from_minutes) || 0) - added))
+  const thresholds = [...bands.map((band) => Number(band.from_minutes) || 0), ...capsBite(bands)]
+    .map((minutes) => Math.max(0, minutes - added))
     .sort((a, b) => a - b)
 
   // A rule that only adds has no threshold to aim at, so there is nothing to
@@ -47,4 +49,26 @@ export function previewPoints(bands, addMinutes = 0) {
   // says so. Only worth a line when there is an addition to withhold.
   const untracked = added > 0 ? [0] : []
   return [...new Set([...untracked, below, ...thresholds, above])].sort((a, b) => a - b)
+}
+
+/**
+ * Where each cap starts to take something, in minutes of a day's total.
+ *
+ * The break comes off before the cap, so a cap bites past its threshold by the
+ * break owed there: ten hours behind a 45-minute break bite at 10h45. That is
+ * the first total whose break leaves exactly the threshold.
+ *
+ * @param {Array<{from_minutes: number, deduct_minutes: number|null}>} bands
+ * @returns {Array<number>} Minutes, one per cap.
+ */
+function capsBite(bands) {
+  const caps = (band) => band.deduct_minutes === null || band.deduct_minutes === undefined
+  const breaks = bands.filter((band) => !caps(band))
+  return bands.filter(caps).map((cap) => {
+    const from = Number(cap.from_minutes) || 0
+    const totals = [0, ...breaks.map((band) => Number(band.deduct_minutes) || 0)]
+      .map((owed) => from + owed)
+      .filter((total) => total - deductionFor(total * 60, breaks) / 60 === from)
+    return totals.length ? Math.min(...totals) : from
+  })
 }

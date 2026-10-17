@@ -8,7 +8,7 @@ const HOUR = 3600
 
 /** A lunch band: half an hour off any day of three hours or more. */
 const LUNCH = { from_minutes: 180, deduct_minutes: 30 }
-/** A cap at ten hours: everything past it is deducted. */
+/** A cap at ten hours: what a day reports after its break never exceeds it. */
 const CAP_10 = { from_minutes: 600, deduct_minutes: null }
 /** A cap no week here can reach, for tests that need a cap but not its pull. */
 const CAP_24 = { from_minutes: 1440, deduct_minutes: null }
@@ -43,32 +43,42 @@ describe('allocateWeek', () => {
   })
 
   test('moves additions alone when they reach the least deduction', () => {
-    // 7h, 1h30, 8h, 2h30, 6h with an hour added to each: four days lose 30m.
-    // A day of exactly 10h reaches the cap and loses only what runs past it,
-    // which is nothing, so Monday and Wednesday are filled to 10h with the
-    // additions of the three days that do not need theirs. Friday keeps its
-    // lunch: nothing short of a transfer could save it, and transfers rank
-    // after additions — even though one transfer and one addition (two moves)
-    // would reach the same 30m.
+    // 8h, 1h30 and 2h with an hour added to each: Monday and Wednesday lose 30m.
+    // Wednesday's addition on Monday takes Wednesday below the lunch band, and
+    // Monday's 10h owes only its lunch: the break comes off before the cap, so
+    // the cap bites past 10h30. A one-minute transfer would save the same 30m,
+    // but transfers rank before additions moved.
     const rule = { add_minutes: 60, bands: [LUNCH, CAP_10] }
-    const days = [at('08', 7), at('09', 1, 30), at('10', 8), at('11', 2, 30), at('12', 6)]
+    const days = [at('08', 8), at('09', 1, 30), at('10', 2)]
     const result = allocateWeek({ days, rule, step: STEPS.minute })
     expect(summary(result)).toEqual({
-      before: 120,
+      before: 60,
       after: 30,
-      moves: [
-        ['addition', '09', '08', 60],
-        ['addition', '11', '08', 60],
-        ['addition', '12', '10', 60],
-      ],
+      moves: [['addition', '10', '08', 60]],
     })
     expect(result.after.map((day) => [day.additions, day.total / HOUR, day.deducted / MINUTE])).toEqual([
-      [3, 10, 0],
-      [0, 1.5, 0],
-      [2, 10, 0],
-      [0, 2.5, 0],
-      [0, 6, 30],
+      [2, 10, 30],
+      [1, 2.5, 0],
+      [0, 2, 0],
     ])
+  })
+
+  test('a day filled to its cap still owes its break, so filling one gains nothing', () => {
+    // Two 9h days lose their lunch. An hour moved across would fill Monday to
+    // exactly 10h, which still owes its lunch.
+    const rule = { add_minutes: null, bands: [LUNCH, CAP_10] }
+    expect(
+      summary(allocateWeek({ days: [at('08', 9), at('09', 9)], rule, step: STEPS.minute }))
+    ).toEqual({ before: 60, after: 60, moves: [] })
+  })
+
+  test('only the time past the cap and its break is moved off', () => {
+    // Monday's 11h30 loses its lunch and then the hour the cap leaves over. An
+    // hour moved takes it to 10h30, where it owes its lunch and nothing more.
+    const rule = { add_minutes: null, bands: [LUNCH, CAP_10] }
+    const result = allocateWeek({ days: [at('08', 11, 30), at('09', 5)], rule, step: STEPS.minute })
+    expect(summary(result)).toEqual({ before: 120, after: 60, moves: [['tracked', '08', '09', 60]] })
+    expect(result.after.map((day) => day.reported / HOUR)).toEqual([10, 5.5])
   })
 
   test('when tracked time has to move, it moves as little as it can', () => {
@@ -186,8 +196,13 @@ describe('allocateWeek', () => {
       { add_minutes: 60, bands: [LUNCH, { from_minutes: 540, deduct_minutes: null }] },
       // A cap within reach, which a day can be filled to exactly.
       { add_minutes: 30, bands: [{ from_minutes: 240, deduct_minutes: 30 }, { from_minutes: 360, deduct_minutes: null }] },
+      // Two breaks before a cap, which bites past it by whichever is owed.
+      {
+        add_minutes: 60,
+        bands: [LUNCH, { from_minutes: 300, deduct_minutes: 45 }, { from_minutes: 420, deduct_minutes: null }],
+      },
     ]
-    for (let run = 0; run < 40; run += 1) {
+    for (let run = 0; run < 60; run += 1) {
       const rule = rules[run % rules.length]
       const count = 2 + Math.floor(random() * 2)
       const days = Array.from({ length: count }, (_, index) =>
@@ -195,6 +210,31 @@ describe('allocateWeek', () => {
       )
       const ours = allocateWeek({ days, rule, step: STEPS.quarter })
       const best = bruteForce(days, rule, 15 * MINUTE)
+      expect(
+        [ours.deducted.after, transfersIn(ours), movedIn(ours), additionsIn(ours)],
+        JSON.stringify(days)
+      ).toEqual([best.deducted, best.transfers, best.moved, best.additions])
+    }
+  })
+
+  test('no allocation found by brute force beats it, on seeded four-day weeks in hours', () => {
+    // Four days can hold two pairs that give and take apart, which three cannot:
+    // what the search's bounds on transfers and time moved must never cut.
+    let seed = 11
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    }
+    const rule = {
+      add_minutes: 60,
+      bands: [LUNCH, { from_minutes: 360, deduct_minutes: 45 }, { from_minutes: 540, deduct_minutes: null }],
+    }
+    for (let run = 0; run < 30; run += 1) {
+      const days = Array.from({ length: 4 }, (_, index) =>
+        at(`0${8 + index}`, 0, 15 * (1 + Math.floor(random() * 40)))
+      )
+      const ours = allocateWeek({ days, rule, step: STEPS.hour })
+      const best = bruteForce(days, rule, HOUR)
       expect(
         [ours.deducted.after, transfersIn(ours), movedIn(ours), additionsIn(ours)],
         JSON.stringify(days)

@@ -1074,7 +1074,8 @@ class DeductionBandIn(BaseModel):
     """Tracked minutes at which this band starts applying."""
 
     deduct_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
-    """Minutes it removes from the day, or null to cap the day at the threshold."""
+    """Minutes it removes from the day, or null to cap what the day reports, after its
+    break, at the threshold."""
 
     in_budget: bool = True
     """Whether the band counts toward the tag's hour budget.

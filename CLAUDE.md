@@ -289,8 +289,8 @@ renders).
   additions moved, time kept earliest. `lib/time/allocate.js` is an **exact**
   search, held to brute force on the whole order and to a time budget; it
   needs a cap, so a rule without one shows *Allocate* disabled with its reason
-  in a pointer label. It uses `deductionFor`, so a day filled to exactly a cap
-  owes no lower band — the rule as written, which the allocation exploits.
+  in a pointer label. It uses `deductionFor`, so a day filled to its cap still
+  owes its break.
 - `TimeField` with a `day`: stepping or arrow-rolling past midnight carries the
   day; a typed time never does; the add panel (no `day`) clamps.
 - **What a page draws or derives from today reads `$currentDay`**
@@ -301,6 +301,11 @@ renders).
 - Leap years and DST need no special handling (`Date.UTC`, `date`/`timedelta`);
   the corpus pins spring-forward, autumn-back and leap-day sessions.
 - A tag with a deduction rule shows reported time; tags overlap.
+- **A rule's breaks come off before its cap.** Of the bands that deduct, the
+  highest reached applies; a cap limits what is left after it (the lower of
+  two caps binds), so a ten-hour cap behind a 45-minute break bites past
+  10h45. `deductionParts` says what each band took — Patterns' band pie and
+  the budget split a capped day between its break and its cap.
 - **An archived project stays stored and leaves every figure**: Record's list
   and its totals, Patterns, the budget and the allocation. Its sessions remain
   on the server and in the export's sessions sheet, and come back on
