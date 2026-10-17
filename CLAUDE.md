@@ -283,7 +283,7 @@ renders).
 - **Allocation** (`/time/allocation`, from *Allocate* on a week's heading on
   Record) rearranges one week of a tag so its rule deducts the least, and
   stores nothing. Additions move whole; tracked time moves in transfers of
-  any amount in whole steps (minute or quarter hour, an `allocation`
+  any amount in whole steps (minute, quarter hour or hour, an `allocation`
   preference); only tracked days that are over take part, none is emptied.
   The order is: least deducted, fewest transfers, least time moved, fewest
   additions moved, time kept earliest. `lib/time/allocate.js` is an **exact**

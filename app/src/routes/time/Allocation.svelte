@@ -65,9 +65,9 @@
   const week = $derived(period('week', anchor))
   const atLatest = $derived($currentDay >= week.start && $currentDay <= week.end)
 
-  /** Minutes or quarter hours, per account, in a section of its own. */
+  /** Minutes, quarter hours or whole hours, per account, in a section of its own. */
   const section = $derived(preferenceSection($preferences, 'allocation'))
-  const unit = $derived(section.step === 'quarter' ? 'quarter' : 'minute')
+  const unit = $derived(Object.hasOwn(STEPS, section.step) ? section.step : 'minute')
 
   function chooseUnit(value) {
     persistPreferences('allocation', { ...section, step: value })
@@ -187,12 +187,18 @@
     </div>
   </div>
 
+  <!-- Three equal cells with one-word labels: "The quarter hour" could not keep
+       to one line in a third of a phone, and a label never breaks. -->
   <div class="mb-6 flex flex-wrap items-center gap-3">
-    <p class="meta">Move tracked time by</p>
-    <div class="flex gap-1" role="group" aria-label="Move tracked time by">
-      {#each [['minute', 'The minute'], ['quarter', 'The quarter hour']] as [value, label] (value)}
+    <p class="meta">Move tracked time by the</p>
+    <div
+      class="grid w-full grid-cols-3 gap-1 sm:w-auto sm:grid-cols-[repeat(3,6rem)]"
+      role="group"
+      aria-label="Move tracked time by the"
+    >
+      {#each [['minute', 'Minute'], ['quarter', 'Quarter'], ['hour', 'Hour']] as [value, label] (value)}
         <button
-          class="meta rounded-md border px-4 py-2 transition
+          class="meta min-h-11 whitespace-nowrap rounded-md border px-3 transition
                  {unit === value
             ? 'border-ember bg-ember/10 text-paper'
             : 'border-white/15 hover:border-white/40'}"

@@ -40,8 +40,8 @@ import { deductionFor } from './summary.js'
  * costs more than it saves.
  */
 
-/** How finely tracked time may move, in seconds. */
-export const STEPS = { minute: 60, quarter: 900 }
+/** How finely tracked time may move, in seconds: a transfer is a whole number of these. */
+export const STEPS = { minute: 60, quarter: 900, hour: 3600 }
 
 /**
  * Whether a rule has a cap: a band deducting everything past its threshold.
@@ -94,7 +94,7 @@ function segmentsOf(bands, most) {
  * @param {{add_minutes: number|null, bands: Array<object>}} input.rule The tag's
  *   rule, every band, as reported time uses it.
  * @param {number} input.step The unit a transfer is made in, in seconds:
- *   `STEPS.minute` or `STEPS.quarter`.
+ *   `STEPS.minute`, `STEPS.quarter` or `STEPS.hour`.
  * @returns {{ok: false, reason: 'no-cap'} | {ok: true, before: Array<DayState>,
  *   after: Array<DayState>, moves: Array<Move>, deducted: {before: number,
  *   after: number}}}

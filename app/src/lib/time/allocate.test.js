@@ -97,6 +97,17 @@ describe('allocateWeek', () => {
     expect(result.moves.every((move) => move.kind !== 'tracked' || move.seconds % (15 * MINUTE) === 0)).toBe(true)
   })
 
+  test('in whole hours every transfer is whole hours', () => {
+    // Wednesday's exactly-3h day needs a transfer; in hours the least that
+    // takes it below the band is a whole hour.
+    const rule = { add_minutes: 60, bands: [LUNCH, CAP_24] }
+    const days = [at('08', 8), at('09', 2, 30), at('10', 3)]
+    const result = allocateWeek({ days, rule, step: STEPS.hour })
+    expect(summary(result).moves.at(-1)).toEqual(['tracked', '10', '08', 60])
+    expect(result.moves.every((move) => move.kind !== 'tracked' || move.seconds % HOUR === 0)).toBe(true)
+    expect(result.deducted.after).toBe(30 * MINUTE)
+  })
+
   test('a block moves whole to one day rather than in pieces to several', () => {
     // Monday's 8h30 loses 30m past 6h. Two and a half hours and a minute fit on
     // any one other day; the earliest takes them, in one transfer.

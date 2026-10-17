@@ -130,6 +130,13 @@ test('quarter hours move whole quarters, and the choice is kept on the account',
     'true'
   )
   await expect(page.locator('[data-move]').last()).toHaveText('15m tracked: Wed → Mon')
+
+  // And whole hours, the coarsest.
+  await page.locator('[data-allocation-step="hour"]').click()
+  await expect(page.locator('[data-move]').last()).toHaveText('1h 00m tracked: Wed → Mon')
+  await expect
+    .poll(async () => (await (await account.api.get('/api/me/preferences')).json()).allocation)
+    .toEqual({ step: 'hour' })
 })
 
 test('the same week gives the same allocation after a reload, and weeks step', async ({
@@ -194,6 +201,25 @@ test('at 320px the two sides stack and nothing scrolls sideways', async ({ page,
     return { tracked: box('tracked'), allocated: box('allocated') }
   })
   expect(sides.allocated.top).toBeGreaterThanOrEqual(sides.tracked.bottom)
+
+  // Each step's label keeps one line, with room to spare for a phone whose
+  // monospace runs wider than this one's.
+  const pills = await page.locator('[data-allocation-step]').evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      const rects = [...range.getClientRects()]
+      const style = getComputedStyle(node)
+      const room =
+        node.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+      return {
+        label: node.textContent.trim(),
+        lines: new Set(rects.map((rect) => Math.round(rect.top))).size,
+        fits: range.getBoundingClientRect().width * 1.15 <= room,
+      }
+    })
+  )
+  expect(pills).toEqual(pills.map(({ label }) => ({ label, lines: 1, fits: true })))
 
   let worst = 0
   for (let at = 0; at < 8; at += 1) {
