@@ -46,6 +46,8 @@ function weekdayBit(day) {
  * @param {number|null} addMinutes The tag's addition.
  * @param {boolean} addInBudget Whether the addition counts.
  * @param {Array<{from_minutes: number, deduct_minutes: number|null, in_budget?: boolean}>} bands
+ * @param {number} [additions] How many additions the day holds, where an
+ *   allocation moved them; one on any tracked day otherwise.
  * `byBand` is what each band took, keyed by its place in `bands` — a break, and
  * on a capped day the cap besides — and what the patterns page splits its
  * deductions by.
@@ -54,9 +56,11 @@ function weekdayBit(day) {
  *   addOff: boolean, bandOff: boolean, byBand: Record<number, number>}} Seconds,
  *   the two switches' effect, and what each band took.
  */
-export function countedParts(tracked, addMinutes, addInBudget, bands) {
+export function countedParts(tracked, addMinutes, addInBudget, bands, additions) {
   const counting = bands.filter((band) => band.in_budget !== false)
-  const added = addInBudget ? addedFor(tracked, addMinutes) : 0
+  const earned =
+    additions === undefined ? addedFor(tracked, addMinutes) : additions * (addMinutes ?? 0) * 60
+  const added = addInBudget ? earned : 0
   const base = tracked + added
   const byBand = {}
   let deducted = 0
@@ -69,7 +73,7 @@ export function countedParts(tracked, addMinutes, addInBudget, bands) {
     added,
     deducted,
     counted: base - deducted,
-    addOff: !addInBudget && addedFor(tracked, addMinutes) > 0,
+    addOff: !addInBudget && earned > 0,
     bandOff: deductionFor(base, bands) !== deducted,
     byBand,
   }
@@ -82,10 +86,11 @@ export function countedParts(tracked, addMinutes, addInBudget, bands) {
  * @param {number|null} addMinutes The tag's addition.
  * @param {boolean} addInBudget Whether the addition counts.
  * @param {Array<object>} bands
+ * @param {number} [additions] As `countedParts` takes it.
  * @returns {number} Seconds.
  */
-export function countedFor(tracked, addMinutes, addInBudget, bands) {
-  return countedParts(tracked, addMinutes, addInBudget, bands).counted
+export function countedFor(tracked, addMinutes, addInBudget, bands, additions) {
+  return countedParts(tracked, addMinutes, addInBudget, bands, additions).counted
 }
 
 /**
@@ -108,6 +113,9 @@ export function countedFor(tracked, addMinutes, addInBudget, bands) {
  * @param {Record<string, string>} [input.daysOff] `{day: kind}`. Every kind but
  *   `balance` excuses the day; `balance` keeps its hours, and so costs them.
  * @param {Record<string, number>} [input.resets] `{day: seconds}`.
+ * @param {Record<string, number>} [input.additions] `{day: count}` where an
+ *   allocation moved additions; absent days hold one if they tracked anything.
+ *   Client-only, like the allocation: the corpus never passes it.
  * @returns {Array<{day: string, kind: 'workday'|'rest'|'holiday'|'off',
  *   name: string|null, expected: number, counted: number, reset: number|null,
  *   balance: number, open: boolean}>} Oldest first; empty with no contract.
@@ -121,6 +129,7 @@ export function budgetDays({
   bands = [],
   daysOff = {},
   resets = {},
+  additions = {},
 }) {
   const periods = contracts.toSorted((a, b) => (a.starts_on < b.starts_on ? -1 : 1))
   if (!periods.length) return []
@@ -152,7 +161,7 @@ export function budgetDays({
     // Only the kinds that excuse a day take its expectation away.
     const costs = kind === 'workday' || (kind === 'off' && name === TAKEN_FROM_BALANCE)
     const expected = costs ? period.daily_minutes * 60 : 0
-    const counted = countedFor(tracked[day] ?? 0, addMinutes, addInBudget, bands)
+    const counted = countedFor(tracked[day] ?? 0, addMinutes, addInBudget, bands, additions[day])
     const reset = resets[day] ?? null
     if (reset !== null) balance = reset
     const open = day === today
@@ -243,12 +252,15 @@ export function trackedFor(tagId, entries, projects, asOf) {
  * @param {{daysOff: Array<object>, resets: Array<object>}} input.records
  * @param {string} input.today
  * @param {number} input.asOf
+ * @param {{tracked: Record<string, number>, additions: Record<string, number>}|null} [input.allocated]
+ *   Days an allocation rearranged (`mergeWeeks`), laid over what was tracked.
  * @returns {Array<ReturnType<typeof budgetDays>[number] & {parts:
  *   ReturnType<typeof countedParts>}>}
  */
-export function budgetForTag({ tagId, rule, entries, projects, records, today, asOf }) {
+export function budgetForTag({ tagId, rule, entries, projects, records, today, asOf, allocated = null }) {
   if (!rule?.contracts?.length) return []
-  const tracked = trackedFor(tagId, entries, projects, asOf)
+  const tracked = { ...trackedFor(tagId, entries, projects, asOf), ...allocated?.tracked }
+  const additions = allocated?.additions ?? {}
   const addInBudget = rule.add_in_budget !== false
   const bands = rule.bands ?? []
   const rows = budgetDays({
@@ -258,6 +270,7 @@ export function budgetForTag({ tagId, rule, entries, projects, records, today, a
     addMinutes: rule.add_minutes,
     addInBudget,
     bands,
+    additions,
     daysOff: Object.fromEntries(
       records.daysOff.filter((row) => row.tag_id === tagId).map((row) => [row.day, row.kind])
     ),
@@ -270,7 +283,7 @@ export function budgetForTag({ tagId, rule, entries, projects, records, today, a
   const periods = rule.contracts.toSorted((one, two) => (one.starts_on < two.starts_on ? -1 : 1))
   return rows.map((row) => ({
     ...row,
-    parts: countedParts(tracked[row.day] ?? 0, rule.add_minutes, addInBudget, bands),
+    parts: countedParts(tracked[row.day] ?? 0, rule.add_minutes, addInBudget, bands, additions[row.day]),
     nominal: nominalFor(periods, row.day),
   }))
 }

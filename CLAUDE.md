@@ -294,7 +294,13 @@ renders).
   whole order and to a time budget; it needs a cap, so a rule without one shows
   *Allocate* disabled with its reason in a pointer label. Its rows lay out by
   the page's width (`@container`), not the window's: the sides pair up where
-  their headings fit, so half a laptop screen draws them side by side. It uses `deductionFor`, so a day filled to its cap still
+  their headings fit, so half a laptop screen draws them side by side. A day's
+  times are written three ways (`daySpan`, `bounds` in the same preferences
+  section): *Natural* keeps the first start and the last end, gaps and all;
+  *End adjusted* and *Start adjusted* lay the tracked time from the first start
+  or back from the last end, as Record's merged rows do, the time moved in
+  brackets. Additions follow the tracked time on the clock in every mode and on
+  both sides, so an untouched day without gaps reads the same everywhere. It uses `deductionFor`, so a day filled to its cap still
   owes its break.
 - `TimeField` with a `day`: stepping or arrow-rolling past midnight carries the
   day; a typed time never does; the add panel (no `day`) clamps.
@@ -359,6 +365,15 @@ renders).
     *Budget* with no contract reads by project. The expected-hours pie counts a
     holiday or day off at the hours the contract would have expected
     (`nominalFor`), so a holiday on a Sunday covers nothing.
+  - **Allocated**: the *Allocation* pills (`time.allocate`, steps need a cap)
+    count the window over `allocateWeek` by a step, with its allowance
+    (`lib/time/allocated-budget.js`). Weeks are allocated whole, Monday to
+    Sunday, so no time crosses the window's edge; the balance carried in is the
+    recorded one. Finished weeks are kept for the tab, keyed by what they depend
+    on. The line grows week by week from the window's start (a generator, a
+    frame between weeks worked out) and the heading, pies and table wait for the
+    last. Client-only: `budgetDays` takes a day's `additions` from the
+    allocation, and the corpus never passes them.
 - **Public holidays are described, not imported**: `services/holidays.py` and
   `lib/time/holidays.js` hold Easter offsets, fixed dates with their states and
   first year, and one-offs. The `holidays` package is dev-only — the reference

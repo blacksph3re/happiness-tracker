@@ -10,7 +10,16 @@
   import { currentDay, dayLabel, shiftDay, SYSTEM_SPECS, today } from '../../lib/day.js'
   import { daysIn, period, stepPeriod } from '../../lib/period.js'
   import { formatDuration, formatSigned, hours, nowUtc } from '../../lib/clock.js'
-  import { breakdownLines, budgetForTag, budgetWindow } from '../../lib/time/budget.js'
+  import { breakdownLines, budgetForTag, budgetWindow, trackedFor } from '../../lib/time/budget.js'
+  import { hasCap } from '../../lib/time/allocate.js'
+  import {
+    ALLOCATIONS,
+    allocateWindow,
+    mergeWeeks,
+    windowWeeks,
+  } from '../../lib/time/allocated-budget.js'
+  import { pointerLabel } from '../../lib/pointer-label.svelte.js'
+  import PointerLabel from '../../lib/PointerLabel.svelte'
   import DayTimeline from '../../lib/time/DayTimeline.svelte'
   import { movingAverage } from '../../lib/series.js'
   import { weekdayAverages } from '../../lib/time/weekday.js'
@@ -432,6 +441,7 @@
     if (free('smoothing') && Number.isFinite(stored.smoothing)) smoothing = stored.smoothing
     if (free('showGaps') && typeof stored.showGaps === 'boolean') showGaps = stored.showGaps
     if (free('fullDay') && typeof stored.fullDay === 'boolean') fullDay = stored.fullDay
+    if (free('allocate') && ALLOCATIONS.includes(stored.allocate)) allocate = stored.allocate
     if (free('includeUntrackedDays') && typeof stored.includeUntrackedDays === 'boolean') {
       includeUntrackedDays = stored.includeUntrackedDays
     }
@@ -454,6 +464,7 @@
       showGaps,
       fullDay,
       includeUntrackedDays,
+      allocate,
       filters: Object.fromEntries(
         Object.entries(filters)
           .filter(([, values]) => values.size)
@@ -597,8 +608,88 @@
 
   const budgetRule = $derived(budgetTag === null ? null : (($tagRules ?? {})[budgetTag] ?? null))
 
+  /** What the budget is counted over: the record, or an allocation by a step. */
+  let allocate = $state('none')
+
+  const ALLOCATION_LABELS = [
+    ['none', 'As tracked'],
+    ['minute', 'Minute'],
+    ['quarter', 'Quarter'],
+    ['half', 'Half'],
+    ['hour', 'Hour'],
+  ]
+  const STEP_NAMES = { minute: 'minute', quarter: 'quarter hour', half: 'half hour', hour: 'hour' }
+  const allocateTip = pointerLabel({ within: '[data-budget-allocate]' })
+  const NEEDS_CAP = { name: 'Allocate', detail: "Needs a cap in the tag's rule" }
+
   /**
-   * Every budget day of the tag, from the contract's start to today.
+   * An allocation in force: chosen, on a rule with a cap to allocate against. A
+   * stored step on a rule without one reads as the record, and is kept.
+   */
+  const allocating = $derived(budgetMode && allocate !== 'none' && hasCap(budgetRule))
+
+  /**
+   * Everything the allocated budget depends on, as one string, so it is worked
+   * out again when that changes and only then: the step, the rule, the window
+   * and the tracked days of every week it touches — an edit changes them. The
+   * allocation reads its input back from here rather than from the page.
+   */
+  const allocationKey = $derived.by(() => {
+    if (!allocating) return null
+    const tracked = trackedFor(budgetTag, $timeEntries ?? [], $projectStore ?? [], Date.now())
+    return JSON.stringify({
+      step: allocate,
+      rule: { add_minutes: budgetRule.add_minutes ?? null, bands: budgetRule.bands ?? [] },
+      start,
+      end,
+      today: $currentDay,
+      weeks: windowWeeks(tracked, start, end, $currentDay),
+    })
+  })
+
+  /** The weeks allocated so far, under the key they were allocated for. */
+  let progress = $state({ key: null, weeks: [], total: 0 })
+  let runs = 0
+
+  /**
+   * Allocate the window week by week, oldest first, drawing between weeks
+   * worked out, so the line grows from the window's start. Writes `progress`,
+   * which its query never reads; a newer key stops an older run at its next
+   * week.
+   */
+  resource(
+    () => allocationKey,
+    async (key) => {
+      const run = ++runs
+      if (key === null) return null
+      const input = JSON.parse(key)
+      const tracked = Object.fromEntries(
+        input.weeks.flatMap((week) => week.days.map((one) => [one.day, one.tracked]))
+      )
+      const weeks = []
+      progress = { key, weeks: [], total: input.weeks.length }
+      for (const week of allocateWindow({ ...input, tracked })) {
+        if (run !== runs) return null
+        weeks.push(week)
+        progress = { key, weeks: [...weeks], total: input.weeks.length }
+        // A reused week costs nothing to wait for.
+        if (week.fresh) await new Promise((resolve) => requestAnimationFrame(() => resolve()))
+      }
+      return null
+    },
+    { name: 'allocated budget' }
+  )
+
+  const allocated = $derived(progress.key === allocationKey ? progress : null)
+
+  /** Allocating and not done: the line grows, and the figures beside it wait. */
+  const allocationRunning = $derived(
+    allocating && (allocated === null || allocated.weeks.length < allocated.total)
+  )
+
+  /**
+   * Every budget day of the tag, from the contract's start to today, with the
+   * allocated weeks laid over the record when an allocation is in force.
    *
    * The whole history and not the window, since a window's line starts from the
    * balance carried into it. `asOf` matters only to today's slice of a running
@@ -615,12 +706,20 @@
           records: $budgetRecords,
           today: $currentDay,
           asOf: Date.now(),
+          allocated: allocating ? mergeWeeks(allocated?.weeks ?? []) : null,
         })
       : []
   )
 
+  /** How far the line reaches: the window's end, or the last week allocated so far. */
+  const through = $derived.by(() => {
+    if (!allocationRunning) return end
+    const reached = allocated?.weeks.at(-1)?.sunday ?? shiftDay(start, -1)
+    return reached < end ? reached : end
+  })
+
   /** The window, as every budget figure on the page reads it. */
-  const budget = $derived(budgetWindow(budgetRows, start, end))
+  const budget = $derived(budgetWindow(budgetRows, start, through))
 
   /** Nothing to draw yet: the sessions or the records are still being read. */
   const budgetLoading = $derived(
@@ -628,7 +727,7 @@
   )
 
   const budgetFigure = $derived(
-    budgetLoading || dayView || budget.days.length === 0
+    budgetLoading || dayView || budget.days.length === 0 || allocationRunning
       ? ''
       : ` · ${formatSigned(budget.change)} · balance ${formatSigned(budget.closing)}`
   )
@@ -952,6 +1051,47 @@
       </div>
     {/if}
 
+    <!-- What the budget is counted over. The steps need a cap to allocate
+         against; without one they say so, as Allocate does on Record. -->
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+      <p class="meta">Allocation</p>
+      <div class="flex flex-wrap gap-1" role="group" aria-label="Allocation">
+        {#each ALLOCATION_LABELS as [value, label] (value)}
+          {#if value === 'none' || hasCap(budgetRule)}
+            <button
+              class="meta min-h-11 whitespace-nowrap rounded-md border px-3 transition
+                     {(allocating ? allocate : 'none') === value
+                ? 'border-ember bg-ember/10 text-paper'
+                : 'border-white/15 hover:border-white/40'}"
+              aria-pressed={(allocating ? allocate : 'none') === value}
+              data-budget-allocate={value}
+              onclick={() => {
+                steered.add('allocate')
+                allocate = value
+              }}
+            >
+              {label}
+            </button>
+          {:else}
+            <button
+              type="button"
+              aria-disabled="true"
+              aria-describedby="allocate-needs-cap"
+              class="meta min-h-11 cursor-not-allowed whitespace-nowrap rounded-md border
+                     border-white/15 px-3 opacity-50"
+              data-budget-allocate={value}
+              onpointerdown={(event) => allocateTip.follow(NEEDS_CAP, event)}
+              onpointerenter={(event) => allocateTip.drift(NEEDS_CAP, event)}
+              onpointermove={(event) => allocateTip.drift(NEEDS_CAP, event)}
+              onpointerleave={(event) => allocateTip.release(event)}
+            >
+              {label}
+            </button>
+          {/if}
+        {/each}
+      </div>
+    </div>
+
     {#if budgetLoading}
       <p class="meta">Loading…</p>
     {:else if dayView}
@@ -961,7 +1101,9 @@
         class="rounded-xl border border-white/10 bg-ink-soft p-5"
         data-budget-breakdown={anchor}
       >
-        {#if !budgetDay}
+        {#if allocationRunning}
+          <p class="meta" data-budget-allocation>Allocating…</p>
+        {:else if !budgetDay}
           <p class="text-haze">
             {anchor > $currentDay ? 'This day has not happened yet.' : 'No contract on this day.'}
           </p>
@@ -982,7 +1124,7 @@
           {/if}
         {/if}
       </div>
-    {:else if budget.days.length === 0}
+    {:else if budget.days.length === 0 && !allocationRunning}
       <div class="rounded-xl border border-white/10 bg-ink-soft p-4" data-empty-window>
         <div class="flex h-40 items-center justify-center text-haze">
           No contract in this window.
@@ -991,6 +1133,13 @@
     {:else}
       <div class="rounded-xl border border-white/10 bg-ink-soft p-4">
         <p class="meta mb-2">Balance after each day</p>
+        {#if allocating}
+          <p class="meta mb-2 normal-case" data-budget-allocation>
+            {allocationRunning
+              ? `Allocating… week ${Math.min((allocated?.weeks.length ?? 0) + 1, allocated?.total ?? 1)} of ${allocated?.total ?? '…'}`
+              : `Allocated by the ${STEP_NAMES[allocate]} — not what was tracked`}
+          </p>
+        {/if}
         <div use:chart={balanceOptions(balanceInput)} data-budget-line class="h-80 w-full"></div>
         {#if atLatest}
           <!-- A scope the line does not otherwise show: it stops at yesterday. -->
@@ -998,9 +1147,11 @@
         {/if}
       </div>
 
+      {#if !allocationRunning}
       <!-- `min-w-0` on every card, for the same reason as the charts below. One
            row of three when the band pie is drawn, rather than a third card
-           alone under two. -->
+           alone under two. Not drawn while the allocation runs: a figure beside
+           a loading state is empty while it loads. -->
       <div class="mt-4 grid gap-4 {bandPieShown ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}">
         {#if budgetRule?.bands?.length}
           <div class="min-w-0 rounded-xl border border-white/10 bg-ink-soft p-4">
@@ -1030,6 +1181,7 @@
           {/each}
         </tbody>
       </table>
+      {/if}
     {/if}
   {:else if loading}
     <p class="meta">Loading…</p>
@@ -1218,3 +1370,6 @@
   {/if}
 </section>
 </Frame>
+
+<span id="allocate-needs-cap" class="sr-only">Needs a cap in the tag's rule</span>
+<PointerLabel tip={allocateTip} />

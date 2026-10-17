@@ -849,6 +849,61 @@ async function pie(page, which) {
   }, which)
 }
 
+/**
+ * The week of the 8th for the allocated budget: 8h, 1h 30m and 2h in Berlin,
+ * under a rule adding an hour, taking 30m from 3h and capping at 10h. Moving
+ * Wednesday's addition to Monday saves Wednesday's lunch: the allocation's one
+ * move, by any step.
+ */
+async function allocatable(account, bands) {
+  const { tag, project } = await contracted(account, { rule: { add_minutes: 60, bands } })
+  await recordSession(account, project.id, '2026-06-08T07:00:00', '2026-06-08T15:00:00', 120)
+  await recordSession(account, project.id, '2026-06-09T07:00:00', '2026-06-09T08:30:00', 120)
+  await recordSession(account, project.id, '2026-06-10T07:00:00', '2026-06-10T09:00:00', 120)
+  return { tag, project }
+}
+
+test('Patterns counts the budget over an allocation by a step, says so, and keeps the choice', async ({
+  page,
+  account,
+}) => {
+  const LUNCH = { from_minutes: 180, deduct_minutes: 30 }
+  await allocatable(account, [LUNCH, { from_minutes: 600, deduct_minutes: null }])
+  await openPatternsBudget(page)
+  // As tracked: 8h 30m, 2h 30m and 2h 30m against five eight-hour days.
+  await expect(page.locator('[data-period]')).toContainText(`balance ${MINUS}26h 30m`)
+  await expect(page.locator('[data-budget-allocation]')).toHaveCount(0)
+
+  await page.locator('[data-budget-allocate="quarter"]').click()
+  await expect(page.locator('[data-budget-allocation]')).toHaveText(
+    'Allocated by the quarter hour — not what was tracked'
+  )
+  // Wednesday's lunch saved: half an hour more.
+  await expect(page.locator('[data-period]')).toContainText(`balance ${MINUS}26h 00m`)
+  await expect(page.locator('[data-sum="Deducted"]')).toHaveText(`${MINUS}0h 30m`)
+  await expect.poll(async () => (await budgetLine(page))?.balance.at(-1)).toBe(-26)
+  await expect
+    .poll(async () => (await (await account.api.get('/api/me/preferences')).json()).time?.allocate)
+    .toBe('quarter')
+
+  await page.locator('[data-budget-allocate="none"]').click()
+  await expect(page.locator('[data-period]')).toContainText(`balance ${MINUS}26h 30m`)
+  await expect(page.locator('[data-budget-allocation]')).toHaveCount(0)
+})
+
+test("Patterns' allocation steps are disabled without a cap, and say why", async ({ page, account }) => {
+  await allocatable(account, [{ from_minutes: 180, deduct_minutes: 30 }])
+  await openPatternsBudget(page)
+  const quarter = page.locator('[data-budget-allocate="quarter"]')
+  await expect(quarter).toHaveAttribute('aria-disabled', 'true')
+  await quarter.hover()
+  await expect(page.locator('[data-span-tip]')).toContainText("Needs a cap in the tag's rule")
+  // Clicked anyway — Playwright waits on anything aria-disabled — it changes nothing.
+  await quarter.click({ force: true })
+  await expect(page.locator('[data-budget-allocate="none"]')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('[data-budget-allocation]')).toHaveCount(0)
+})
+
 const WEEK_DAYS = [
   '2026-06-08',
   '2026-06-09',

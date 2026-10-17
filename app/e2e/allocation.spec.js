@@ -68,9 +68,9 @@ test('a week is drawn as tracked beside its allocation, with every move listed',
   await expect(page.locator('[data-allocation-saving]')).toHaveText('Deducted 1h 00m → 0h 30m')
   await expect(page.locator('[data-move]')).toHaveText(['+1h 00m addition: Wed → Mon'])
 
-  // Monday: eight hours from nine, then two additions on the clock — ten
-  // hours, which still owe the lunch.
-  await expect(day(page, '08').locator('[data-side="tracked"] [data-span]')).toHaveText('09:00 – 17:00')
+  // Monday: eight hours from nine and its addition; allocated, two additions
+  // on the clock — ten hours, which still owe the lunch.
+  await expect(day(page, '08').locator('[data-side="tracked"] [data-span]')).toHaveText('09:00 – 18:00')
   await expect(day(page, '08').locator('[data-side="allocated"] [data-span]')).toHaveText('09:00 – 19:00')
   await expect(day(page, '08').locator('[data-side="allocated"] [data-reported]')).toHaveText('9h 30m')
   // Wednesday gives its addition away and drops below the lunch band.
@@ -211,6 +211,21 @@ test('at 320px the two sides stack and nothing scrolls sideways', async ({ page,
 
   // Each step's label keeps one line, with room to spare for a phone whose
   // monospace runs wider than this one's.
+  // The times' pills take their text's width and wrap: each keeps one line,
+  // and fits the row with the same room to spare.
+  const bounds = await page.locator('[data-allocation-bounds]').evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      return {
+        label: node.textContent.trim(),
+        lines: new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size,
+        fits: node.getBoundingClientRect().width * 1.15 <= node.parentElement.clientWidth,
+      }
+    })
+  )
+  expect(bounds).toEqual(bounds.map(({ label }) => ({ label, lines: 1, fits: true })))
+
   const pills = await page.locator('[data-allocation-step]').evaluateAll((nodes) =>
     nodes.map((node) => {
       const range = document.createRange()
@@ -239,6 +254,33 @@ test('at 320px the two sides stack and nothing scrolls sideways', async ({ page,
     await page.waitForTimeout(50)
   }
   expect(worst, 'the page scrolls sideways').toBe(0)
+})
+
+test("a split day's times are natural, or laid from its start or its end, and the choice is kept", async ({
+  page,
+  account,
+}) => {
+  // Friday alone, 06:32 – 12:00 and 13:32 – 17:22 in Berlin: 9h 18m with a
+  // gap, and an hour added after it. Nothing to move, so both sides agree.
+  const { project } = await ruled(account, { add_minutes: 60, bands: [LUNCH, CAP_10] })
+  await recordSession(account, project.id, '2026-06-12T04:32:00', '2026-06-12T10:00:00', 120)
+  await recordSession(account, project.id, '2026-06-12T11:32:00', '2026-06-12T15:22:00', 120)
+  await page.goto('/time/allocation?week=2026-06-08')
+  const spans = day(page, '12').locator('[data-span]')
+
+  await expect(page.locator('[data-allocation-bounds="natural"]')).toHaveAttribute('aria-pressed', 'true')
+  await expect(spans).toHaveText(['06:32 – 18:22', '06:32 – 18:22'])
+  await page.locator('[data-allocation-bounds="start"]').click()
+  await expect(spans).toHaveText(['(08:04) – 18:22', '(08:04) – 18:22'])
+  await page.locator('[data-allocation-bounds="end"]').click()
+  await expect(spans).toHaveText(['06:32 – (16:50)', '06:32 – (16:50)'])
+  await expect
+    .poll(async () => (await (await account.api.get('/api/me/preferences')).json()).allocation)
+    .toEqual({ bounds: 'end' })
+
+  await page.reload()
+  await expect(page.locator('[data-allocation-bounds="end"]')).toHaveAttribute('aria-pressed', 'true')
+  await expect(spans).toHaveText(['06:32 – (16:50)', '06:32 – (16:50)'])
 })
 
 test('a window tiled to half a laptop screen draws the two sides side by side, with room to spare', async ({
@@ -341,7 +383,8 @@ test("an archived project's sessions take no part in a week's allocation", async
   expect(archived.status()).toBe(200)
 
   await page.goto('/time/allocation?week=2026-06-08')
+  // Seven hours from nine and the addition; the archived two would end it at 20:00.
   const tracked = day(page, '08').locator('[data-side="tracked"]')
-  await expect(tracked.locator('[data-span]')).toHaveText('09:00 – 16:00')
+  await expect(tracked.locator('[data-span]')).toHaveText('09:00 – 17:00')
   await expect(tracked).toContainText('7h 00m + 1h 00m')
 })

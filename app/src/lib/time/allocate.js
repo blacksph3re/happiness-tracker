@@ -53,6 +53,43 @@ export const STEPS = { minute: 60, quarter: 900, half: 1800, hour: 3600 }
  */
 export const ALLOWANCE = { minute: 900, quarter: 900, half: 0, hour: 0 }
 
+/** The ways the allocation page writes a day's times, `natural` first. */
+export const BOUNDS = ['natural', 'start', 'end']
+
+/**
+ * A day's times on the allocation page: its tracked part, then its additions.
+ *
+ * The modes place the tracked part the way Record's *Merge sessions* does.
+ * `natural` keeps the first start and the last end, gaps and all, so an
+ * allocated day's end moves by what it gained or gave. `end` (*End adjusted*)
+ * runs the tracked time on from the first start; `start` (*Start adjusted*)
+ * runs it back from the last end. Additions follow the tracked part in every
+ * mode, so a day without gaps that the allocation left alone reads the same in
+ * all three, and on both sides. The time a mode moves is marked adjusted where
+ * it differs from the natural one, to the minute, and the page brackets it.
+ *
+ * @param {{start: number, end: number}} clock Seconds into the day of the first
+ *   start and the last end, as tracked.
+ * @param {{tracked: number, added: number}} before The day as tracked.
+ * @param {{tracked: number, added: number}} state The side drawn: `before`
+ *   again, or the allocated day.
+ * @param {'natural'|'start'|'end'} mode
+ * @returns {{from: number, to: number, fromAdjusted: boolean, toAdjusted: boolean}}
+ */
+export function daySpan(clock, before, state, mode) {
+  const naturalTo = clock.end + (state.tracked - before.tracked) + state.added
+  const differs = (one, two) => Math.round(one / 60) !== Math.round(two / 60)
+  if (mode === 'end') {
+    const to = clock.start + state.tracked + state.added
+    return { from: clock.start, to, fromAdjusted: false, toAdjusted: differs(to, naturalTo) }
+  }
+  if (mode === 'start') {
+    const from = clock.end - state.tracked
+    return { from, to: clock.end + state.added, fromAdjusted: differs(from, clock.start), toAdjusted: false }
+  }
+  return { from: clock.start, to: naturalTo, fromAdjusted: false, toAdjusted: false }
+}
+
 /**
  * Whether a rule has a cap: a band deducting everything past its threshold.
  *

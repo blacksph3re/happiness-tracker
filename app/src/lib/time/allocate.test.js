@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { ALLOWANCE, allocateWeek, hasCap, STEPS } from './allocate.js'
+import { ALLOWANCE, allocateWeek, daySpan, hasCap, STEPS } from './allocate.js'
 import { deductionFor } from './summary.js'
 
 const MINUTE = 60
@@ -324,6 +324,43 @@ describe('allocateWeek', () => {
     allocateWeek({ days, rule, step: STEPS.minute })
     const took = performance.now() - started
     expect(took, `allocating a full week took ${took.toFixed(0)}ms`).toBeLessThan(600)
+  })
+})
+
+describe('daySpan', () => {
+  // Friday, split: 06:32 – 17:22 with a gap, 9h 18m tracked, an hour added.
+  const clock = { start: 6 * HOUR + 32 * MINUTE, end: 17 * HOUR + 22 * MINUTE }
+  const before = { tracked: 9 * HOUR + 18 * MINUTE, added: HOUR }
+  const at = (hours, minutes) => hours * HOUR + minutes * MINUTE
+  const span = (state, mode) => {
+    const { from, to, fromAdjusted, toAdjusted } = daySpan(clock, before, state, mode)
+    return [from, to, fromAdjusted, toAdjusted]
+  }
+
+  test('as tracked: the gap kept, run on from the start, or run back from the end', () => {
+    expect(span(before, 'natural')).toEqual([at(6, 32), at(18, 22), false, false])
+    expect(span(before, 'end')).toEqual([at(6, 32), at(16, 50), false, true])
+    expect(span(before, 'start')).toEqual([at(8, 4), at(18, 22), true, false])
+  })
+
+  test('allocated: the end moves by what the day gave, or the duration is laid from one end', () => {
+    // Gave half an hour and its addition.
+    const after = { tracked: at(8, 48), added: 0 }
+    expect(span(after, 'natural')).toEqual([at(6, 32), at(16, 52), false, false])
+    expect(span(after, 'end')).toEqual([at(6, 32), at(15, 20), false, true])
+    expect(span(after, 'start')).toEqual([at(8, 34), at(17, 22), true, false])
+  })
+
+  test('a day without gaps the allocation left alone reads the same in every mode, on both sides', () => {
+    const gapless = { start: at(8, 30), end: at(18, 0) }
+    const day = { tracked: at(9, 30), added: HOUR }
+    const spans = ['natural', 'start', 'end'].flatMap((mode) => [
+      daySpan(gapless, day, day, mode),
+      daySpan(gapless, day, { ...day }, mode),
+    ])
+    for (const one of spans) {
+      expect(one).toEqual({ from: at(8, 30), to: at(19, 0), fromAdjusted: false, toAdjusted: false })
+    }
   })
 })
 

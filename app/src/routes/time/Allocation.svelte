@@ -19,7 +19,7 @@
     tags as tagStore,
     timeEntries,
   } from '../../lib/store.js'
-  import { ALLOWANCE, allocateWeek, hasCap, STEPS } from '../../lib/time/allocate.js'
+  import { ALLOWANCE, allocateWeek, BOUNDS, daySpan, hasCap, STEPS } from '../../lib/time/allocate.js'
   import { trackedFor } from '../../lib/time/budget.js'
   import { COLUMN } from '../../lib/time/column.js'
   import { dayOffsets, slices } from '../../lib/time/duration.js'
@@ -71,6 +71,20 @@
 
   function chooseUnit(value) {
     persistPreferences('allocation', { ...section, step: value })
+  }
+
+  /** How a day's times are written: as tracked, or laid from its start or its end. */
+  const bounds = $derived(BOUNDS.includes(section.bounds) ? section.bounds : 'natural')
+
+  function chooseBounds(value) {
+    persistPreferences('allocation', { ...section, bounds: value })
+  }
+
+  /** A span's text, the time a mode moved in brackets as on Record. */
+  function spanText({ from, to, fromAdjusted, toAdjusted }) {
+    const written = (seconds, adjusted) =>
+      adjusted ? `(${clockOfSeconds(seconds)})` : clockOfSeconds(seconds)
+    return `${written(from, fromAdjusted)} – ${written(to, toAdjusted)}`
   }
 
   /**
@@ -212,6 +226,28 @@
     </div>
   </div>
 
+  <!-- The pair Record's merged rows write, plus the times as they were. Natural
+       widths, wrapping: "Start adjusted" leaves no room for equal cells on a
+       phone. -->
+  <div class="mb-6 flex flex-wrap items-center gap-3">
+    <p class="meta">Times</p>
+    <div class="flex flex-wrap gap-1" role="group" aria-label="Times">
+      {#each [['natural', 'Natural'], ['start', 'Start adjusted'], ['end', 'End adjusted']] as [value, label] (value)}
+        <button
+          class="meta min-h-11 whitespace-nowrap rounded-md border px-3 transition
+                 {bounds === value
+            ? 'border-ember bg-ember/10 text-paper'
+            : 'border-white/15 hover:border-white/40'}"
+          aria-pressed={bounds === value}
+          data-allocation-bounds={value}
+          onclick={() => chooseBounds(value)}
+        >
+          {label}
+        </button>
+      {/each}
+    </div>
+  </div>
+
   {#if loading}
     <p class="meta">Loading…</p>
   {:else if ruled.length === 0}
@@ -265,7 +301,7 @@
     <ul class="mt-2 flex flex-col gap-2">
       {#each allocation.before as before, index (before.day)}
         {@const after = allocation.after[index]}
-        {@const start = startOf.get(before.day).start}
+        {@const clock = startOf.get(before.day)}
         <li
           class="grid gap-x-4 gap-y-3 rounded-xl border bg-ink-soft px-4 py-3
                  @min-[38rem]:grid-cols-2 @min-[46rem]:grid-cols-[7rem_1fr_1fr]
@@ -276,13 +312,13 @@
           <p class="meta self-center whitespace-nowrap @min-[38rem]:col-span-2 @min-[46rem]:col-span-1">
             {dayLabel(before.day)}
           </p>
-          {#each [['tracked', before, startOf.get(before.day).end], ['allocated', after, start + after.total]] as [side, state, end] (side)}
+          {#each [['tracked', before], ['allocated', after]] as [side, state] (side)}
             <div class="min-w-0" data-side={side}>
               <p class="meta whitespace-nowrap @min-[38rem]:hidden">
                 {side === 'tracked' ? 'As tracked' : 'Allocated — not what was tracked'}
               </p>
               <p class="numeral tabular-nums" data-span>
-                {`${clockOfSeconds(start)} – ${clockOfSeconds(end)}`}
+                {spanText(daySpan(clock, before, state, bounds))}
               </p>
               <p class="text-sm text-haze">
                 {formatDuration(state.tracked) +
