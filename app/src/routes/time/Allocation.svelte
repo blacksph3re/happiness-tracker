@@ -19,7 +19,7 @@
     tags as tagStore,
     timeEntries,
   } from '../../lib/store.js'
-  import { allocateWeek, hasCap, STEPS } from '../../lib/time/allocate.js'
+  import { ALLOWANCE, allocateWeek, hasCap, STEPS } from '../../lib/time/allocate.js'
   import { trackedFor } from '../../lib/time/budget.js'
   import { COLUMN } from '../../lib/time/column.js'
   import { dayOffsets, slices } from '../../lib/time/duration.js'
@@ -65,7 +65,7 @@
   const week = $derived(period('week', anchor))
   const atLatest = $derived($currentDay >= week.start && $currentDay <= week.end)
 
-  /** Minutes, quarter hours or whole hours, per account, in a section of its own. */
+  /** Minutes, quarter hours, half hours or whole hours, per account, in a section of its own. */
   const section = $derived(preferenceSection($preferences, 'allocation'))
   const unit = $derived(Object.hasOwn(STEPS, section.step) ? section.step : 'minute')
 
@@ -114,7 +114,7 @@
 
   const allocation = $derived(
     rule && days.length
-      ? allocateWeek({ days, rule, step: STEPS[unit] })
+      ? allocateWeek({ days, rule, step: STEPS[unit], allowance: ALLOWANCE[unit] })
       : null
   )
 
@@ -187,16 +187,16 @@
     </div>
   </div>
 
-  <!-- Three equal cells with one-word labels: "The quarter hour" could not keep
-       to one line in a third of a phone, and a label never breaks. -->
+  <!-- Equal cells with one-word labels, two by two on a phone: four in a row
+       leave "Quarter" no room there, and a label never breaks. -->
   <div class="mb-6 flex flex-wrap items-center gap-3">
     <p class="meta">Move tracked time by the</p>
     <div
-      class="grid w-full grid-cols-3 gap-1 sm:w-auto sm:grid-cols-[repeat(3,6rem)]"
+      class="grid w-full grid-cols-2 gap-1 sm:w-auto sm:grid-cols-[repeat(4,6rem)]"
       role="group"
       aria-label="Move tracked time by the"
     >
-      {#each [['minute', 'Minute'], ['quarter', 'Quarter'], ['hour', 'Hour']] as [value, label] (value)}
+      {#each [['minute', 'Minute'], ['quarter', 'Quarter'], ['half', 'Half'], ['hour', 'Hour']] as [value, label] (value)}
         <button
           class="meta min-h-11 whitespace-nowrap rounded-md border px-3 transition
                  {unit === value
@@ -229,6 +229,13 @@
     <p class="numeral mb-4 text-xl font-semibold" data-allocation-saving>
       Deducted {formatDuration(allocation.deducted.before)} → {formatDuration(allocation.deducted.after)}
     </p>
+    {#if allocation.deducted.after - allocation.deducted.least >= 60}
+      <!-- The allowance traded a few minutes for fewer moves; the least is not
+           hidden for it. -->
+      <p class="-mt-2 mb-4 text-sm text-haze" data-allocation-least>
+        {`Least possible: ${formatDuration(allocation.deducted.least)}, by moving more.`}
+      </p>
+    {/if}
 
     {#if allocation.moves.length}
       <ol class="mb-6 flex list-decimal flex-col gap-1 pl-6">
@@ -240,25 +247,38 @@
       <p class="mb-6 text-haze">Nothing to move: no allocation deducts less.</p>
     {/if}
 
-    <div class="hidden gap-4 px-4 md:grid md:grid-cols-[7rem_1fr_1fr]" aria-hidden="true">
-      <span></span>
-      <p class="meta">As tracked</p>
-      <p class="meta">Allocated — not what was tracked</p>
+    <!-- Laid out by the room the page has, not the window: a side needs 276px
+         (its heading, "Allocated — not what was tracked", with 15% to spare),
+         so the sides pair up from 38rem, and the date takes a column of its own
+         from 46rem. Half a laptop screen sits between the two. -->
+    <div class="@container">
+    <div
+      class="hidden gap-x-4 px-4 @min-[38rem]:grid @min-[38rem]:grid-cols-2
+             @min-[46rem]:grid-cols-[7rem_1fr_1fr]"
+      aria-hidden="true"
+      data-allocation-sides
+    >
+      <span class="hidden @min-[46rem]:block"></span>
+      <p class="meta whitespace-nowrap">As tracked</p>
+      <p class="meta whitespace-nowrap">Allocated — not what was tracked</p>
     </div>
     <ul class="mt-2 flex flex-col gap-2">
       {#each allocation.before as before, index (before.day)}
         {@const after = allocation.after[index]}
         {@const start = startOf.get(before.day).start}
         <li
-          class="grid gap-x-4 gap-y-3 rounded-xl border bg-ink-soft px-4 py-3 md:grid-cols-[7rem_1fr_1fr]
+          class="grid gap-x-4 gap-y-3 rounded-xl border bg-ink-soft px-4 py-3
+                 @min-[38rem]:grid-cols-2 @min-[46rem]:grid-cols-[7rem_1fr_1fr]
                  {changed.has(before.day) ? 'border-ember/60' : 'border-white/10'}"
           data-allocation-day={before.day}
           data-changed={changed.has(before.day) ? '' : undefined}
         >
-          <p class="meta self-center">{dayLabel(before.day)}</p>
+          <p class="meta self-center whitespace-nowrap @min-[38rem]:col-span-2 @min-[46rem]:col-span-1">
+            {dayLabel(before.day)}
+          </p>
           {#each [['tracked', before, startOf.get(before.day).end], ['allocated', after, start + after.total]] as [side, state, end] (side)}
             <div class="min-w-0" data-side={side}>
-              <p class="meta md:hidden">
+              <p class="meta whitespace-nowrap @min-[38rem]:hidden">
                 {side === 'tracked' ? 'As tracked' : 'Allocated — not what was tracked'}
               </p>
               <p class="numeral tabular-nums" data-span>
@@ -279,6 +299,7 @@
         </li>
       {/each}
     </ul>
+    </div>
   {/if}
 </section>
 </Frame>

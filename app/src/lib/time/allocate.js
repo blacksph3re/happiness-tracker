@@ -17,12 +17,14 @@ import { deductionFor } from './summary.js'
  *
  * **What "optimal" means**, compared in this order:
  *
- * 1. the least time deducted;
+ * 1. the least time deducted — or less than `allowance` more, so a week is not
+ *    reshuffled to save a few minutes (`ALLOWANCE`, by step);
  * 2. the fewest transfers of tracked time — none, whenever additions alone
- *    reach that least deduction;
+ *    reach that deduction;
  * 3. the least tracked time moved;
  * 4. the fewest additions moved;
- * 5. the allocation that keeps time earliest in the week, which settles every
+ * 5. the least time deducted, among what the allowance let tie;
+ * 6. the allocation that keeps time earliest in the week, which settles every
  *    remaining tie the same way each time.
  *
  * **An exact search.** The rule's deduction is a step and slope function of a
@@ -41,7 +43,15 @@ import { deductionFor } from './summary.js'
  */
 
 /** How finely tracked time may move, in seconds: a transfer is a whole number of these. */
-export const STEPS = { minute: 60, quarter: 900, hour: 3600 }
+export const STEPS = { minute: 60, quarter: 900, half: 1800, hour: 3600 }
+
+/**
+ * How much more than the least deduction still ties with it, in seconds, by
+ * step. In minutes and quarter hours the least was often reached by emptying
+ * long days into short ones to save a few minutes; in half and whole hours
+ * the steps are too coarse for that.
+ */
+export const ALLOWANCE = { minute: 900, quarter: 900, half: 0, hour: 0 }
 
 /**
  * Whether a rule has a cap: a band deducting everything past its threshold.
@@ -113,18 +123,21 @@ function segmentsOf(bands, most) {
  *   nothing tracked are left out by the caller, as are days not yet over.
  * @param {{add_minutes: number|null, bands: Array<object>}} input.rule The tag's
  *   rule, every band, as reported time uses it.
- * @param {number} input.step The unit a transfer is made in, in seconds:
- *   `STEPS.minute`, `STEPS.quarter` or `STEPS.hour`.
+ * @param {number} input.step The unit a transfer is made in, in seconds: one
+ *   of `STEPS`.
+ * @param {number} [input.allowance] Seconds over the least deduction that still
+ *   tie with it: `ALLOWANCE` for the step, none by default.
  * @returns {{ok: false, reason: 'no-cap'} | {ok: true, before: Array<DayState>,
  *   after: Array<DayState>, moves: Array<Move>, deducted: {before: number,
- *   after: number}}}
+ *   after: number, least: number}}} `least` is the least deduction any
+ *   allocation reaches, which `after` exceeds by less than the allowance.
  *
  * @typedef {{day: string, tracked: number, additions: number, added: number,
  *   total: number, deducted: number, reported: number}} DayState
  * @typedef {{kind: 'addition'|'tracked', from: string, to: string,
  *   seconds: number}} Move
  */
-export function allocateWeek({ days, rule, step }) {
+export function allocateWeek({ days, rule, step, allowance = 0 }) {
   const bands = rule?.bands ?? []
   if (!hasCap(rule)) return { ok: false, reason: 'no-cap' }
 
@@ -153,7 +166,7 @@ export function allocateWeek({ days, rule, step }) {
   const before = week.map((day, index) => state(index, day.tracked, additions ? 1 : 0))
   const deductedBefore = before.reduce((sum, day) => sum + day.deducted, 0)
   if (count === 0) {
-    return { ok: true, before, after: before, moves: [], deducted: { before: 0, after: 0 } }
+    return { ok: true, before, after: before, moves: [], deducted: { before: 0, after: 0, least: 0 } }
   }
 
   const segments = segmentsOf(bands, total)
@@ -315,11 +328,15 @@ export function allocateWeek({ days, rule, step }) {
   // transfers as the larger of the two; and what its days must receive arrives
   // by transfer, as what they must give leaves by one, so it moves at least the
   // larger of those amounts.
+  const limit = least + Math.max(0, allowance - 1)
   let best = null
-  walk(byDistance, () => least, behind, (chosen) => {
-    if (costOf(chosen) !== least) return
+  walk(byDistance, () => limit, behind, (chosen) => {
+    const cost = costOf(chosen)
+    if (cost > limit) return
     const candidate = settle(chosen)
-    if (candidate && (!best || better(candidate, best))) best = candidate
+    if (!candidate) return
+    candidate.cost = cost
+    if (!best || better(candidate, best)) best = candidate
   })
 
   /**
@@ -440,6 +457,7 @@ export function allocateWeek({ days, rule, step }) {
     deducted: {
       before: deductedBefore,
       after: after.reduce((sum, day) => sum + day.deducted, 0),
+      least,
     },
   }
 
@@ -617,6 +635,7 @@ export function allocateWeek({ days, rule, step }) {
     if (a.transfers !== b.transfers) return a.transfers < b.transfers
     if (a.moved !== b.moved) return a.moved < b.moved
     if (a.additionsMoved !== b.additionsMoved) return a.additionsMoved < b.additionsMoved
+    if (a.cost !== b.cost) return a.cost < b.cost
     // Time kept earliest: the first day that differs holds more in `a`.
     return earlier(
       a.after.map((seconds, index) => seconds + a.held[index] * add),

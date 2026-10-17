@@ -131,6 +131,13 @@ test('quarter hours move whole quarters, and the choice is kept on the account',
   )
   await expect(page.locator('[data-move]').last()).toHaveText('15m tracked: Wed → Mon')
 
+  // Half hours.
+  await page.locator('[data-allocation-step="half"]').click()
+  await expect(page.locator('[data-move]').last()).toHaveText('30m tracked: Wed → Mon')
+  await expect
+    .poll(async () => (await (await account.api.get('/api/me/preferences')).json()).allocation)
+    .toEqual({ step: 'half' })
+
   // And whole hours, the coarsest.
   await page.locator('[data-allocation-step="hour"]').click()
   await expect(page.locator('[data-move]').last()).toHaveText('1h 00m tracked: Wed → Mon')
@@ -232,6 +239,80 @@ test('at 320px the two sides stack and nothing scrolls sideways', async ({ page,
     await page.waitForTimeout(50)
   }
   expect(worst, 'the page scrolls sideways').toBe(0)
+})
+
+test('a window tiled to half a laptop screen draws the two sides side by side, with room to spare', async ({
+  page,
+  account,
+}) => {
+  // A long Monday past the cap and a short Tuesday: the widest lines the page
+  // writes, "12h 32m + 1h 00m · −3h 32m" among them.
+  const { project } = await ruled(account, {
+    add_minutes: 60,
+    bands: [{ from_minutes: 360, deduct_minutes: 30 }, { from_minutes: 480, deduct_minutes: 45 }, CAP_10],
+  })
+  await recordSession(account, project.id, '2026-06-08T06:50:00', '2026-06-08T19:22:00', 120)
+  await recordSession(account, project.id, '2026-06-09T06:30:00', '2026-06-09T08:30:00', 120)
+
+  // 648 is where the sides first pair up, 740 half a 14-inch MacBook's screen
+  // with the tiling margins, 776 where the date takes a column of its own.
+  for (const width of [648, 740, 776]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/time/allocation?week=2026-06-08')
+    await expect(day(page, '08')).toBeVisible()
+    const layout = await day(page, '08').evaluate((row) => {
+      const box = (node) => node.getBoundingClientRect()
+      const tracked = box(row.querySelector('[data-side="tracked"]'))
+      const allocated = box(row.querySelector('[data-side="allocated"]'))
+      // Every line a row or the heading above the rows writes, against the room
+      // its box gives it, with 15% to spare for a wider monospace.
+      const lines = [...row.querySelectorAll('p'), ...document.querySelectorAll('[data-allocation-sides] p')]
+        .filter((node) => node.getClientRects().length > 0)
+        .map((node) => {
+          const range = document.createRange()
+          range.selectNodeContents(node)
+          return {
+            text: node.textContent.trim(),
+            fits: range.getBoundingClientRect().width * 1.15 <= node.clientWidth,
+          }
+        })
+      return {
+        paired: Math.abs(tracked.top - allocated.top) < 1 && allocated.left >= tracked.right,
+        crowded: lines.filter((line) => !line.fits).map((line) => line.text),
+        scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      }
+    })
+    expect(layout, `at ${width}px`).toEqual({ paired: true, crowded: [], scrolls: false })
+  }
+})
+
+test('in minutes, a few minutes more are traded for fewer moves, and the least is still said', async ({
+  page,
+  account,
+}) => {
+  // A real week: Monday short, four long days. The least deduction empties two
+  // long days and fills Monday past 10h; within the quarter hour allowed, one
+  // addition and 41 minutes do, and Monday stays short.
+  const { project } = await ruled(account, {
+    add_minutes: 60,
+    bands: [{ from_minutes: 360, deduct_minutes: 30 }, { from_minutes: 480, deduct_minutes: 45 }, CAP_10],
+  })
+  for (const [date, hours] of [['08', 3 + 52 / 60], ['09', 8 + 44 / 60], ['10', 8 + 40 / 60], ['11', 8 + 56 / 60], ['12', 9.3]]) {
+    await track(account, project, date, hours)
+  }
+  await page.goto('/time/allocation?week=2026-06-08')
+  await expect(page.locator('[data-allocation-saving]')).toHaveText('Deducted 3h 00m → 2h 45m')
+  await expect(page.locator('[data-move]')).toHaveText([
+    '+1h 00m addition: Wed → Mon',
+    '41m tracked: Wed → Tue',
+  ])
+  await expect(page.locator('[data-allocation-least]')).toHaveText('Least possible: 2h 32m, by moving more.')
+  await expect(day(page, '08').locator('[data-side="allocated"] [data-reported]')).toHaveText('5h 52m')
+
+  // In whole hours there is no allowance, and the least is what it reaches.
+  await page.locator('[data-allocation-step="hour"]').click()
+  await expect(page.locator('[data-allocation-saving]')).toContainText('→ 2h 45m')
+  await expect(page.locator('[data-allocation-least]')).toHaveCount(0)
 })
 
 test('a deduction under a minute is not written as a zero one', async ({ page, account }) => {

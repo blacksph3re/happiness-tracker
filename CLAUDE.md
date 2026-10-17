@@ -283,13 +283,18 @@ renders).
 - **Allocation** (`/time/allocation`, from *Allocate* on a week's heading on
   Record) rearranges one week of a tag so its rule deducts the least, and
   stores nothing. Additions move whole; tracked time moves in transfers of
-  any amount in whole steps (minute, quarter hour or hour, an `allocation`
-  preference); only tracked days that are over take part, none is emptied.
-  The order is: least deducted, fewest transfers, least time moved, fewest
-  additions moved, time kept earliest. `lib/time/allocate.js` is an **exact**
-  search, held to brute force on the whole order and to a time budget; it
-  needs a cap, so a rule without one shows *Allocate* disabled with its reason
-  in a pointer label. It uses `deductionFor`, so a day filled to its cap still
+  any amount in whole steps (minute, quarter, half or whole hour, an
+  `allocation` preference); only tracked days that are over take part, none is
+  emptied. The order is: least deducted — within an allowance (`ALLOWANCE`:
+  under 15 minutes more, in minutes and quarter hours, where the least was
+  reached by emptying long days into short ones) — fewest transfers, least
+  time moved, fewest additions moved, least deducted, time kept earliest. The
+  page says the least possible whenever the allowance took more.
+  `lib/time/allocate.js` is an **exact** search, held to brute force on the
+  whole order and to a time budget; it needs a cap, so a rule without one shows
+  *Allocate* disabled with its reason in a pointer label. Its rows lay out by
+  the page's width (`@container`), not the window's: the sides pair up where
+  their headings fit, so half a laptop screen draws them side by side. It uses `deductionFor`, so a day filled to its cap still
   owes its break.
 - `TimeField` with a `day`: stepping or arrow-rolling past midnight carries the
   day; a typed time never does; the add panel (no `day`) clamps.

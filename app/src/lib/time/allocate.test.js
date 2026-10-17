@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { allocateWeek, hasCap, STEPS } from './allocate.js'
+import { ALLOWANCE, allocateWeek, hasCap, STEPS } from './allocate.js'
 import { deductionFor } from './summary.js'
 
 const MINUTE = 60
@@ -107,6 +107,16 @@ describe('allocateWeek', () => {
     expect(result.moves.every((move) => move.kind !== 'tracked' || move.seconds % (15 * MINUTE) === 0)).toBe(true)
   })
 
+  test('in half hours every transfer is whole half hours', () => {
+    // Wednesday's exactly-3h day needs a transfer; in half hours the least that
+    // takes it below the band is half an hour.
+    const rule = { add_minutes: 60, bands: [LUNCH, CAP_24] }
+    const days = [at('08', 8), at('09', 2, 30), at('10', 3)]
+    const result = allocateWeek({ days, rule, step: STEPS.half })
+    expect(summary(result).moves.at(-1)).toEqual(['tracked', '10', '08', 30])
+    expect(result.moves.every((move) => move.kind !== 'tracked' || move.seconds % (30 * MINUTE) === 0)).toBe(true)
+  })
+
   test('in whole hours every transfer is whole hours', () => {
     // Wednesday's exactly-3h day needs a transfer; in hours the least that
     // takes it below the band is a whole hour.
@@ -116,6 +126,44 @@ describe('allocateWeek', () => {
     expect(summary(result).moves.at(-1)).toEqual(['tracked', '10', '08', 60])
     expect(result.moves.every((move) => move.kind !== 'tracked' || move.seconds % HOUR === 0)).toBe(true)
     expect(result.deducted.after).toBe(30 * MINUTE)
+  })
+
+  test('within the allowance, fewer moves beat a few minutes less deducted', () => {
+    // A real week, to the minute: the least deduction, 2h 32m, empties two long
+    // days into the rest and fills a short Monday past 10h. Thirteen minutes
+    // more is reached by one addition and 41 minutes, and Monday stays short.
+    const rule = {
+      add_minutes: 60,
+      bands: [{ from_minutes: 360, deduct_minutes: 30 }, { from_minutes: 480, deduct_minutes: 45 }, CAP_10],
+    }
+    const days = [at('12', 3, 52), at('13', 8, 44), at('14', 8, 40), at('15', 8, 56), at('16', 9, 18)]
+    const result = allocateWeek({ days, rule, step: STEPS.minute, allowance: ALLOWANCE.minute })
+    expect(summary(result)).toEqual({
+      before: 180,
+      after: 165,
+      moves: [
+        ['addition', '14', '12', 60],
+        ['tracked', '14', '13', 41],
+      ],
+    })
+    expect(result.deducted.least).toBe(152 * MINUTE)
+    expect(result.after[0].total).toBe(5 * HOUR + 52 * MINUTE)
+    // With no allowance the least is what it reaches.
+    expect(allocateWeek({ days, rule, step: STEPS.minute }).deducted.after).toBe(152 * MINUTE)
+  })
+
+  test('among allocations the allowance lets tie on their moves, the one deducting less wins', () => {
+    // Tuesday must give half an hour. Wednesday takes it for nothing; Monday
+    // would reach 4h and its ten-minute band — within the allowance, and
+    // earlier in the week, but deducting more.
+    const rule = { add_minutes: null, bands: [{ from_minutes: 240, deduct_minutes: 10 }, CAP_10] }
+    const days = [at('08', 3, 30), at('09', 10, 40), at('10', 3)]
+    const result = allocateWeek({ days, rule, step: STEPS.quarter, allowance: ALLOWANCE.quarter })
+    expect(summary(result)).toEqual({ before: 40, after: 10, moves: [['tracked', '09', '10', 30]] })
+  })
+
+  test('the allowance is a quarter hour for minutes and quarters, and nothing for half hours and hours', () => {
+    expect(ALLOWANCE).toEqual({ minute: 15 * MINUTE, quarter: 15 * MINUTE, half: 0, hour: 0 })
   })
 
   test('a block moves whole to one day rather than in pieces to several', () => {
@@ -217,6 +265,31 @@ describe('allocateWeek', () => {
     }
   })
 
+  test('no allocation found by brute force beats it within the allowance', () => {
+    // The order with an allowance: anything less than 15 minutes over the least
+    // ties on deduction, and the moves decide; the deduction only after them.
+    let seed = 23
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed / 2147483648
+    }
+    const rule = {
+      add_minutes: 60,
+      bands: [LUNCH, { from_minutes: 300, deduct_minutes: 45 }, { from_minutes: 420, deduct_minutes: null }],
+    }
+    for (let run = 0; run < 40; run += 1) {
+      const days = Array.from({ length: 3 }, (_, index) =>
+        at(`0${8 + index}`, 0, 15 * (1 + Math.floor(random() * 32)))
+      )
+      const ours = allocateWeek({ days, rule, step: STEPS.quarter, allowance: 15 * MINUTE })
+      const best = bruteForce(days, rule, 15 * MINUTE, 15 * MINUTE)
+      expect(
+        [ours.deducted.after, transfersIn(ours), movedIn(ours), additionsIn(ours), ours.deducted.least],
+        JSON.stringify(days)
+      ).toEqual([best.deducted, best.transfers, best.moved, best.additions, best.least])
+    }
+  })
+
   test('no allocation found by brute force beats it, on seeded four-day weeks in hours', () => {
     // Four days can hold two pairs that give and take apart, which three cannot:
     // what the search's bounds on transfers and time moved must never cut.
@@ -270,14 +343,14 @@ function additionsIn(result) {
 }
 
 /**
- * The least deduction over every allocation in whole steps, and the fewest
- * transfers that reach it — by trying them all.
+ * The best allocation in whole steps by the module's order — by trying them
+ * all. Anything less than `allowance` over the least deduction ties on it.
  */
-function bruteForce(days, rule, step) {
+function bruteForce(days, rule, step, allowance = 0) {
   const add = (rule.add_minutes ?? 0) * MINUTE
   const count = days.length
   const total = days.reduce((sum, day) => sum + day.tracked, 0)
-  let best = null
+  const candidates = []
   const additions = add ? compositions(count, count) : [new Array(count).fill(0)]
   for (const k of additions) {
     for (const tracked of distributions(days.map((day) => day.tracked), total, step)) {
@@ -291,15 +364,21 @@ function bruteForce(days, rule, step) {
         moved: changes.reduce((sum, change) => sum + Math.max(0, change), 0),
         additions: add ? k.filter((held) => held === 0).length : 0,
       }
-      const order = ['deducted', 'transfers', 'moved', 'additions']
-      const wins = () => {
-        for (const key of order) if (candidate[key] !== best[key]) return candidate[key] < best[key]
-        return false
-      }
-      if (!best || wins()) best = candidate
+      candidates.push(candidate)
     }
   }
-  return best
+  const least = candidates.reduce((low, one) => Math.min(low, one.deducted), Infinity)
+  const order = ['transfers', 'moved', 'additions', 'deducted']
+  let best = null
+  for (const candidate of candidates) {
+    if (candidate.deducted > least + Math.max(0, allowance - 1)) continue
+    const wins = () => {
+      for (const key of order) if (candidate[key] !== best[key]) return candidate[key] < best[key]
+      return false
+    }
+    if (!best || wins()) best = candidate
+  }
+  return { ...best, least }
 }
 
 /** Every way to split `total` identical things over `parts`. */
