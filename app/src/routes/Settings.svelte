@@ -49,11 +49,18 @@
     todoSettings,
     urgentDays,
   } from '../lib/todo-settings.js'
+  import { DURATION_STYLES, durationStyle } from '../lib/duration-style.js'
   import { connection } from '../lib/sync.js'
   import { navigate } from '../lib/router.js'
   import { pushToast } from '../lib/toasts.js'
 
   const focus = $derived(preferenceSection($preferenceStore, 'focus'))
+
+  /** The whole `record` section, so choosing a style keeps anything beside it. */
+  const recordSection = $derived(preferenceSection($preferenceStore, 'record'))
+
+  /** How Record writes a duration, for the account. */
+  const durations = $derived(durationStyle(recordSection))
 
   /** The whole `todos` section, view state included, so a save keeps the rest. */
   const todoSection = $derived(preferenceSection($preferenceStore, 'todos'))
@@ -368,6 +375,30 @@
         <option value={catalogue.id}>{catalogue.name}</option>
       {/each}
     </select>
+  </div>
+
+  <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-time-settings>
+    <h2 class="font-semibold">Time</h2>
+    <p class="meta mt-4">Durations on the record</p>
+    <!-- Equal cells, as Appearance's: two labels that are each an example of
+         themselves, side by side at any width. -->
+    <div class="mt-2 grid grid-cols-2 gap-2" role="group" aria-label="Durations on the record">
+      {#each DURATION_STYLES as [value, label] (value)}
+        <button
+          type="button"
+          class="numeral min-h-11 rounded-md border px-2 py-1 transition
+                 {durations === value
+            ? 'border-ember bg-ember/10 text-paper'
+            : 'border-white/15 hover:border-white/40'}"
+          aria-pressed={durations === value}
+          data-duration-style={value}
+          onclick={() => persistPreferences('record', { ...recordSection, durations: value })}
+        >
+          {label}
+        </button>
+      {/each}
+    </div>
+    <p class="mt-3 text-sm text-haze">Only how they are written; nothing stored changes.</p>
   </div>
 
   <div class="mt-6 rounded-xl border border-white/10 bg-ink-soft p-6" data-focus-settings>

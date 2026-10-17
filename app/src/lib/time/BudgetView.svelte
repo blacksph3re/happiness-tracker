@@ -1,6 +1,6 @@
 <script>
   import PointerLabel from '../PointerLabel.svelte'
-  import { formatDuration, formatSigned } from '../clock.js'
+  import { DEFAULT_DURATION_STYLE, durationFormat } from '../duration-style.js'
   import { currentDay, dayLabel } from '../day.js'
   import { period } from '../period.js'
   import { pointerLabel } from '../pointer-label.svelte.js'
@@ -30,7 +30,8 @@
    * contract, and the days off and resets, through `budgetDays`, so it paints
    * offline and moves with a running session.
    */
-  let { tagId, tags = [], onpick = () => {} } = $props()
+  let { tagId, tags = [], onpick = () => {}, format = durationFormat(DEFAULT_DURATION_STYLE) } =
+    $props()
 
   const records = resource(
     () => tagId,
@@ -126,14 +127,14 @@
 
   /** The label for a day's total: its parts, and what the contract expected. */
   function explain(row) {
-    return { name: row.open ? 'Today' : dayLabel(row.day), lines: breakdownLines(row, rule) }
+    return { name: row.open ? 'Today' : dayLabel(row.day), lines: breakdownLines(row, rule, format) }
   }
 
   /** The same, as one sentence for a screen reader. */
   function spoken(row) {
     const { lines } = explain(row)
     const said = lines.map(([label, value]) => `${label.toLowerCase()} ${value}`).join(', ')
-    return `${formatDuration(row.counted)} counted: ${said}`
+    return `${format.duration(row.counted)} counted: ${said}`
   }
 
   function markOff(day, kind = 'vacation') {
@@ -169,7 +170,7 @@
     class="numeral text-3xl font-semibold tabular-nums {balance < 0 ? 'text-alarm' : ''}"
     data-budget-balance
   >
-    {formatSigned(balance)}
+    {format.signed(balance)}
   </p>
 </div>
 
@@ -221,7 +222,7 @@
     <div data-budget-week={week.start} class="rounded-xl border border-white/10 bg-ink-soft">
       <div class="flex items-baseline justify-between gap-3 px-5 py-3">
         <p class="meta">{week.label}</p>
-        <p class="numeral tabular-nums" data-week-change>{formatSigned(week.change)}</p>
+        <p class="numeral tabular-nums" data-week-change>{format.signed(week.change)}</p>
       </div>
       <ul class="flex flex-col gap-px border-t border-white/10">
         {#each week.days as row (row.day)}
@@ -250,7 +251,7 @@
             <span class="ml-auto flex shrink-0 items-center gap-3">
               {#if state === 'untracked'}
                 <span class="numeral text-sm text-alarm tabular-nums" data-budget-change>
-                  {formatSigned(-row.expected)}
+                  {format.signed(-row.expected)}
                 </span>
                 <!-- Two ways to account for the day: a vacation excuses its
                      hours, a day off takes them from the balance — which is
@@ -284,7 +285,7 @@
                     onpointermove={(event) => tip.drift(explain(row), event)}
                     onpointerleave={(event) => tip.release(event)}
                   >
-                    {formatDuration(row.counted)}
+                    {format.duration(row.counted)}
                   </span>
                 {/if}
                 <!-- Today has not changed the balance yet; its slot stays, so
@@ -293,7 +294,7 @@
                   class="numeral min-w-[4.5rem] text-right text-sm tabular-nums"
                   data-budget-change={row.open ? undefined : ''}
                 >
-                  {row.open ? '' : formatSigned(row.counted - row.expected)}
+                  {row.open ? '' : format.signed(row.counted - row.expected)}
                 </span>
               {/if}
               {#if state === 'off'}
@@ -320,8 +321,8 @@
               data-budget-reset={row.day}
             >
               <span class="text-sm">
-                {`Budget set to ${formatSigned(resetOn.get(row.day).balance_minutes * 60)}` +
-                  (replaced.has(row.day) ? ` · was ${formatSigned(replaced.get(row.day))}` : '')}
+                {`Budget set to ${format.signed(resetOn.get(row.day).balance_minutes * 60)}` +
+                  (replaced.has(row.day) ? ` · was ${format.signed(replaced.get(row.day))}` : '')}
               </span>
               <button
                 class="group -m-1.5 flex size-11 shrink-0 items-center justify-center"

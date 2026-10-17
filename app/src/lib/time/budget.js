@@ -368,24 +368,30 @@ export function budgetWindow(rows, start, end) {
  *
  * @param {object} row A row from `budgetForTag`.
  * @param {object|null} rule The tag's rule.
+ * @param {{duration: (seconds: number) => string, signed: (seconds: number) => string}} [format]
+ *   How to write a duration: the record's chosen style (`lib/duration-style.js`),
+ *   hours and minutes by default.
  * @returns {Array<[string, string]>}
  */
-export function breakdownLines(row, rule) {
+export function breakdownLines(row, rule, format = CLOCK) {
   const { parts } = row
-  const lines = [['Tracked', formatDuration(parts.tracked)]]
+  const lines = [['Tracked', format.duration(parts.tracked)]]
   if (rule?.add_minutes) {
-    lines.push(['Added', parts.addOff ? 'not counted' : formatSigned(parts.added)])
+    lines.push(['Added', parts.addOff ? 'not counted' : format.signed(parts.added)])
   }
   if (rule?.bands?.length) {
     lines.push([
       'Deducted',
-      parts.bandOff && parts.deducted === 0 ? 'not counted' : formatSigned(-parts.deducted),
+      parts.bandOff && parts.deducted === 0 ? 'not counted' : format.signed(-parts.deducted),
     ])
   }
-  if (lines.length > 1) lines.push(['Counted', formatDuration(row.counted)])
-  lines.push(['Expected', row.expected ? formatDuration(row.expected) : 'nothing'])
+  if (lines.length > 1) lines.push(['Counted', format.duration(row.counted)])
+  lines.push(['Expected', row.expected ? format.duration(row.expected) : 'nothing'])
   return lines
 }
+
+/** Hours and minutes: how a breakdown is written when nobody asked otherwise. */
+const CLOCK = { duration: formatDuration, signed: formatSigned }
 
 /** Seconds as hours, to two decimals, for a CSV. */
 function hoursOf(seconds) {

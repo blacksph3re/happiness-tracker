@@ -1179,11 +1179,14 @@ test('merging collapses a project to one row a day', async ({ page, account }) =
 
   const rewrite = day.locator('[data-sessions="2"]')
   // First start to last end, but five hours: the lunch hour was not tracked, so
-  // merging must not quietly turn it into worked time.
-  await expect(rewrite).toContainText('09:00')
-  await expect(rewrite).toContainText('15:00')
+  // merging must not quietly turn it into worked time. In brackets, where five
+  // hours would end from the first start, and start from the last end, so each
+  // pair of times spans the duration beside it.
+  await expect(rewrite.locator('[data-row-times]')).toHaveText('09:00 – (14:00) / (10:00) – 15:00')
   await expect(rewrite).toContainText('5h 00m')
   await expect(rewrite).toContainText('2 sessions')
+  // One session has no gap to make up, so its times stand alone.
+  await expect(day.locator('[data-sessions="1"] [data-row-times]')).toHaveText('20:00 – 21:00')
 
   // The day's total is the same either way.
   await expect(page.locator(`[data-day-total="${TODAY}"]`)).toHaveText('6h 00m')
@@ -1196,6 +1199,61 @@ test('merging collapses a project to one row a day', async ({ page, account }) =
   await page.getByRole('button', { name: 'Merge sessions' }).click()
   await expect(day.locator('[data-row]')).toHaveCount(3)
   await expect(day.getByRole('button', { name: 'Edit' })).toHaveCount(3)
+  // Unmerged, a session's own times are all there is.
+  await expect(day.locator('[data-row-times]')).toHaveText([
+    '20:00 – 21:00',
+    '13:00 – 15:00',
+    '09:00 – 12:00',
+  ])
+})
+
+test('at 320px a merged row keeps its duration beside it, and wraps its times between the pairs', async ({
+  page,
+  account,
+}) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  await recordSession(account, project.id, `${TODAY}T13:00:00`, `${TODAY}T15:00:00`)
+  await page.setViewportSize({ width: 320, height: 700 })
+  await page.goto('/time/record')
+  await page.getByRole('button', { name: 'Merge sessions' }).click()
+
+  const row = page.locator(`[data-day="${TODAY}"] [data-sessions="2"]`)
+  await expect(row.locator('[data-row-times]')).toHaveText('09:00 – (14:00) / (10:00) – 15:00')
+  const layout = await row.evaluate((node) => {
+    const text = node.querySelector('[data-row-times]').closest('div').getBoundingClientRect()
+    const duration = node.querySelector('[data-row-duration]').getBoundingClientRect()
+    const pairs = [...node.querySelectorAll('[data-row-times] > span')].map((pair) =>
+      pair.getClientRects().length
+    )
+    const count = node.querySelector('[data-row-count]').getClientRects().length
+    return {
+      top: text.top,
+      bottom: text.bottom,
+      middle: (duration.top + duration.bottom) / 2,
+      pairs,
+      count,
+    }
+  })
+  // The duration shares the row's line with the name and the times, centred
+  // beside them, rather than dropping to a line of its own beneath them.
+  expect(layout.middle).toBeGreaterThan(layout.top)
+  expect(layout.middle).toBeLessThan(layout.bottom)
+  // And each pair of times stays whole, and so does the count of sessions.
+  expect(layout.pairs).toEqual([1, 1])
+  expect(layout.count, '"· 2 sessions" splits across lines').toBe(1)
+})
+
+test('sessions back to back merge with no bracketed times', async ({ page, account }) => {
+  const project = await makeProject(account, 'The rewrite')
+  await recordSession(account, project.id, `${TODAY}T09:00:00`, `${TODAY}T12:00:00`)
+  await recordSession(account, project.id, `${TODAY}T12:00:00`, `${TODAY}T15:00:00`)
+
+  await page.goto('/time/record')
+  await page.getByRole('button', { name: 'Merge sessions' }).click()
+  const row = page.locator(`[data-day="${TODAY}"] [data-sessions="2"]`)
+  // The tracked time already spans 09:00 to 15:00, so brackets would only repeat it.
+  await expect(row.locator('[data-row-times]')).toHaveText('09:00 – 15:00')
 })
 
 test('stretching a session over another keeps both and counts the overlap once', async ({

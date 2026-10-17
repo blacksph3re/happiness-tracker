@@ -273,6 +273,13 @@ renders).
   the timeline lane. Across projects time adds. A day whose rows exceed its
   total says *N counted once*. Two things still merge: two running sessions on
   one project, and a session sent with `merge: true` (the import's *Merge*).
+- **Merge sessions** on Record draws one row per project per day: first start to
+  last end, with the duration that was tracked. Where the sessions left a gap,
+  the row also gives `equivalentBounds` in brackets — first start plus the
+  duration, last end minus it — so each pair of times spans the duration
+  (`09:00 – (14:00) / (10:00) – 15:00`); back to back, the times stand alone.
+  A row with no buttons lets its text fill the line, or its times outgrow a
+  phone and push the duration below.
 - `TimeField` with a `day`: stepping or arrow-rolling past midnight carries the
   day; a typed time never does; the add panel (no `day`) clamps.
 - **What a page draws or derives from today reads `$currentDay`**
@@ -283,6 +290,13 @@ renders).
 - Leap years and DST need no special handling (`Date.UTC`, `date`/`timedelta`);
   the corpus pins spring-forward, autumn-back and leap-day sessions.
 - A tag with a deduction rule shows reported time; tags overlap.
+- **Record writes durations in the account's style** (Settings → Time:
+  `4h 15m` or `4.25h`), from `lib/duration-style.js`, kept in a `record`
+  preferences section of its own — never in `time`, which Patterns replaces
+  whole on every save. Every duration on Record goes through one `format`,
+  handed to `BudgetView` and to `breakdownLines`; decimal hours are built from
+  the same whole minutes, so the two spellings never disagree. Display only:
+  nothing stored changes, and Patterns keeps hours and minutes.
 - **An hour budget is a walk over days, derived on read.** A tag's contract is
   periods from a `starts_on` — an average `daily_minutes`, a `workdays` bitmask
   (Monday is bit 0), a German `state` — and `budget_days` / `budgetDays` walk

@@ -48,6 +48,33 @@ export function formatSigned(seconds) {
 }
 
 /**
+ * Render a duration as decimal hours: `4.25h` for 4h 15m.
+ *
+ * The other spelling of `formatDuration`, for the record when the account asks
+ * for it, and built from the same whole minutes so the two always agree:
+ * 4h 15m 59s reads 4h 15m, so it reads 4.25h. Two decimals, so 4h 20m is 4.33h.
+ *
+ * @param {number} seconds
+ * @returns {string} e.g. `4.25h`, `0.00h`.
+ */
+export function formatHours(seconds) {
+  const total = Math.max(0, Math.floor(seconds / 60))
+  return `${(total / 60).toFixed(2)}h`
+}
+
+/**
+ * Render a signed duration as decimal hours, the decimal `formatSigned`.
+ *
+ * @param {number} seconds
+ * @returns {string} e.g. `+1.50h`, `−8.00h`, `0.00h`.
+ */
+export function formatSignedHours(seconds) {
+  const whole = Math.trunc(seconds / 60)
+  if (whole === 0) return '0.00h'
+  return `${whole > 0 ? '+' : '\u2212'}${formatHours(Math.abs(whole) * 60)}`
+}
+
+/**
  * Render a duration estimate compactly.
  *
  * Not `formatDuration` above, which writes `0h 45m` because it is reporting

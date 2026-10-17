@@ -12,29 +12,38 @@
   import {
     clockLabel,
     clockOfSeconds,
-    formatDuration,
     fromLocal,
     localDay,
     offsetLabel,
     utcOffset,
   } from '../../lib/clock.js'
-import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/duration.js'
+  import {
+    coveredSeconds,
+    dayOffsets,
+    equivalentBounds,
+    slices,
+    withoutDay,
+  } from '../../lib/time/duration.js'
   import IconBin from '../../lib/IconBin.svelte'
   import IconPencil from '../../lib/IconPencil.svelte'
   import IconPlus from '../../lib/IconPlus.svelte'
   import IconStop from '../../lib/IconStop.svelte'
   import BudgetView from '../../lib/time/BudgetView.svelte'
+  import { durationFormat, durationStyle } from '../../lib/duration-style.js'
   import { budgetTable, workdaysIn } from '../../lib/time/budget.js'
   import TimeField from '../../lib/time/TimeField.svelte'
   import { now } from '../../lib/time/tick.js'
   import {
     budgetRecords,
     ensureBudgetRecords,
+    ensurePreferences,
     ensureTagRules,
     ensureProjects,
     ensureTags,
     ensureTimeEntries,
     ensureTrackedRange,
+    preferenceSection,
+    preferences,
     projects as projectStore,
     replaceEntry,
     saveDaysOff,
@@ -54,6 +63,13 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
    * each — the same division the totals use, so the reading and the arithmetic
    * agree. Editing always works on the whole session, never on a slice.
    */
+
+  /**
+   * How every duration on this page is written: the account's choice on
+   * Settings, hours and minutes until it is known. Only the spelling — the
+   * figures are seconds either way.
+   */
+  const format = $derived(durationFormat(durationStyle(preferenceSection($preferences, 'record'))))
 
   /** How much further back one scroll to the foot of the list reaches. */
   const WEEKS_PER_PAGE = 4
@@ -154,6 +170,9 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
         ensureTags(),
         ensureTagRules(),
         ensureTrackedRange(),
+        // For the duration style alone; nothing here waits on it, and until it
+        // arrives the device's copy, or hours and minutes, is what is drawn.
+        ensurePreferences(),
         ensureTimeEntries(range),
       ]),
     { name: 'time record' }
@@ -980,13 +999,18 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
     {#if budgetTag === null}
       <p class="meta">No tag carries a contract.</p>
     {:else}
-      <BudgetView tagId={budgetTag} tags={contracted} onpick={(id) => (budgetPick = id)} />
+      <BudgetView
+        tagId={budgetTag}
+        tags={contracted}
+        onpick={(id) => (budgetPick = id)}
+        {format}
+      />
     {/if}
   {:else}
     {#if merged}
       <p class="meta mb-3 normal-case">
-        First start to last end. The duration counts tracked time only, so gaps
-        between sessions do not add up.
+        First start to last end. In brackets, where the tracked time would end or
+        start without the gaps between sessions.
       </p>
     {/if}
     {#if by === 'tag'}
@@ -1037,7 +1061,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
                 class="numeral tabular-nums {week.seconds ? 'text-paper' : 'text-haze'}"
                 data-week-total={week.start}
               >
-                {formatDuration(week.seconds)}
+                {format.duration(week.seconds)}
               </p>
             </div>
           </div>
@@ -1056,11 +1080,11 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
                     {/if}
                   </p>
                   <p class="numeral tabular-nums">
-                    <span data-day-total={day}>{formatDuration(dayTotals.get(day) ?? 0)}</span>
+                    <span data-day-total={day}>{format.duration(dayTotals.get(day) ?? 0)}</span>
                     {#if (countedOnce.get(day) ?? 0) > 0}
                       <span class="meta ml-1 normal-case text-haze"
                         >· <span data-counted-once={day}
-                          >{formatDuration(countedOnce.get(day))} counted once</span
+                          >{format.duration(countedOnce.get(day))} counted once</span
                         ></span
                       >
                     {/if}
@@ -1071,6 +1095,7 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
                   {#each byDay.get(day) ?? [] as row (row.key)}
                     {@const shown = describe(row.group)}
                     {@const only = row.entries.length === 1 ? row.entries[0] : null}
+                    {@const equivalent = merged ? equivalentBounds(row) : null}
                     <!-- A running row is the one thing on this page that is still
                          changing, so it is marked rather than left to be spotted by
                          reading every end time. -->
@@ -1083,7 +1108,14 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
                       data-live={row.running ? 'yes' : 'no'}
                     >
                       <div class="flex flex-wrap items-center justify-between gap-3">
-                        <div class="flex min-w-0 items-center gap-3">
+                        <!-- A row with nothing on its right but a duration lets
+                             its text take the rest of the line and wrap inside
+                             it. Sized by its own width instead, a merged row's
+                             bracketed times are wider than a phone, and the
+                             duration dropped to a line of its own. -->
+                        <div
+                          class="flex min-w-0 items-center gap-3 {workable ? '' : 'flex-1 basis-0'}"
+                        >
                           <span
                             class="size-2.5 shrink-0 rounded-full"
                             style:background="var(--color-{shown.colour},
@@ -1125,18 +1157,31 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
                                 <p class="meta mt-0.5 normal-case text-haze">
                                   after rule
                                   {#if row.added > 0}
-                                    · +{formatDuration(row.added)}
+                                    · +{format.duration(row.added)}
                                   {/if}
                                   {#if row.deduction > 0}
-                                    · −{formatDuration(row.deduction)}
+                                    · −{format.duration(row.deduction)}
                                   {/if}
                                 </p>
                               {/if}
                             {:else}
                             <p class="meta mt-0.5 normal-case">
-                              {clockOfSeconds(row.from)}
-                              –
-                              {row.running ? 'running' : clockOfSeconds(row.to)}
+                              <!-- Merged with a gap, each pair of times spans the
+                                   duration: the bracketed ones are where the
+                                   tracked time would end or start without the
+                                   gaps. Each pair stays on one line, so a narrow
+                                   row breaks only between them. -->
+                              <span data-row-times>
+                                {#if equivalent}
+                                  <span class="whitespace-nowrap"
+                                    >{`${clockOfSeconds(row.from)} – (${clockOfSeconds(equivalent.end)})`}</span
+                                  >{' / '}<span class="whitespace-nowrap"
+                                    >{`(${clockOfSeconds(equivalent.start)}) – ${row.running ? 'running' : clockOfSeconds(row.to)}`}</span
+                                  >
+                                {:else}
+                                  {`${clockOfSeconds(row.from)} – ${row.running ? 'running' : clockOfSeconds(row.to)}`}
+                                {/if}
+                              </span>
                               {#if row.whole}
                                 <span class="text-haze">
                                   · kept whole, next day is on a different clock
@@ -1154,14 +1199,16 @@ import { coveredSeconds, dayOffsets, slices, withoutDay } from '../../lib/time/d
                                 <span class="text-haze" data-from-focus>· from focus</span>
                               {/if}
                               {#if !only}
-                                <span class="text-haze">· {row.entries.length} sessions</span>
+                                <span class="whitespace-nowrap text-haze" data-row-count>· {row.entries.length} sessions</span>
                               {/if}
                             </p>
                             {/if}
                           </div>
                         </div>
                         <div class="ml-auto flex shrink-0 items-center gap-2">
-                          <span class="numeral tabular-nums">{formatDuration(row.seconds)}</span>
+                          <span class="numeral tabular-nums" data-row-duration
+                            >{format.duration(row.seconds)}</span
+                          >
                           <!-- Merged and by-tag are reading views, not working
                                ones: a row there stands for several sessions, or
                                for one session counted under a second tag as

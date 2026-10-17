@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import { formatDuration } from '../clock.js'
-import { coveredSeconds, slices, withoutDay } from './duration.js'
+import { coveredSeconds, equivalentBounds, slices, withoutDay } from './duration.js'
 
 /**
  * A first case for the runner itself, on the one derivation already shared
@@ -176,5 +176,29 @@ describe('coveredSeconds', () => {
 
   test('joins a chain of overlaps into one reach', () => {
     expect(coveredSeconds([span(9, 10.5), span(10, 11.5), span(11, 12)])).toBe(3 * 3600)
+  })
+})
+
+describe('equivalentBounds', () => {
+  const HOUR = 3600
+
+  test("gives where a merged row's tracked time would end, and start, without its gaps", () => {
+    // 09:00–12:00 and 13:00–15:00: five hours tracked across six.
+    expect(equivalentBounds({ from: 9 * HOUR, to: 15 * HOUR, seconds: 5 * HOUR })).toEqual({
+      end: 14 * HOUR,
+      start: 10 * HOUR,
+    })
+  })
+
+  test('gives nothing for a row whose sessions run back to back', () => {
+    expect(equivalentBounds({ from: 9 * HOUR, to: 15 * HOUR, seconds: 6 * HOUR })).toBeNull()
+  })
+
+  test('takes a gap of seconds for no gap, as the clocks are drawn to the minute', () => {
+    expect(equivalentBounds({ from: 9 * HOUR, to: 15 * HOUR, seconds: 6 * HOUR - 10 })).toBeNull()
+    expect(equivalentBounds({ from: 9 * HOUR, to: 15 * HOUR, seconds: 6 * HOUR - 60 })).toEqual({
+      end: 15 * HOUR - 60,
+      start: 9 * HOUR + 60,
+    })
   })
 })

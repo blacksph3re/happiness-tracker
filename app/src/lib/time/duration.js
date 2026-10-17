@@ -193,3 +193,28 @@ export function withoutDay(entry, day, now, offsets = {}) {
   }
   return out
 }
+
+/**
+ * Where a merged row's tracked time would end, and start, without its gaps.
+ *
+ * A merged row reads from its first start to its last end, while its duration
+ * counts only what was tracked, so the two disagree wherever the sessions left
+ * a gap. These are the times that reconcile them: the first start plus the
+ * duration, and the last end minus it. No session began or ended at either —
+ * they are drawn in brackets for that reason — but each pair of times then
+ * spans exactly the duration beside it.
+ *
+ * Compared to the minute, as the clocks are drawn: sessions back to back, or
+ * within seconds of it, have no gap worth a second pair of times.
+ *
+ * @param {{from: number, to: number, seconds: number}} row Seconds into its
+ *   day: the first start, the last end (now, for a row still running), and the
+ *   time tracked between them.
+ * @returns {{end: number, start: number}|null} Seconds into the day, or null
+ *   when the tracked time already fills the row.
+ */
+export function equivalentBounds({ from, to, seconds }) {
+  const end = from + seconds
+  if (Math.round(end / 60) >= Math.round(to / 60)) return null
+  return { end, start: to - seconds }
+}
